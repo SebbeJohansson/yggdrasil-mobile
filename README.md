@@ -31,7 +31,19 @@ the desktop Yggdrasil's dashboard (`ui/`):
 | --- | --- | --- | --- |
 | ![Norn](docs/screenshots/1-norn.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) | ![Phone](docs/screenshots/4-phone.png) |
 
-`ScreenshotTest` draws these on the JVM (Robolectric) into
+**Bifröst at night**, as on the desktop: after the working day (09:00–17:00,
+Monday to Friday), when the app has gone 20 s untouched (5 min during
+work hours), the ground fades into a slow aurora. It doesn't come while
+you're typing or Norn is writing, and any touch sends it away. Today's
+alerts and the troubled parts make it stormier: a calm day is slow and
+green, a stormy one restless and violet. It's never red and shows no
+numbers. When Android's animations are off it stands still.
+
+| Calm | Stormy |
+| --- | --- |
+| ![Calm aurora](docs/screenshots/aurora-calm.png) | ![Stormy aurora](docs/screenshots/aurora-stormy.png) |
+
+`ScreenshotTest` and `AuroraScreenshotTest` draw these on the JVM (Robolectric) into
 `app/build/screenshots/`.
 
 ## Parts

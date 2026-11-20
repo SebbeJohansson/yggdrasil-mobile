@@ -10,6 +10,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import io.github.sebbejohansson.yggdrasil.ui.Aurora
+import io.github.sebbejohansson.yggdrasil.ui.AuroraSky
+import java.time.Instant
+import java.time.LocalDateTime
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -162,8 +171,45 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
         ReactorPart("Claude", chatState.providers.firstOrNull { it.leavesDevice }?.status.toPart()),
     )
 
-    Box(Modifier.fillMaxSize().background(Hud.crust)) {
+    // Bifröst at night: idle long enough (sooner after work hours), the ground turns to aurora.
+    var lastTouch by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var auroraDue by remember { mutableStateOf(false) }
+    val typing = WindowInsets.isImeVisible
+    LaunchedEffect(typing, chatState.busy) {
+        while (true) {
+            if (typing || chatState.busy) lastTouch = System.currentTimeMillis()
+            auroraDue = Aurora.due(System.currentTimeMillis() - lastTouch, Aurora.afterHours(LocalDateTime.now()))
+            delay(1_000)
+        }
+    }
+    val auroraAlpha by animateFloatAsState(
+        if (auroraDue) 1f else 0f,
+        animationSpec = tween(if (auroraDue) 4_000 else 500),
+        label = "aurora",
+    )
+    val storm = Aurora.storminess(
+        alerts = alertState.active.map { Aurora.SeenAlert(it.alert.severity, it.alert.lastSeenAt, it.muted) } +
+            alertState.resolved.map { Aurora.SeenAlert(it.severity, it.lastSeenAt, false) },
+        troubledParts = reactor.count { it.name != "Gjallar" && it.state == PartState.TROUBLED },
+        now = Instant.now(),
+    )
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Hud.crust)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Initial)
+                        lastTouch = System.currentTimeMillis()
+                        auroraDue = false
+                    }
+                }
+            },
+    ) {
         Backdrop(needs = openAlerts + unseen, modifier = Modifier.fillMaxSize())
+        AuroraSky(storm, shown = auroraAlpha > 0f, alpha = auroraAlpha, modifier = Modifier.fillMaxSize())
         Column(Modifier.fillMaxSize().imePadding()) {
             TopBar(reactor, busy = chatState.busy, onReactor = { tab = MainActivity.TAB_ALERTS })
             Box(Modifier.weight(1f).fillMaxWidth()) {
