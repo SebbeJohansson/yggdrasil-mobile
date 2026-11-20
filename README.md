@@ -16,13 +16,48 @@ packages in one app, not processes talking HTTP.
 | Part | On the phone | Status |
 | --- | --- | --- |
 | **Norn** | chat, memory, the front desk | chat with Gemma 4 |
-| **Gjallar** | alerts, as Android notifications | planned |
-| **Hermóðr** | messages to you, as notifications | planned |
+| **Gjallar** | alerts from every part, in one place | working |
+| **Hermóðr** | every message to you, as Android notifications | working |
 | **Dellingr** | scheduled jobs, on WorkManager | planned |
 | **Huginn** | reacts to what just happened (incoming notifications) | planned |
 | **Veðrfölnir** | the phone itself: battery, storage, heat, network | planned |
 
 Sindri, Heimdall, Munin and Ratatoskr are desktop jobs and have no phone part.
+
+## Alerts and messages
+
+A part raises a problem with Gjallar, and tells you something through
+Hermóðr. Both keep their state in `ygg.db` (SQLite).
+
+**Gjallar** (`gjallar/`), with the same rules as Yggdrasil:
+
+- The same source and key updates the open alert. A resolved alert opens
+  again. An acknowledged one opens again when its severity goes up.
+- How loud: `info` is listed in the app only. `warning` gets a quiet
+  notification when it opens. `critical` gets an urgent one, again at most
+  every 15 minutes while it keeps being raised.
+- Muted alerts are listed, never pushed. Snoozed ones aren't pushed until
+  the snooze ends (at most 30 days).
+- Acknowledging, snoozing or resolving takes the notification back.
+- Resolved alerts are kept for 30 days.
+
+**Hermóðr** (`hermodr/`):
+
+- There's one notification channel per priority (low, normal, high,
+  urgent), so you set sound and Do Not Disturb for each in Android's
+  settings.
+- Quiet hours (default 22:00–07:00) hold everything but urgent messages.
+  WorkManager sends what was held when they end.
+- `hold` also waits while you're busy. Nothing reports busy yet; Norn's
+  calendars will.
+- `push = false` lists a message in the app only.
+- When notifications are off, the message is kept with the reason, and the
+  Messages tab says why.
+- Messages are kept for 7 days.
+
+Notification buttons: **Seen** on messages, **Acknowledge** and **Snooze 1 h**
+on alerts. The Alerts and Messages tabs have test buttons that run the
+whole path on the phone.
 
 ## Models: `llm/`
 
@@ -66,7 +101,7 @@ message doesn't feed the whole chat to the model again.
 ## Develop
 
 ```bash
-./gradlew :app:testDebugUnitTest   # router and conversation-reuse tests
+./gradlew :app:testDebugUnitTest   # router, Gjallar, Hermóðr, quiet hours
 ./gradlew :app:assembleDebug
 ```
 

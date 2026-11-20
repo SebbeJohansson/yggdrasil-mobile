@@ -3,10 +3,13 @@
 
     <!-- Model download, and the Claude bridge on 127.0.0.1. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Hermóðr's messages and Gjallar's alerts. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".YggApp"
         android:allowBackup="false"
+        android:icon="@drawable/ic_notification"
         android:label="@string/app_name"
         android:largeHeap="true"
         android:supportsRtl="true"
@@ -26,5 +29,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".hermodr.NotificationActionReceiver"
+            android:exported="false" />
     </application>
 </manifest>

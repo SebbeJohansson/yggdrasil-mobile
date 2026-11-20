@@ -1,12 +1,22 @@
 package io.github.sebbejohansson.yggdrasil
 
 import android.app.Application
+import io.github.sebbejohansson.yggdrasil.core.YggDatabase
+import io.github.sebbejohansson.yggdrasil.gjallar.GjallarService
+import io.github.sebbejohansson.yggdrasil.hermodr.AndroidNotifier
+import io.github.sebbejohansson.yggdrasil.hermodr.HermodrService
+import io.github.sebbejohansson.yggdrasil.hermodr.HermodrSettings
+import io.github.sebbejohansson.yggdrasil.hermodr.WorkManagerFlushScheduler
 import io.github.sebbejohansson.yggdrasil.llm.LlmRouter
 import io.github.sebbejohansson.yggdrasil.llm.claude.ClaudeBridgeProvider
 import io.github.sebbejohansson.yggdrasil.llm.litert.LiteRtLmProvider
 import io.github.sebbejohansson.yggdrasil.model.ModelCatalog
 import io.github.sebbejohansson.yggdrasil.model.ModelDownloader
 import io.github.sebbejohansson.yggdrasil.model.ModelStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class YggApp : Application() {
     lateinit var container: AppContainer
@@ -15,18 +25,44 @@ class YggApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.start()
     }
 }
 
 /** Everything the parts share. Built once, by hand: no DI framework yet. */
 class AppContainer(app: Application) {
+    /** Lives as long as the process; for work that must outlive a screen. */
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // Models
     val modelStore = ModelStore(app)
     val modelDownloader = ModelDownloader(modelStore)
-
     val defaultModel = ModelCatalog.GEMMA_4_E2B
     val localLlm = LiteRtLmProvider(defaultModel, modelStore, app.cacheDir)
     val claudeBridge = ClaudeBridgeProvider()
 
     /** On-device first; Claude only for requests allowed to leave the phone. */
     val llm = LlmRouter(listOf(localLlm, claudeBridge))
+
+    // Parts
+    private val db = YggDatabase(app)
+    val notifier = AndroidNotifier(app)
+    val hermodrSettings = HermodrSettings(app)
+    val hermodr = HermodrService(
+        store = db.messages,
+        notifier = notifier,
+        scheduler = WorkManagerFlushScheduler(app),
+        quietHours = { hermodrSettings.quietHours },
+    )
+    val gjallar = GjallarService(db.alerts, hermodr)
+
+    fun start() {
+        notifier.createChannels()
+        appScope.launch {
+            hermodr.prune()
+            gjallar.prune()
+            // Anything held past its time (the phone was off, or Doze ran late).
+            hermodr.flushHeld()
+        }
+    }
 }
