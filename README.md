@@ -27,9 +27,9 @@ the desktop Yggdrasil's dashboard (`ui/`):
 - **Alerts:** the alert list keeps its severity line and its Seen, Snooze 1h,
   1d and Mute buttons.
 
-| Norn | Alerts | Messages | Phone |
-| --- | --- | --- | --- |
-| ![Norn](docs/screenshots/1-norn.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) | ![Phone](docs/screenshots/4-phone.png) |
+| Norn | Alerts | Messages | Phone | Jobs |
+| --- | --- | --- | --- | --- |
+| ![Norn](docs/screenshots/1-norn.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) | ![Phone](docs/screenshots/4-phone.png) | ![Jobs](docs/screenshots/5-jobs.png) |
 
 **Bifröst at night**, as on the desktop: after the working day (09:00–17:00,
 Monday to Friday), when the app has gone 20 s untouched (5 min during
@@ -56,7 +56,7 @@ packages in one app, not processes talking HTTP.
 | **Norn** | chat, memory, the front desk | chat with Gemma 4 |
 | **Gjallar** | alerts from every part, in one place | working |
 | **Hermóðr** | every message to you, as Android notifications | working |
-| **Dellingr** | scheduled jobs, on WorkManager | planned |
+| **Dellingr** | runs the jobs you put on a clock | working |
 | **Huginn** | reacts to what just happened (incoming notifications) | planned |
 | **Veðrfölnir** | the phone itself: battery, storage, memory, heat | working |
 
@@ -116,6 +116,32 @@ It checks when the app starts, and every 15 minutes through WorkManager,
 which is Android's shortest period. The Phone tab shows the readouts live,
 every 5 s while it's open, and has a segment on the arc reactor. A reading
 the phone doesn't give, such as a battery level, raises nothing.
+
+## Jobs: `dellingr/`
+
+Dellingr runs the jobs you put on a clock (Parts → Jobs), under the desktop
+part's rules:
+
+- **When:** said in words, turned into cron once when you save, and shown
+  back before you save. It understands "every weekday at 8", "every monday
+  and friday at 9:30", "the 1st of each month at 10", "every 15 minutes", or
+  cron itself (`Cron.kt`, ported from `cron.go` with its tests).
+- **What:** *Tell me* sends your text. *Ask Norn* sends Norn's answer.
+  Norn answers on the phone, and it knows the date and today's meetings
+  when it may read the calendar. The desktop's *goal* jobs need Sindri,
+  so there are none.
+- **Delivery:** through Hermóðr with hold, so a job's message waits out
+  quiet hours and meetings. It's a notification, or only listed in Messages.
+- **Missed runs:** a run the phone slept through runs once on waking, never
+  once per missed tick. A job still running is skipped, not run twice at
+  once.
+- **Failures:** 3 in a row raise `failing:<id>` (warning) with Gjallar. It
+  resolves when the job works again. Runs are kept for 30 days.
+- **Timing:** an alarm wakes the phone for the next run. It's exact once you
+  allow exact alarms (Android asks from Android 14); otherwise Android may
+  move it by some minutes. Veðrfölnir's 15-minute check also ticks
+  Dellingr, so nothing waits longer than that. Alarms are set again after a
+  restart.
 
 ## Models: `llm/`
 

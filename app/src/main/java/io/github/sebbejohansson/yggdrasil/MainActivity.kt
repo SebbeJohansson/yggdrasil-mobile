@@ -84,6 +84,9 @@ import io.github.sebbejohansson.yggdrasil.ui.HudText
 import io.github.sebbejohansson.yggdrasil.ui.PartState
 import io.github.sebbejohansson.yggdrasil.ui.ReactorPart
 import io.github.sebbejohansson.yggdrasil.ui.YggTheme
+import io.github.sebbejohansson.yggdrasil.dellingr.DellingrService
+import io.github.sebbejohansson.yggdrasil.dellingr.JobsScreen
+import io.github.sebbejohansson.yggdrasil.dellingr.JobsViewModel
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.PhoneScreen
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.PhoneViewModel
 import kotlinx.coroutines.delay
@@ -134,6 +137,9 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
     val alerts: AlertsViewModel = viewModel(factory = AlertsViewModel.factory(container))
     val messages: MessagesViewModel = viewModel(factory = MessagesViewModel.factory(container))
     val phone: PhoneViewModel = viewModel(factory = PhoneViewModel.factory(container))
+    val jobs: JobsViewModel = viewModel(factory = JobsViewModel.factory(container))
+    val jobsState by jobs.state.collectAsStateWithLifecycle()
+    val failingJobs = jobsState.jobs.count { it.failures >= DellingrService.FAILING_AFTER }
     val phoneFailing by container.vedrfolnir.failing.collectAsStateWithLifecycle()
 
     // Ask once for notifications (Android 13+), and look again on every return:
@@ -147,6 +153,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
     LifecycleResumeEffect(Unit) {
         messages.recheckPermission()
         chat.refreshProviders()
+        jobs.recheck()
         onPauseOrDispose { }
     }
 
@@ -168,6 +175,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
         ),
         ReactorPart("Hermóðr", if (messageState.blocked != null) PartState.TROUBLED else PartState.UP),
         ReactorPart("Veðrfölnir", if (phoneFailing.isEmpty()) PartState.UP else PartState.TROUBLED),
+        ReactorPart("Dellingr", if (failingJobs > 0) PartState.TROUBLED else PartState.UP),
         ReactorPart("Claude", chatState.providers.firstOrNull { it.leavesDevice }?.status.toPart()),
     )
 
@@ -216,7 +224,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
                 when (tab) {
                     MainActivity.TAB_ALERTS -> AlertsScreen(alerts)
                     MainActivity.TAB_MESSAGES -> MessagesScreen(messages)
-                    MainActivity.TAB_PHONE -> PhoneScreen(phone)
+                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs)
                     else -> ChatScreen(chat)
                 }
             }
@@ -226,7 +234,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
                     Tab(tab == MainActivity.TAB_CHAT, "Norn", 0) { tab = MainActivity.TAB_CHAT }
                     Tab(tab == MainActivity.TAB_ALERTS, "Alerts", openAlerts) { tab = MainActivity.TAB_ALERTS }
                     Tab(tab == MainActivity.TAB_MESSAGES, "Messages", unseen) { tab = MainActivity.TAB_MESSAGES }
-                    Tab(tab == MainActivity.TAB_PHONE, "Phone", phoneFailing.size) { tab = MainActivity.TAB_PHONE }
+                    Tab(tab == MainActivity.TAB_PHONE, "Parts", phoneFailing.size + failingJobs) { tab = MainActivity.TAB_PHONE }
                 }
             }
         }
@@ -315,10 +323,38 @@ private fun RowScope.Tab(selected: Boolean, label: String, count: Int, onClick: 
     }
 }
 
-private fun Modifier.bottomLine(c: Color) = drawBehind {
-    drawLine(c, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx())
+private fun Modifier.bottomLine(c: Color, width: androidx.compose.ui.unit.Dp = 1.dp) = drawBehind {
+    val w = width.toPx()
+    drawRect(c, Offset(0f, size.height - w), androidx.compose.ui.geometry.Size(size.width, w))
 }
 
 private fun Modifier.topLine(c: Color) = drawBehind {
     drawLine(c, Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx())
+}
+
+/** The parts with no tab of their own, under page tabs as on the dashboard (`PageTabs.vue`). */
+@Composable
+private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel) {
+    var page by rememberSaveable { mutableIntStateOf(0) }
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 8.dp).bottomLine(Color(0xFF17323F)),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            listOf("Phone", "Jobs").forEachIndexed { i, label ->
+                val on = page == i
+                Text(
+                    label,
+                    style = HudText.small.copy(fontSize = 13.sp, color = if (on) Hud.bright else Hud.overlay2),
+                    modifier = Modifier
+                        .clickable { page = i }
+                        .then(if (on) Modifier.bottomLine(Hud.cyan, 2.dp) else Modifier)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            }
+        }
+        Box(Modifier.weight(1f)) {
+            if (page == 0) PhoneScreen(phone) else JobsScreen(jobs)
+        }
+    }
 }

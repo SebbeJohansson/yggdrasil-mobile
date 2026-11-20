@@ -12,7 +12,10 @@ import java.util.concurrent.TimeUnit
 /** Veðrfölnir's loop: a check every 15 minutes, Android's shortest period for background work. */
 class VedrfolnirWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        (applicationContext as YggApp).container.vedrfolnir.check()
+        val c = (applicationContext as YggApp).container
+        c.vedrfolnir.check()
+        // A safety net for Dellingr: anything an alarm missed runs within 15 minutes.
+        c.dellingr.tick()
         return Result.success()
     }
 

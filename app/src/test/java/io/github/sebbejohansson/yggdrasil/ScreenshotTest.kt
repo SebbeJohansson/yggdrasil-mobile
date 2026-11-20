@@ -85,7 +85,16 @@ class ScreenshotTest {
             ActivityManager.MemoryInfo().apply { totalMem = 16_000_000_000; availMem = 6_400_000_000 },
         )
         runBlocking { c.vedrfolnir.check() }
-        compose.onNodeWithText("PHONE").performClick()
+        compose.onNodeWithText("PARTS").performClick()
         shot("4-phone")
+        runBlocking {
+            c.dellingr.create("Morning brief", "every weekday at 8", io.github.sebbejohansson.yggdrasil.dellingr.ActionKind.ASK,
+                "Give me a short, calm start to the day.", push = true)
+            c.dellingr.create("Stretch", "every 2 hours", io.github.sebbejohansson.yggdrasil.dellingr.ActionKind.NOTIFY,
+                "Stand up and stretch.", push = false)
+            c.dellingr.runNow(c.dellingr.jobs().first { it.name == "Stretch" }.id)
+        }
+        compose.onNodeWithText("Jobs").performClick()
+        shot("5-jobs")
     }
 }

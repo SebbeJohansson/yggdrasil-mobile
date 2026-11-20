@@ -5,6 +5,11 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import io.github.sebbejohansson.yggdrasil.dellingr.ActionKind
+import io.github.sebbejohansson.yggdrasil.dellingr.Job
+import io.github.sebbejohansson.yggdrasil.dellingr.JobStore
+import io.github.sebbejohansson.yggdrasil.dellingr.Run
+import io.github.sebbejohansson.yggdrasil.dellingr.RunState
 import io.github.sebbejohansson.yggdrasil.gjallar.Alert
 import io.github.sebbejohansson.yggdrasil.gjallar.AlertState
 import io.github.sebbejohansson.yggdrasil.gjallar.AlertStore
@@ -16,7 +21,7 @@ import io.github.sebbejohansson.yggdrasil.hermodr.Priority
 import java.time.Instant
 
 /** One SQLite file for every part's state: `ygg.db`. Times are epoch millis. */
-class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 1) {
+class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -40,12 +45,33 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         )
         db.execSQL("CREATE INDEX messages_state ON messages(state)")
         db.execSQL("CREATE INDEX messages_tag ON messages(tag)")
+        createDellingr(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createDellingr(db)
+    }
+
+    // Version 2: Dellingr's jobs and their runs.
+    private fun createDellingr(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE jobs (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, cron TEXT NOT NULL,
+                kind TEXT NOT NULL, text TEXT NOT NULL, push INTEGER NOT NULL, enabled INTEGER NOT NULL,
+                next_run_at INTEGER, last_run_at INTEGER, last_result TEXT, failures INTEGER NOT NULL)""",
+        )
+        db.execSQL(
+            """CREATE TABLE runs (
+                id TEXT PRIMARY KEY, job_id TEXT NOT NULL, job_name TEXT NOT NULL,
+                started_at INTEGER NOT NULL, ended_at INTEGER, state TEXT NOT NULL,
+                missed INTEGER NOT NULL, by_hand INTEGER NOT NULL, text TEXT, error TEXT)""",
+        )
+        db.execSQL("CREATE INDEX runs_started ON runs(started_at)")
+    }
 
     val alerts: AlertStore by lazy { SqliteAlertStore(this) }
     val messages: MessageStore by lazy { SqliteMessageStore(this) }
+    val jobs: JobStore by lazy { SqliteJobStore(this) }
 }
 
 private fun Cursor.str(c: String): String = getString(getColumnIndexOrThrow(c))
@@ -155,5 +181,54 @@ private class SqliteMessageStore(private val h: YggDatabase) : MessageStore {
 
     override fun deleteCreatedBefore(t: Instant) {
         h.writableDatabase.delete("messages", "created_at < ?", arrayOf("${t.toEpochMilli()}"))
+    }
+}
+
+private class SqliteJobStore(private val h: YggDatabase) : JobStore {
+    private fun Cursor.job() = Job(
+        id = str("id"), name = str("name"), cron = str("cron"), kind = ActionKind.valueOf(str("kind")),
+        text = str("text"), push = long("push") != 0L, enabled = long("enabled") != 0L,
+        nextRunAt = instantOrNull("next_run_at"), lastRunAt = instantOrNull("last_run_at"),
+        lastResult = strOrNull("last_result")?.let(RunState::valueOf), failures = long("failures").toInt(),
+    )
+
+    private fun Job.values() = ContentValues().apply {
+        put("id", id); put("name", name); put("cron", cron); put("kind", kind.name); put("text", text)
+        put("push", if (push) 1 else 0); put("enabled", if (enabled) 1 else 0)
+        putInstant("next_run_at", nextRunAt); putInstant("last_run_at", lastRunAt)
+        put("last_result", lastResult?.name); put("failures", failures)
+    }
+
+    private fun Cursor.run() = Run(
+        id = str("id"), jobId = str("job_id"), jobName = str("job_name"), startedAt = instant("started_at"),
+        endedAt = instantOrNull("ended_at"), state = RunState.valueOf(str("state")),
+        missed = long("missed") != 0L, byHand = long("by_hand") != 0L, text = strOrNull("text"), error = strOrNull("error"),
+    )
+
+    private fun Run.values() = ContentValues().apply {
+        put("id", id); put("job_id", jobId); put("job_name", jobName); putInstant("started_at", startedAt)
+        putInstant("ended_at", endedAt); put("state", state.name); put("missed", if (missed) 1 else 0)
+        put("by_hand", if (byHand) 1 else 0); put("text", text); put("error", error)
+    }
+
+    override fun jobs() = h.readableDatabase.query("jobs", null, null, null, null, null, "name").all { job() }
+    override fun job(id: String) =
+        h.readableDatabase.query("jobs", null, "id = ?", arrayOf(id), null, null, null).all { job() }.firstOrNull()
+    override fun putJob(job: Job) {
+        h.writableDatabase.insertWithOnConflict("jobs", null, job.values(), SQLiteDatabase.CONFLICT_REPLACE)
+    }
+    override fun deleteJob(id: String) {
+        h.writableDatabase.delete("runs", "job_id = ?", arrayOf(id))
+        h.writableDatabase.delete("jobs", "id = ?", arrayOf(id))
+    }
+    override fun putRun(run: Run) {
+        h.writableDatabase.insertWithOnConflict("runs", null, run.values(), SQLiteDatabase.CONFLICT_REPLACE)
+    }
+    override fun runs(jobId: String?, limit: Int) = h.readableDatabase.query(
+        "runs", null, if (jobId == null) null else "job_id = ?", jobId?.let { arrayOf(it) },
+        null, null, "started_at DESC", "$limit",
+    ).all { run() }
+    override fun forgetRunsBefore(t: Instant) {
+        h.writableDatabase.delete("runs", "started_at < ?", arrayOf("${t.toEpochMilli()}"))
     }
 }

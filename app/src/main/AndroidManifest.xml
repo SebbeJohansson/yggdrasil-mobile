@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Hermóðr holds messages that ask to wait while you're in a meeting. Read on the phone only. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Dellingr: wake on the minute a job is due (the user allows it from Android 14), and after a restart. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".YggApp"
@@ -49,5 +52,15 @@
         <receiver
             android:name=".hermodr.NotificationActionReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".dellingr.DellingrAlarmReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".dellingr.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

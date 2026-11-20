@@ -3,6 +3,8 @@ package io.github.sebbejohansson.yggdrasil
 import android.app.Application
 import androidx.work.Configuration
 import io.github.sebbejohansson.yggdrasil.core.YggDatabase
+import io.github.sebbejohansson.yggdrasil.dellingr.AndroidJobAlarm
+import io.github.sebbejohansson.yggdrasil.dellingr.DellingrService
 import io.github.sebbejohansson.yggdrasil.gjallar.GjallarService
 import io.github.sebbejohansson.yggdrasil.hermodr.AndroidNotifier
 import io.github.sebbejohansson.yggdrasil.hermodr.HermodrService
@@ -16,6 +18,7 @@ import io.github.sebbejohansson.yggdrasil.model.ModelDownloader
 import io.github.sebbejohansson.yggdrasil.model.ModelStore
 import io.github.sebbejohansson.yggdrasil.norn.AndroidCalendarReader
 import io.github.sebbejohansson.yggdrasil.norn.CalendarBusySignal
+import io.github.sebbejohansson.yggdrasil.norn.NornAsker
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.AndroidPhoneReader
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.VedrfolnirService
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.VedrfolnirWorker
@@ -71,6 +74,8 @@ class AppContainer(private val app: Application) {
     )
     val gjallar = GjallarService(db.alerts, hermodr)
     val vedrfolnir = VedrfolnirService(AndroidPhoneReader(app), gjallar)
+    val jobAlarm = AndroidJobAlarm(app)
+    val dellingr = DellingrService(db.jobs, NornAsker(llm, calendar), hermodr, gjallar, jobAlarm)
 
     fun start() {
         notifier.createChannels()
@@ -81,6 +86,8 @@ class AppContainer(private val app: Application) {
             // Anything held past its time (the phone was off, or Doze ran late).
             hermodr.flushHeld()
             vedrfolnir.check()
+            // Runs what came due while the app wasn't running, and sets the next alarm.
+            dellingr.tick()
         }
     }
 }
