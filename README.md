@@ -43,6 +43,24 @@ numbers. When Android's animations are off it stands still.
 | --- | --- |
 | ![Calm aurora](docs/screenshots/aurora-calm.png) | ![Stormy aurora](docs/screenshots/aurora-stormy.png) |
 
+**The boot sequence**, as on the desktop (`boot/`):
+
+- **Once a day:** the first open shows a heads-up display that waits for a
+  tap. It brings the parts online line by line, then the outside (network,
+  calendar access, notifications), then the phone, and gives a verdict.
+- **Voice:** a calm voice says how it went. Only a voice installed on the
+  phone is used, never a network one; with none installed there's no voice.
+- **Ending it:** any tap ends it, and *Skip it for today* skips it.
+- **Other opens:** the quick check, the same in about a second. It's
+  see-through and lets every touch through.
+- **From a notification:** you get at most the quick one.
+- **Settings:** under Parts → Boot (daily boot, voice, quick check, Run it
+  now).
+
+| Waiting for a tap | Systems check |
+| --- | --- |
+| ![Boot](docs/screenshots/0-boot.png) | ![Systems check](docs/screenshots/0-boot-check.png) |
+
 `ScreenshotTest` and `AuroraScreenshotTest` draw these on the JVM (Robolectric) into
 `app/build/screenshots/`.
 

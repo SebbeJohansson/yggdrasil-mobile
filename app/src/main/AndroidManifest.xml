@@ -4,6 +4,8 @@
 
     <!-- Model download, and the Claude bridge on 127.0.0.1. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The boot sequence's network line. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Hermóðr's messages and Gjallar's alerts. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Hermóðr holds messages that ask to wait while you're in a meeting. Read on the phone only. -->

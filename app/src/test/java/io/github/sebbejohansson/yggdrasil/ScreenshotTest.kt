@@ -48,6 +48,10 @@ class ScreenshotTest {
             shadowOf(Looper.getMainLooper()).idle()
             compose.mainClock.advanceTimeBy(500)
         }
+        capture(name)
+    }
+
+    private fun capture(name: String) {
         val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
         File(out, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
@@ -67,6 +71,13 @@ class ScreenshotTest {
             c.hermodr.send(MessageRequest("dellingr", "Weekly recap is ready", priority = Priority.LOW, push = false))
         }
 
+        // First open of the day: the boot sequence waits for a tap.
+        shot("0-boot")
+        compose.onNodeWithText("TAP TO INITIALIZE").performClick()
+        // Every line in (190 ms each) and the verdict up, before the hold ends.
+        compose.mainClock.advanceTimeBy(3_000)
+        capture("0-boot-check")
+        repeat(10) { compose.mainClock.advanceTimeBy(1_000) }
         shot("1-norn")
         compose.onNodeWithText("ALERTS").performClick()
         shot("2-alerts")

@@ -2,6 +2,7 @@ package io.github.sebbejohansson.yggdrasil
 
 import android.app.Application
 import androidx.work.Configuration
+import io.github.sebbejohansson.yggdrasil.boot.BootSettings
 import io.github.sebbejohansson.yggdrasil.core.YggDatabase
 import io.github.sebbejohansson.yggdrasil.dellingr.AndroidJobAlarm
 import io.github.sebbejohansson.yggdrasil.dellingr.DellingrService
@@ -62,6 +63,7 @@ class AppContainer(private val app: Application) {
     private val db = YggDatabase(app)
     val notifier = AndroidNotifier(app)
     val hermodrSettings = HermodrSettings(app)
+    val bootSettings = BootSettings(app)
 
     /** The phone's calendars, for Norn and for Hermóðr's hold. */
     val calendar = AndroidCalendarReader(app)

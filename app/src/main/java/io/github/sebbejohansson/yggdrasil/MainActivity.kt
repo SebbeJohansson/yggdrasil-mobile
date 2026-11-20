@@ -2,6 +2,18 @@ package io.github.sebbejohansson.yggdrasil
 
 import android.Manifest
 import android.content.Intent
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import androidx.compose.ui.platform.LocalContext
+import io.github.sebbejohansson.yggdrasil.boot.BootKind
+import io.github.sebbejohansson.yggdrasil.boot.BootLogic
+import io.github.sebbejohansson.yggdrasil.boot.BootOverlay
+import io.github.sebbejohansson.yggdrasil.boot.BootPhone
+import io.github.sebbejohansson.yggdrasil.boot.BootSettings
+import io.github.sebbejohansson.yggdrasil.boot.BootSettingsScreen
+import io.github.sebbejohansson.yggdrasil.boot.Health
+import java.time.LocalDate
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -105,7 +117,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(SystemBarStyle.dark(Color.Transparent.toArgb()), SystemBarStyle.dark(bar))
         requestedTab.value = intent.tabExtra()
         val container = (application as YggApp).container
-        setContent { YggTheme { Root(container, requestedTab) } }
+        val fromNotification = requestedTab.value != null
+        setContent { YggTheme { Root(container, requestedTab, fromNotification) } }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -126,8 +139,27 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) {
+private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, fromNotification: Boolean = false) {
     var tab by rememberSaveable { mutableIntStateOf(MainActivity.TAB_CHAT) }
+    val context = LocalContext.current
+
+    // The boot sequence: the full one once a day, the quick one on other opens. Opened from a
+    // notification you want the thing it's about, so at most the quick one.
+    var boot by rememberSaveable {
+        mutableStateOf(
+            BootLogic.kind(container.bootSettings.choice, container.bootSettings.lastDay, LocalDate.now()).let {
+                if (fromNotification && it == BootKind.FULL) BootKind.QUICK else it
+            },
+        )
+    }
+    // Let the parts' states arrive first, as the desktop waits for its first poll.
+    var bootReady by remember { mutableStateOf(false) }
+    LaunchedEffect(boot) {
+        if (boot != BootKind.NONE) {
+            delay(700)
+            bootReady = true
+        }
+    }
     val asked by requestedTab.collectAsStateWithLifecycle()
     LaunchedEffect(asked) {
         asked?.let { tab = it; requestedTab.value = null }
@@ -176,7 +208,8 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
         ReactorPart("Hermóðr", if (messageState.blocked != null) PartState.TROUBLED else PartState.UP),
         ReactorPart("Veðrfölnir", if (phoneFailing.isEmpty()) PartState.UP else PartState.TROUBLED),
         ReactorPart("Dellingr", if (failingJobs > 0) PartState.TROUBLED else PartState.UP),
-        ReactorPart("Claude", chatState.providers.firstOrNull { it.leavesDevice }?.status.toPart()),
+        // Optional: not set up is dark (not running), not troubled.
+        ReactorPart("Claude", if (chatState.providers.firstOrNull { it.leavesDevice }?.status == ProviderStatus.Ready) PartState.UP else PartState.DOWN),
     )
 
     // Bifröst at night: idle long enough (sooner after work hours), the ground turns to aurora.
@@ -224,7 +257,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
                 when (tab) {
                     MainActivity.TAB_ALERTS -> AlertsScreen(alerts)
                     MainActivity.TAB_MESSAGES -> MessagesScreen(messages)
-                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs)
+                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs, container.bootSettings, onRunBoot = { boot = BootKind.FULL })
                     else -> ChatScreen(chat)
                 }
             }
@@ -238,7 +271,39 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
                 }
             }
         }
+        if (boot != BootKind.NONE && bootReady) {
+            val readings by container.vedrfolnir.latest.collectAsStateWithLifecycle()
+            // Claude is an add-on: listed only when it's there, never "not responding".
+            val parts = reactor.filter { it.name != "Claude" || it.state == PartState.UP }.map { it.name to it.state.toHealth() }
+            val phoneNow = BootPhone(readings?.memoryTotalBytes, readings?.batteryPercent, "heat" in phoneFailing)
+            val outside = listOf(
+                "Network" to networkUp(context),
+                "Calendar" to container.calendar.allowed(),
+                "Notifications" to (messageState.blocked == null),
+            )
+            BootOverlay(
+                kind = boot,
+                lines = BootLogic.lines(parts, outside, phoneNow),
+                speech = BootLogic.speech(parts, phoneNow, LocalTime.now()),
+                voice = container.bootSettings.choice.voice,
+                onStarted = { container.bootSettings.lastDay = LocalDate.now() },
+                onClose = { boot = BootKind.NONE },
+            )
+        }
     }
+}
+
+private fun PartState.toHealth() = when (this) {
+    PartState.UP -> Health.UP
+    PartState.TROUBLED -> Health.TROUBLED
+    PartState.DOWN -> Health.DOWN
+}
+
+private fun networkUp(context: Context): Boolean {
+    val cm = context.getSystemService(ConnectivityManager::class.java)
+    val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+    return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 }
 
 private fun ProviderStatus?.toPart() = when (this) {
@@ -334,14 +399,14 @@ private fun Modifier.topLine(c: Color) = drawBehind {
 
 /** The parts with no tab of their own, under page tabs as on the dashboard (`PageTabs.vue`). */
 @Composable
-private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel) {
+private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel, bootSettings: BootSettings, onRunBoot: () -> Unit) {
     var page by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 8.dp).bottomLine(Color(0xFF17323F)),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            listOf("Phone", "Jobs").forEachIndexed { i, label ->
+            listOf("Phone", "Jobs", "Boot").forEachIndexed { i, label ->
                 val on = page == i
                 Text(
                     label,
@@ -354,7 +419,11 @@ private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel) {
             }
         }
         Box(Modifier.weight(1f)) {
-            if (page == 0) PhoneScreen(phone) else JobsScreen(jobs)
+            when (page) {
+                0 -> PhoneScreen(phone)
+                1 -> JobsScreen(jobs)
+                else -> BootSettingsScreen(bootSettings, onRunBoot)
+            }
         }
     }
 }
