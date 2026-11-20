@@ -3,6 +3,19 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Release builds take their version from the tag (see .github/workflows/release.yml):
+// YGG_VERSION_NAME=1.2.3 gives versionName "1.2.3" and versionCode 10203.
+val releaseVersionName: String? = System.getenv("YGG_VERSION_NAME")?.takeIf { it.isNotBlank() }
+val releaseVersionCode: Int? = releaseVersionName?.let { v ->
+    val (major, minor, patch) = Regex("""^(\d+)\.(\d+)\.(\d+)""").find(v)?.destructured
+        ?: error("YGG_VERSION_NAME must start with MAJOR.MINOR.PATCH, got '$v'")
+    major.toInt() * 10_000 + minor.toInt() * 100 + patch.toInt()
+}
+
+// The release key comes from the environment (GitHub secrets in CI). Without
+// it, a release build is left unsigned, and the release workflow stops.
+val releaseKeystore: String? = System.getenv("YGG_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
+
 android {
     namespace = "io.github.sebbejohansson.yggdrasil"
     compileSdk {
@@ -14,16 +27,29 @@ android {
         // LiteRT-LM's GPU backend needs a recent Android; the Pixel 9 runs 15+.
         minSdk = 31
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = releaseVersionCode ?: 1
+        versionName = releaseVersionName ?: "0.1.0-dev"
 
         // Only ship the native libs for real phones.
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("YGG_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("YGG_KEY_ALIAS")
+                keyPassword = System.getenv("YGG_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // LiteRT-LM finds tools by reflection; shrinking would need keep rules first.
             isMinifyEnabled = false
+            if (releaseKeystore != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 

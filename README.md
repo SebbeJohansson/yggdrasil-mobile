@@ -86,7 +86,8 @@ message doesn't feed the whole chat to the model again.
    ./gradlew :app:installDebug
    ```
 
-   Or download the APK from the latest `build` run in GitHub Actions.
+   Or install a signed APK from [Releases](https://github.com/SebbeJohansson/yggdrasil-mobile/releases).
+   To publish one, push a tag like `v0.2.0` ([docs/releasing.md](docs/releasing.md)).
 
 2. Open the app and tap **Download model**. Gemma 4 E2B is 2.6 GB, downloaded
    from Hugging Face and checked against its SHA-256. A stopped download
