@@ -1,5 +1,8 @@
 package io.github.sebbejohansson.yggdrasil.hermodr
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -40,10 +43,19 @@ import io.github.sebbejohansson.yggdrasil.AppContainer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import io.github.sebbejohansson.yggdrasil.norn.Busy
+import io.github.sebbejohansson.yggdrasil.norn.CalendarEvent
+import io.github.sebbejohansson.yggdrasil.norn.CalendarReader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.time.Duration
+import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -52,6 +64,10 @@ data class MessagesUiState(
     val quietHours: QuietHours = QuietHours(),
     /** Why notifications can't be shown right now, if they can't. */
     val blocked: String? = null,
+    val calendarAllowed: Boolean = false,
+    /** When the meeting you're in ends; null when free. */
+    val busyUntil: Instant? = null,
+    val nextMeeting: CalendarEvent? = null,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -59,13 +75,38 @@ class MessagesViewModel(
     private val hermodr: HermodrService,
     private val settings: HermodrSettings,
     private val notifier: Notifier,
+    private val calendar: CalendarReader,
 ) : ViewModel() {
 
     private val quiet = MutableStateFlow(settings.quietHours)
     private val recheck = MutableStateFlow(0)
 
-    val state = combine(hermodr.changes.flow, quiet, recheck) { _, q, _ -> q }
-        .mapLatest { q -> MessagesUiState(hermodr.list(), q, notifier.blockedReason(Priority.NORMAL)) }
+    /** Once a minute, so "in a meeting" turns to "free" by itself. */
+    private val minute = flow {
+        while (true) {
+            emit(Unit)
+            delay(60_000)
+        }
+    }
+
+    val state = combine(hermodr.changes.flow, quiet, recheck, minute) { _, q, _, _ -> q }
+        .mapLatest { q ->
+            val now = Instant.now()
+            val allowed = calendar.allowed()
+            val events = if (allowed) {
+                withContext(Dispatchers.IO) { calendar.between(now.minus(Duration.ofHours(12)), now.plus(Duration.ofHours(24))) }
+            } else {
+                emptyList()
+            }
+            MessagesUiState(
+                messages = hermodr.list(),
+                quietHours = q,
+                blocked = notifier.blockedReason(Priority.NORMAL),
+                calendarAllowed = allowed,
+                busyUntil = Busy.until(events, now),
+                nextMeeting = Busy.next(events, now),
+            )
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MessagesUiState())
 
     fun markSeen(m: Message) = viewModelScope.launch { hermodr.markSeen(m.id) }
@@ -77,18 +118,28 @@ class MessagesViewModel(
         viewModelScope.launch { hermodr.flushHeld() }
     }
 
-    /** After the permission dialog, or coming back from Android's settings. */
+    /** After a permission dialog, or coming back from Android's settings. */
     fun recheckPermission() {
         recheck.value++
+        // Calendar access may have just been given: what was held for a meeting may go now.
+        viewModelScope.launch { hermodr.flushHeld() }
     }
 
-    fun sendTest(priority: Priority) = viewModelScope.launch {
-        hermodr.send(MessageRequest(sender = "test", title = "Test ${priority.name.lowercase()} message", text = "Sent from the Messages tab", priority = priority))
+    fun sendTest(priority: Priority, hold: Boolean = false) = viewModelScope.launch {
+        hermodr.send(
+            MessageRequest(
+                sender = "test",
+                title = "Test ${priority.name.lowercase()} message" + if (hold) " (hold)" else "",
+                text = if (hold) "Waits while you're in a meeting" else "Sent from the Messages tab",
+                priority = priority,
+                hold = hold,
+            ),
+        )
     }
 
     companion object {
         fun factory(c: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { MessagesViewModel(c.hermodr, c.hermodrSettings, c.notifier) }
+            initializer { MessagesViewModel(c.hermodr, c.hermodrSettings, c.notifier, c.calendar) }
         }
     }
 }
@@ -149,6 +200,7 @@ fun MessagesScreen(vm: MessagesViewModel, modifier: Modifier = Modifier) {
                 HudToggle(s.quietHours.enabled, vm::setQuietHours)
             }
         }
+        item { MeetingsPanel(s, onAllowed = vm::recheckPermission) }
         item { HudSection("Messages", Modifier.padding(top = 8.dp)) }
         if (s.messages.isEmpty()) {
             item {
@@ -165,6 +217,7 @@ fun MessagesScreen(vm: MessagesViewModel, modifier: Modifier = Modifier) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 HudButton("Normal", { vm.sendTest(Priority.NORMAL) }, kind = HudButtonKind.SMALL)
                 HudButton("Urgent", { vm.sendTest(Priority.URGENT) }, kind = HudButtonKind.SMALL)
+                HudButton("Hold", { vm.sendTest(Priority.NORMAL, hold = true) }, kind = HudButtonKind.SMALL)
             }
         }
     }
@@ -184,7 +237,7 @@ private fun MessageItem(m: Message, onSeen: () -> Unit) {
         }
         m.text?.let { Text(it, style = HudText.meta.copy(color = Hud.subtext0)) }
         val status = when (m.state) {
-            MessageState.HELD -> "held"
+            MessageState.HELD -> if (m.hold) "held until you're free" else "held through quiet hours"
             MessageState.SENT -> "sent"
             MessageState.LISTED -> "listed only"
             // The banner above says why; once is enough.
@@ -198,5 +251,35 @@ private fun MessageItem(m: Message, onSeen: () -> Unit) {
             )
             if (unseen) HudButton("Seen", onSeen, kind = HudButtonKind.SMALL)
         }
+    }
+}
+
+private val clockFmt = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
+
+/** Hermóðr's hold: messages that ask to wait, wait while a meeting in your calendar runs. */
+@Composable
+private fun MeetingsPanel(s: MessagesUiState, onAllowed: () -> Unit) {
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onAllowed() }
+    Column(
+        Modifier.fillMaxWidth().hudPanel().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            HudLabel("Meetings", color = Hud.group, modifier = Modifier.weight(1f))
+            when {
+                !s.calendarAllowed -> HudButton("Allow calendar", { ask.launch(Manifest.permission.READ_CALENDAR) }, kind = HudButtonKind.SMALL)
+                s.busyUntil != null -> HudLabel("in a meeting", color = Hud.amber)
+                else -> HudLabel("free", color = Hud.green)
+            }
+        }
+        Text(
+            when {
+                !s.calendarAllowed -> "With your calendar, messages that ask to wait are held while you're in a meeting. It's read on this phone only."
+                s.busyUntil != null -> "Until ${clockFmt.format(s.busyUntil)}. Messages that ask to wait are held till then."
+                s.nextMeeting != null -> "Next: ${s.nextMeeting.title} at ${clockFmt.format(s.nextMeeting.begin)}."
+                else -> "Nothing more in your calendar today."
+            },
+            style = HudText.meta,
+        )
     }
 }

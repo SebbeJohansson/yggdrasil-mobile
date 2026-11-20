@@ -14,6 +14,8 @@ import io.github.sebbejohansson.yggdrasil.llm.litert.LiteRtLmProvider
 import io.github.sebbejohansson.yggdrasil.model.ModelCatalog
 import io.github.sebbejohansson.yggdrasil.model.ModelDownloader
 import io.github.sebbejohansson.yggdrasil.model.ModelStore
+import io.github.sebbejohansson.yggdrasil.norn.AndroidCalendarReader
+import io.github.sebbejohansson.yggdrasil.norn.CalendarBusySignal
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.AndroidPhoneReader
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.VedrfolnirService
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.VedrfolnirWorker
@@ -57,11 +59,15 @@ class AppContainer(private val app: Application) {
     private val db = YggDatabase(app)
     val notifier = AndroidNotifier(app)
     val hermodrSettings = HermodrSettings(app)
+
+    /** The phone's calendars, for Norn and for Hermóðr's hold. */
+    val calendar = AndroidCalendarReader(app)
     val hermodr = HermodrService(
         store = db.messages,
         notifier = notifier,
         scheduler = WorkManagerFlushScheduler(app),
         quietHours = { hermodrSettings.quietHours },
+        busy = CalendarBusySignal(calendar),
     )
     val gjallar = GjallarService(db.alerts, hermodr)
     val vedrfolnir = VedrfolnirService(AndroidPhoneReader(app), gjallar)

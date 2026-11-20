@@ -74,8 +74,11 @@ Hermóðr. Both keep their state in `ygg.db` (SQLite).
   settings.
 - Quiet hours (default 22:00–07:00) hold everything but urgent messages.
   WorkManager sends what was held when they end.
-- `hold` also waits while you're busy. Nothing reports busy yet; Norn's
-  calendars will.
+- `hold` also waits while you're in a meeting. Meetings come from the
+  phone's own calendars (`READ_CALENDAR`, asked for from the Messages tab,
+  and read on the phone only). A meeting is timed, shown as busy, and not
+  declined. Meetings less than 5 minutes apart count as one. Without
+  calendar access nothing is ever held for a meeting.
 - `push = false` lists a message in the app only.
 - When notifications are off, the message is kept with the reason, and the
   Messages tab says why.
