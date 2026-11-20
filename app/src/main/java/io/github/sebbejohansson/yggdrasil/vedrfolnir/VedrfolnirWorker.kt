@@ -16,6 +16,8 @@ class VedrfolnirWorker(context: Context, params: WorkerParameters) : CoroutineWo
         c.vedrfolnir.check()
         // A safety net for Dellingr: anything an alarm missed runs within 15 minutes.
         c.dellingr.tick()
+        // Huginn's look at the calendar: meetings starting soon, meetings just ended.
+        c.huginnRuntime.checkCalendar()
         return Result.success()
     }
 

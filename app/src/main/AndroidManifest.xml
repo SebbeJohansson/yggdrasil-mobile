@@ -54,6 +54,17 @@
         <receiver
             android:name=".hermodr.NotificationActionReceiver"
             android:exported="false" />
+        <!-- Huginn reads other apps' notifications, once you allow it in Settings → Notification access. -->
+        <service
+            android:name=".huginn.HuginnListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".dellingr.DellingrAlarmReceiver"
             android:exported="false" />

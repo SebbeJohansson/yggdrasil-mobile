@@ -107,5 +107,19 @@ class ScreenshotTest {
         }
         compose.onNodeWithText("Jobs").performClick()
         shot("5-jobs")
+        runBlocking {
+            c.people.names = setOf("Kim Svensson")
+            val now = java.time.Instant.now()
+            c.huginn.handle(io.github.sebbejohansson.yggdrasil.huginn.Sources.notification(
+                io.github.sebbejohansson.yggdrasil.huginn.PhoneNotification("a", "com.slack", "Slack", "Kim Svensson", "Got a minute before the review?", null, false, now),
+                c.people.names,
+            ))
+            c.huginn.handle(io.github.sebbejohansson.yggdrasil.huginn.Sources.notification(
+                io.github.sebbejohansson.yggdrasil.huginn.PhoneNotification("b", "com.microsoft.teams", "Teams", "Ops", "Prod is down, need you ASAP", null, false, now),
+                emptySet(),
+            ))
+        }
+        compose.onNodeWithText("Huginn").performClick()
+        shot("6-huginn")
     }
 }

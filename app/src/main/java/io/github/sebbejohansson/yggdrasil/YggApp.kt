@@ -7,6 +7,9 @@ import io.github.sebbejohansson.yggdrasil.core.YggDatabase
 import io.github.sebbejohansson.yggdrasil.dellingr.AndroidJobAlarm
 import io.github.sebbejohansson.yggdrasil.dellingr.DellingrService
 import io.github.sebbejohansson.yggdrasil.gjallar.GjallarService
+import io.github.sebbejohansson.yggdrasil.huginn.HuginnRuntime
+import io.github.sebbejohansson.yggdrasil.huginn.HuginnService
+import io.github.sebbejohansson.yggdrasil.huginn.PeopleSettings
 import io.github.sebbejohansson.yggdrasil.hermodr.AndroidNotifier
 import io.github.sebbejohansson.yggdrasil.hermodr.HermodrService
 import io.github.sebbejohansson.yggdrasil.hermodr.HermodrSettings
@@ -77,10 +80,15 @@ class AppContainer(private val app: Application) {
     val gjallar = GjallarService(db.alerts, hermodr)
     val vedrfolnir = VedrfolnirService(AndroidPhoneReader(app), gjallar)
     val jobAlarm = AndroidJobAlarm(app)
-    val dellingr = DellingrService(db.jobs, NornAsker(llm, calendar), hermodr, gjallar, jobAlarm)
+    private val nornAsker = NornAsker(llm, calendar)
+    val dellingr = DellingrService(db.jobs, nornAsker, hermodr, gjallar, jobAlarm)
+    val people = PeopleSettings(app)
+    val huginn = HuginnService(db.huginn, nornAsker, hermodr)
+    val huginnRuntime = HuginnRuntime(huginn, calendar)
 
     fun start() {
         notifier.createChannels()
+        huginnRuntime.follow(gjallar, appScope)
         VedrfolnirWorker.schedule(app)
         appScope.launch {
             hermodr.prune()
@@ -90,6 +98,8 @@ class AppContainer(private val app: Application) {
             vedrfolnir.check()
             // Runs what came due while the app wasn't running, and sets the next alarm.
             dellingr.tick()
+            huginn.prune()
+            huginnRuntime.checkCalendar()
         }
     }
 }

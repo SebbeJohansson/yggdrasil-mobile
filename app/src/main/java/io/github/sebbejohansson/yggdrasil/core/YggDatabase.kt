@@ -11,6 +11,13 @@ import io.github.sebbejohansson.yggdrasil.dellingr.JobStore
 import io.github.sebbejohansson.yggdrasil.dellingr.Run
 import io.github.sebbejohansson.yggdrasil.dellingr.RunState
 import io.github.sebbejohansson.yggdrasil.gjallar.Alert
+import io.github.sebbejohansson.yggdrasil.huginn.HuginnStore
+import io.github.sebbejohansson.yggdrasil.huginn.Reaction
+import io.github.sebbejohansson.yggdrasil.huginn.ReactionState
+import io.github.sebbejohansson.yggdrasil.huginn.Rule
+import io.github.sebbejohansson.yggdrasil.huginn.Trigger
+import org.json.JSONArray
+import org.json.JSONObject
 import io.github.sebbejohansson.yggdrasil.gjallar.AlertState
 import io.github.sebbejohansson.yggdrasil.gjallar.AlertStore
 import io.github.sebbejohansson.yggdrasil.gjallar.Severity
@@ -21,7 +28,7 @@ import io.github.sebbejohansson.yggdrasil.hermodr.Priority
 import java.time.Instant
 
 /** One SQLite file for every part's state: `ygg.db`. Times are epoch millis. */
-class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 2) {
+class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -46,10 +53,29 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         db.execSQL("CREATE INDEX messages_state ON messages(state)")
         db.execSQL("CREATE INDEX messages_tag ON messages(tag)")
         createDellingr(db)
+        createHuginn(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) createDellingr(db)
+        if (oldVersion < 3) createHuginn(db)
+    }
+
+    // Version 3: Huginn's rules, what it did, and the calendar events it already told.
+    private fun createHuginn(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE huginn_rules (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, built_in INTEGER NOT NULL, enabled INTEGER NOT NULL,
+                trigger_json TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL,
+                push INTEGER NOT NULL, hold INTEGER NOT NULL)""",
+        )
+        db.execSQL(
+            """CREATE TABLE huginn_reactions (
+                id TEXT PRIMARY KEY, rule_id TEXT NOT NULL, rule_name TEXT NOT NULL, event TEXT NOT NULL,
+                event_at INTEGER NOT NULL, title TEXT NOT NULL, text TEXT, state TEXT NOT NULL, reason TEXT, at INTEGER NOT NULL)""",
+        )
+        db.execSQL("CREATE INDEX huginn_reactions_at ON huginn_reactions(at)")
+        db.execSQL("CREATE TABLE huginn_seen (key TEXT PRIMARY KEY, at INTEGER NOT NULL)")
     }
 
     // Version 2: Dellingr's jobs and their runs.
@@ -72,6 +98,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
     val alerts: AlertStore by lazy { SqliteAlertStore(this) }
     val messages: MessageStore by lazy { SqliteMessageStore(this) }
     val jobs: JobStore by lazy { SqliteJobStore(this) }
+    val huginn: HuginnStore by lazy { SqliteHuginnStore(this) }
 }
 
 private fun Cursor.str(c: String): String = getString(getColumnIndexOrThrow(c))
@@ -230,5 +257,79 @@ private class SqliteJobStore(private val h: YggDatabase) : JobStore {
     ).all { run() }
     override fun forgetRunsBefore(t: Instant) {
         h.writableDatabase.delete("runs", "started_at < ?", arrayOf("${t.toEpochMilli()}"))
+    }
+}
+
+private class SqliteHuginnStore(private val h: YggDatabase) : HuginnStore {
+    private fun Trigger.json() = JSONObject().apply {
+        put("event", event); put("app", app); put("from", from); put("text", text); put("source", source)
+        important?.let { put("important", it) }
+        urgent?.let { put("urgent", it) }
+        direct?.let { put("direct", it) }
+        put("severity", JSONArray(severity.toList()))
+    }.toString()
+
+    private fun trigger(s: String): Trigger {
+        val o = JSONObject(s)
+        fun bool(k: String) = if (o.has(k)) o.getBoolean(k) else null
+        val sev = o.optJSONArray("severity")
+        return Trigger(
+            event = o.getString("event"), app = o.optString("app"), from = o.optString("from"), text = o.optString("text"),
+            important = bool("important"), urgent = bool("urgent"), direct = bool("direct"),
+            severity = if (sev == null) emptySet() else (0 until sev.length()).map { sev.getString(it) }.toSet(),
+            source = o.optString("source"),
+        )
+    }
+
+    private fun Cursor.rule() = Rule(
+        id = str("id"), name = str("name"), on = trigger(str("trigger_json")),
+        kind = io.github.sebbejohansson.yggdrasil.huginn.ActionKind.valueOf(str("kind")), text = str("text"),
+        push = long("push") != 0L, hold = long("hold") != 0L, enabled = long("enabled") != 0L, builtIn = long("built_in") != 0L,
+    )
+
+    private fun Cursor.reaction() = Reaction(
+        id = str("id"), ruleId = str("rule_id"), ruleName = str("rule_name"), event = str("event"),
+        eventAt = instant("event_at"), title = str("title"), text = strOrNull("text"),
+        state = ReactionState.valueOf(str("state")), reason = strOrNull("reason"), at = instant("at"),
+    )
+
+    override fun rules() = h.readableDatabase.query("huginn_rules", null, null, null, null, null, null).all { rule() }
+
+    override fun putRule(rule: Rule) {
+        val v = ContentValues().apply {
+            put("id", rule.id); put("name", rule.name); put("built_in", if (rule.builtIn) 1 else 0)
+            put("enabled", if (rule.enabled) 1 else 0); put("trigger_json", rule.on.json()); put("kind", rule.kind.name)
+            put("text", rule.text); put("push", if (rule.push) 1 else 0); put("hold", if (rule.hold) 1 else 0)
+        }
+        h.writableDatabase.insertWithOnConflict("huginn_rules", null, v, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    override fun deleteRule(id: String) {
+        h.writableDatabase.delete("huginn_rules", "id = ?", arrayOf(id))
+    }
+
+    override fun putReaction(r: Reaction) {
+        val v = ContentValues().apply {
+            put("id", r.id); put("rule_id", r.ruleId); put("rule_name", r.ruleName); put("event", r.event)
+            putInstant("event_at", r.eventAt); put("title", r.title); put("text", r.text); put("state", r.state.name)
+            put("reason", r.reason); putInstant("at", r.at)
+        }
+        h.writableDatabase.insertWithOnConflict("huginn_reactions", null, v, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    override fun reactions(limit: Int) =
+        h.readableDatabase.query("huginn_reactions", null, null, null, null, null, "at DESC", "$limit").all { reaction() }
+
+    override fun forgetReactionsBefore(t: Instant) {
+        h.writableDatabase.delete("huginn_reactions", "at < ?", arrayOf("${t.toEpochMilli()}"))
+    }
+
+    override fun firstSight(key: String, at: Instant): Boolean {
+        val v = ContentValues().apply { put("key", key); putInstant("at", at) }
+        return h.writableDatabase.insertWithOnConflict("huginn_seen", null, v, SQLiteDatabase.CONFLICT_IGNORE) != -1L
+    }
+
+    override fun forgetSightsBefore(t: Instant) {
+        h.writableDatabase.delete("huginn_seen", "at < ?", arrayOf("${t.toEpochMilli()}"))
     }
 }

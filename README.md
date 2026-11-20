@@ -27,9 +27,9 @@ the desktop Yggdrasil's dashboard (`ui/`):
 - **Alerts:** the alert list keeps its severity line and its Seen, Snooze 1h,
   1d and Mute buttons.
 
-| Norn | Alerts | Messages | Phone | Jobs |
-| --- | --- | --- | --- | --- |
-| ![Norn](docs/screenshots/1-norn.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) | ![Phone](docs/screenshots/4-phone.png) | ![Jobs](docs/screenshots/5-jobs.png) |
+| Norn | Alerts | Messages | Phone | Jobs | Huginn |
+| --- | --- | --- | --- | --- | --- |
+| ![Norn](docs/screenshots/1-norn.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) | ![Phone](docs/screenshots/4-phone.png) | ![Jobs](docs/screenshots/5-jobs.png) | ![Huginn](docs/screenshots/6-huginn.png) |
 
 **Bifröst at night**, as on the desktop: after the working day (09:00–17:00,
 Monday to Friday), when the app has gone 20 s untouched (5 min during
@@ -75,7 +75,7 @@ packages in one app, not processes talking HTTP.
 | **Gjallar** | alerts from every part, in one place | working |
 | **Hermóðr** | every message to you, as Android notifications | working |
 | **Dellingr** | runs the jobs you put on a clock | working |
-| **Huginn** | reacts to what just happened (incoming notifications) | planned |
+| **Huginn** | reacts to what just happened: messages, meetings, alerts | working |
 | **Veðrfölnir** | the phone itself: battery, storage, memory, heat | working |
 
 Sindri, Heimdall, Munin and Ratatoskr are desktop jobs and have no phone part.
@@ -160,6 +160,41 @@ part's rules:
   move it by some minutes. Veðrfölnir's 15-minute check also ticks
   Dellingr, so nothing waits longer than that. Alarms are set again after a
   restart.
+
+## Reactions: `huginn/`
+
+Huginn reacts to what just happened (Parts → Huginn), under the desktop
+part's rules. A rule is a trigger (an event and its filters) and an
+action: *Tell me* (a text with `{fields}` filled in) or *Ask Norn*. It's
+delivered through Hermóðr, with hold when it should wait out a meeting.
+
+| Event | From | Fields |
+| --- | --- | --- |
+| `notification.arrived` | other apps' notifications, the phone's inbox (`HuginnListener`, once you allow notification access) | `{from} {app} {summary} {text}` |
+| `calendar.soon`, `calendar.ended` | the phone's calendars: starting within 30 minutes, or ended in the last 20 | `{subject} {start} {end} {where} {notes}` |
+| `alert.opened`, `alert.escalated`, `alert.resolved` | Gjallar, muted alerts left out | `{title} {detail} {severity} {source}` |
+
+The built-in rules can be switched off, but never changed or removed:
+
+- **Message from someone who matters:** "People who matter" is the phone's
+  stand-in for the desktop's manager-or-above, a list of names you keep.
+  Told with high priority.
+- **Urgent message:** a one-to-one message that says urgent, ASAP,
+  emergency, akut or brådskande. Told with urgent priority.
+- **Meeting in the next half hour:** Norn writes a brief from the invite.
+  It waits out the meeting you're in.
+
+As on the desktop:
+
+- An event more than an hour old is skipped.
+- When two rules would tell you the same event the same way, only the
+  first one does.
+- Reactions are listed for 7 days.
+
+Notification text is read and matched on the phone. Only what a rule sends
+is kept, and the app's own notifications are never read. The calendar is
+looked at on start and with Veðrfölnir's 15-minute check, so a brief comes
+15 to 30 minutes before the meeting.
 
 ## Models: `llm/`
 

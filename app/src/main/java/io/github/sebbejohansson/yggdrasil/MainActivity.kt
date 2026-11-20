@@ -97,6 +97,8 @@ import io.github.sebbejohansson.yggdrasil.ui.PartState
 import io.github.sebbejohansson.yggdrasil.ui.ReactorPart
 import io.github.sebbejohansson.yggdrasil.ui.YggTheme
 import io.github.sebbejohansson.yggdrasil.dellingr.DellingrService
+import io.github.sebbejohansson.yggdrasil.huginn.HuginnScreen
+import io.github.sebbejohansson.yggdrasil.huginn.HuginnViewModel
 import io.github.sebbejohansson.yggdrasil.dellingr.JobsScreen
 import io.github.sebbejohansson.yggdrasil.dellingr.JobsViewModel
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.PhoneScreen
@@ -170,6 +172,8 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, 
     val messages: MessagesViewModel = viewModel(factory = MessagesViewModel.factory(container))
     val phone: PhoneViewModel = viewModel(factory = PhoneViewModel.factory(container))
     val jobs: JobsViewModel = viewModel(factory = JobsViewModel.factory(container))
+    val huginnVm: HuginnViewModel = viewModel(factory = HuginnViewModel.factory(container, LocalContext.current))
+    val huginnState by huginnVm.state.collectAsStateWithLifecycle()
     val jobsState by jobs.state.collectAsStateWithLifecycle()
     val failingJobs = jobsState.jobs.count { it.failures >= DellingrService.FAILING_AFTER }
     val phoneFailing by container.vedrfolnir.failing.collectAsStateWithLifecycle()
@@ -186,6 +190,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, 
         messages.recheckPermission()
         chat.refreshProviders()
         jobs.recheck()
+        huginnVm.recheck()
         onPauseOrDispose { }
     }
 
@@ -208,6 +213,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, 
         ReactorPart("Hermóðr", if (messageState.blocked != null) PartState.TROUBLED else PartState.UP),
         ReactorPart("Veðrfölnir", if (phoneFailing.isEmpty()) PartState.UP else PartState.TROUBLED),
         ReactorPart("Dellingr", if (failingJobs > 0) PartState.TROUBLED else PartState.UP),
+        ReactorPart("Huginn", if (huginnState.notificationsAllowed) PartState.UP else PartState.TROUBLED),
         // Optional: not set up is dark (not running), not troubled.
         ReactorPart("Claude", if (chatState.providers.firstOrNull { it.leavesDevice }?.status == ProviderStatus.Ready) PartState.UP else PartState.DOWN),
     )
@@ -257,7 +263,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, 
                 when (tab) {
                     MainActivity.TAB_ALERTS -> AlertsScreen(alerts)
                     MainActivity.TAB_MESSAGES -> MessagesScreen(messages)
-                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs, container.bootSettings, onRunBoot = { boot = BootKind.FULL })
+                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs, huginnVm, container.bootSettings, onRunBoot = { boot = BootKind.FULL })
                     else -> ChatScreen(chat)
                 }
             }
@@ -399,14 +405,14 @@ private fun Modifier.topLine(c: Color) = drawBehind {
 
 /** The parts with no tab of their own, under page tabs as on the dashboard (`PageTabs.vue`). */
 @Composable
-private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel, bootSettings: BootSettings, onRunBoot: () -> Unit) {
+private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel, huginn: HuginnViewModel, bootSettings: BootSettings, onRunBoot: () -> Unit) {
     var page by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 8.dp).bottomLine(Color(0xFF17323F)),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            listOf("Phone", "Jobs", "Boot").forEachIndexed { i, label ->
+            listOf("Phone", "Jobs", "Huginn", "Boot").forEachIndexed { i, label ->
                 val on = page == i
                 Text(
                     label,
@@ -414,7 +420,7 @@ private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel, bootSettings
                     modifier = Modifier
                         .clickable { page = i }
                         .then(if (on) Modifier.bottomLine(Hud.cyan, 2.dp) else Modifier)
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
                 )
             }
         }
@@ -422,6 +428,7 @@ private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel, bootSettings
             when (page) {
                 0 -> PhoneScreen(phone)
                 1 -> JobsScreen(jobs)
+                2 -> HuginnScreen(huginn)
                 else -> BootSettingsScreen(bootSettings, onRunBoot)
             }
         }
