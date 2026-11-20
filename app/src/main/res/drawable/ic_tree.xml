@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- my-widget's brand tree: a trunk, three pairs of branches, roots, and a square bud. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="30"
+    android:viewportHeight="30">
+    <path
+        android:pathData="M15,3v24M15,10l-7,-5M15,10l7,-5M15,17l-9,-3M15,17l9,-3M15,27h-6M15,27h6"
+        android:strokeColor="#4FD8F0"
+        android:strokeLineCap="square"
+        android:strokeWidth="1.6" />
+    <path
+        android:fillColor="#4FD8F0"
+        android:pathData="M13,1h4v4h-4z" />
+</vector>

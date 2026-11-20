@@ -2,24 +2,34 @@ package io.github.sebbejohansson.yggdrasil.hermodr
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import io.github.sebbejohansson.yggdrasil.ui.Hud
+import io.github.sebbejohansson.yggdrasil.ui.HudButton
+import io.github.sebbejohansson.yggdrasil.ui.HudButtonKind
+import io.github.sebbejohansson.yggdrasil.ui.HudLabel
+import io.github.sebbejohansson.yggdrasil.ui.HudSection
+import io.github.sebbejohansson.yggdrasil.ui.HudText
+import io.github.sebbejohansson.yggdrasil.ui.HudToggle
+import io.github.sebbejohansson.yggdrasil.ui.hudPanel
+import io.github.sebbejohansson.yggdrasil.ui.leftStripe
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -85,73 +95,108 @@ class MessagesViewModel(
 
 private val timeFmt = DateTimeFormatter.ofPattern("d MMM HH:mm").withZone(ZoneId.systemDefault())
 
+private fun Priority.color(): Color = when (this) {
+    Priority.LOW -> Hud.overlay0
+    Priority.NORMAL -> Hud.cyan
+    Priority.HIGH -> Hud.yellow
+    Priority.URGENT -> Hud.red
+}
+
+/** Hermóðr: every message for you, newest first, with quiet hours on top. */
 @Composable
 fun MessagesScreen(vm: MessagesViewModel, modifier: Modifier = Modifier) {
     val s by vm.state.collectAsStateWithLifecycle()
+    val unseen = s.messages.count { it.seenAt == null }
+    val held = s.messages.count { it.state == MessageState.HELD }
     LazyColumn(
         modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        item {
+            Column {
+                Text("Hermóðr", style = HudText.title)
+                HudLabel(
+                    listOfNotNull(
+                        if (unseen > 0) "$unseen unread" else "all read",
+                        if (held > 0) "$held held" else null,
+                        "last 7 days",
+                    ).joinToString(" · "),
+                    color = if (unseen > 0) Hud.amber else Hud.overlay2,
+                )
+            }
+        }
         s.blocked?.let { why ->
             item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                    Text("Messages stay in this list only: $why.", Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+                Column(Modifier.fillMaxWidth().hudPanel(warn = true).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    HudLabel("Notifications off", color = Hud.amber)
+                    Text("Messages stay in this list only: $why.", style = HudText.small)
                 }
             }
         }
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth().hudPanel().padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Quiet hours", style = MaterialTheme.typography.titleSmall)
+                    HudLabel("Quiet hours", color = Hud.group)
                     Text(
-                        "${s.quietHours.start}–${s.quietHours.end}: only urgent messages go out",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        "${s.quietHours.start}–${s.quietHours.end} · only urgent goes out",
+                        style = HudText.meta,
                     )
                 }
-                Switch(checked = s.quietHours.enabled, onCheckedChange = vm::setQuietHours)
+                HudToggle(s.quietHours.enabled, vm::setQuietHours)
             }
         }
+        item { HudSection("Messages", Modifier.padding(top = 8.dp)) }
+        if (s.messages.isEmpty()) {
+            item {
+                Text(
+                    "No messages in the last 7 days.",
+                    style = HudText.small.copy(color = Hud.overlay0, textAlign = TextAlign.Center),
+                    modifier = Modifier.fillMaxWidth().padding(24.dp),
+                )
+            }
+        }
+        items(s.messages, key = { it.id }) { m -> MessageItem(m, onSeen = { vm.markSeen(m) }) }
+        item { HudSection("Test", Modifier.padding(top = 12.dp)) }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Test:", style = MaterialTheme.typography.labelMedium)
-                AssistChip(onClick = { vm.sendTest(Priority.NORMAL) }, label = { Text("normal") })
-                AssistChip(onClick = { vm.sendTest(Priority.URGENT) }, label = { Text("urgent") })
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                HudButton("Normal", { vm.sendTest(Priority.NORMAL) }, kind = HudButtonKind.SMALL)
+                HudButton("Urgent", { vm.sendTest(Priority.URGENT) }, kind = HudButtonKind.SMALL)
             }
         }
-        if (s.messages.isEmpty()) item { Text("No messages in the last 7 days.", style = MaterialTheme.typography.bodyMedium) }
-        items(s.messages, key = { it.id }) { m -> MessageCard(m, onSeen = { vm.markSeen(m) }) }
     }
 }
 
 @Composable
-private fun MessageCard(m: Message, onSeen: () -> Unit) {
+private fun MessageItem(m: Message, onSeen: () -> Unit) {
     val unseen = m.seenAt == null
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (unseen) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
+    Column(
+        Modifier.fillMaxWidth().alpha(if (unseen) 1f else 0.55f).leftStripe(m.priority.color()).padding(start = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(m.title, style = MaterialTheme.typography.titleSmall)
-            m.text?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-            val status = when (m.state) {
-                MessageState.HELD -> "held until the quiet ends"
-                MessageState.SENT -> "sent"
-                MessageState.LISTED -> "listed only"
-                MessageState.FAILED -> "not shown: ${m.failure}"
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "${m.sender} · ${m.priority.name.lowercase()} · $status · ${timeFmt.format(m.createdAt)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
-                if (unseen) TextButton(onClick = onSeen) { Text("Seen") }
-            }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(m.title, style = HudText.small, modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            HudLabel(m.priority.name, color = m.priority.color(), style = HudText.label.copy(fontSize = 10.sp))
+        }
+        m.text?.let { Text(it, style = HudText.meta.copy(color = Hud.subtext0)) }
+        val status = when (m.state) {
+            MessageState.HELD -> "held"
+            MessageState.SENT -> "sent"
+            MessageState.LISTED -> "listed only"
+            // The banner above says why; once is enough.
+            MessageState.FAILED -> "not shown"
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "${m.sender} · $status · ${timeFmt.format(m.createdAt)}",
+                style = HudText.meta.copy(color = if (m.state == MessageState.FAILED) Hud.red else Hud.overlay0),
+                modifier = Modifier.weight(1f),
+            )
+            if (unseen) HudButton("Seen", onSeen, kind = HudButtonKind.SMALL)
         }
     }
 }

@@ -8,6 +8,32 @@ The model runs on the phone too: Gemma 4 through
 added as a second option, through Claude Code running on the phone
 ([docs/claude-bridge.md](docs/claude-bridge.md)).
 
+## Look
+
+The same HUD as [my-widget](https://github.com/SebbeJohansson/my-widget),
+the desktop Yggdrasil's dashboard (`ui/`):
+
+- **Ground:** near-black, with the dot grid and its rolling wave, rising
+  specks, and a horizon glow in the colour of the time of day (`Backdrop`).
+  When something new needs you, the next wave passes amber.
+- **Colour:** cyan for what is normal, amber for what wants you.
+- **Panels:** corner brackets, turning amber when they warn.
+- **Fonts:** Rajdhani for headings and numbers, JetBrains Mono for labels,
+  Inter for reading. All are bundled; their licences are in `docs/licenses`.
+- **Top bar:** the arc reactor (`ArcReactor`), one segment per part. Tap it
+  for the alerts.
+- **Chat:** Norn's chat reads like the dashboard's ask panel. Your lines are
+  cyan after `›`. Norn's lines sit under its name, with a line down the left.
+- **Alerts:** the alert list keeps its severity line and its Seen, Snooze 1h,
+  1d and Mute buttons.
+
+| Norn | Alerts | Messages |
+| --- | --- | --- |
+| ![Norn](docs/screenshots/1-norn.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) |
+
+`ScreenshotTest` draws these on the JVM (Robolectric) into
+`app/build/screenshots/`.
+
 ## Parts
 
 The parts keep their Yggdrasil names and jobs. On the phone they are

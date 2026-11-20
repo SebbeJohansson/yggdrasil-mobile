@@ -2,24 +2,25 @@ package io.github.sebbejohansson.yggdrasil.gjallar
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -27,6 +28,14 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.sebbejohansson.yggdrasil.AppContainer
+import io.github.sebbejohansson.yggdrasil.ui.Hud
+import io.github.sebbejohansson.yggdrasil.ui.HudButton
+import io.github.sebbejohansson.yggdrasil.ui.HudButtonKind
+import io.github.sebbejohansson.yggdrasil.ui.HudLabel
+import io.github.sebbejohansson.yggdrasil.ui.HudSection
+import io.github.sebbejohansson.yggdrasil.ui.HudText
+import io.github.sebbejohansson.yggdrasil.ui.hudPanel
+import io.github.sebbejohansson.yggdrasil.ui.leftStripe
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.mapLatest
@@ -52,7 +61,7 @@ class AlertsViewModel(private val gjallar: GjallarService) : ViewModel() {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AlertsUiState())
 
     fun acknowledge(a: Alert) = viewModelScope.launch { gjallar.acknowledge(a.id) }
-    fun snoozeHour(a: Alert) = viewModelScope.launch { gjallar.snooze(a.id, Instant.now().plus(Duration.ofHours(1))) }
+    fun snooze(a: Alert, hours: Long) = viewModelScope.launch { gjallar.snooze(a.id, Instant.now().plus(Duration.ofHours(hours))) }
     fun setMuted(a: Alert, muted: Boolean) = viewModelScope.launch { gjallar.setMuted(a.source, a.key, muted) }
 
     // To see the whole path on the phone: Gjallar → Hermóðr → notification.
@@ -68,69 +77,104 @@ class AlertsViewModel(private val gjallar: GjallarService) : ViewModel() {
 
 private val timeFmt = DateTimeFormatter.ofPattern("d MMM HH:mm").withZone(ZoneId.systemDefault())
 
+private fun Severity.color(): Color = when (this) {
+    Severity.INFO -> Hud.cyan
+    Severity.WARNING -> Hud.yellow
+    Severity.CRITICAL -> Hud.red
+}
+
+/** Gjallar, as the dashboard's alert list: a severity line down the left of each. */
 @Composable
 fun AlertsScreen(vm: AlertsViewModel, modifier: Modifier = Modifier) {
     val s by vm.state.collectAsStateWithLifecycle()
+    val open = s.active.count { it.alert.state == AlertState.OPEN }
     LazyColumn(
         modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Test:", style = MaterialTheme.typography.labelMedium)
-                AssistChip(onClick = { vm.raiseTest(Severity.WARNING) }, label = { Text("warning") })
-                AssistChip(onClick = { vm.raiseTest(Severity.CRITICAL) }, label = { Text("critical") })
-                AssistChip(onClick = vm::resolveTests, label = { Text("resolve") })
-            }
-        }
-        if (s.active.isEmpty()) {
-            item { Text("No open alerts.", style = MaterialTheme.typography.bodyMedium) }
-        }
-        items(s.active, key = { it.alert.id }) { row -> ActiveAlert(row, vm) }
-        if (s.resolved.isNotEmpty()) {
-            item { Text("Resolved", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp)) }
-            items(s.resolved, key = { "r${it.id}" }) { a ->
-                Text(
-                    "${a.title} · ${a.source} · ${a.resolvedAt?.let(timeFmt::format) ?: ""}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Column {
+                Text("Gjallar", style = HudText.title)
+                HudLabel(
+                    when {
+                        open > 0 -> "$open open · ${s.active.size - open} seen"
+                        s.active.isNotEmpty() -> "${s.active.size} seen"
+                        else -> "all quiet"
+                    },
+                    color = if (open > 0) Hud.amber else Hud.overlay2,
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun ActiveAlert(row: AlertRow, vm: AlertsViewModel) {
-    val a = row.alert
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(a.severity.name.lowercase(), color = severityColor(a.severity), style = MaterialTheme.typography.labelMedium)
-                Text(a.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        item { HudSection("Active", Modifier.padding(top = 8.dp)) }
+        if (s.active.isEmpty()) {
+            item {
+                Text(
+                    "Nothing wants you.",
+                    style = HudText.small.copy(color = Hud.overlay0, textAlign = TextAlign.Center),
+                    modifier = Modifier.fillMaxWidth().padding(24.dp),
+                )
             }
-            a.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-            val extras = buildList {
-                add("from ${a.source}")
-                add("since ${timeFmt.format(a.openedAt)}")
-                if (a.state == AlertState.ACKNOWLEDGED) add("acknowledged")
-                if (a.snoozedUntil?.isAfter(Instant.now()) == true) add("snoozed until ${timeFmt.format(a.snoozedUntil)}")
-                if (row.muted) add("muted")
+        } else {
+            item {
+                Column(
+                    Modifier.fillMaxWidth().hudPanel(warn = open > 0).padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    s.active.forEach { row -> AlertItem(row, vm) }
+                }
             }
-            Text(extras.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (a.state == AlertState.OPEN) OutlinedButton(onClick = { vm.acknowledge(a) }) { Text("Acknowledge") }
-                TextButton(onClick = { vm.snoozeHour(a) }) { Text("Snooze 1 h") }
-                TextButton(onClick = { vm.setMuted(a, !row.muted) }) { Text(if (row.muted) "Unmute" else "Mute") }
+        }
+        if (s.resolved.isNotEmpty()) {
+            item { HudSection("Healed", Modifier.padding(top = 12.dp)) }
+            items(s.resolved, key = { "r${it.id}" }) { a ->
+                Row(
+                    Modifier.fillMaxWidth().alpha(0.55f).leftStripe(Hud.green).padding(start = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(a.title, style = HudText.small, modifier = Modifier.weight(1f))
+                    Text("${a.source} · ${a.resolvedAt?.let(timeFmt::format) ?: ""}", style = HudText.meta)
+                }
+            }
+        }
+        item { HudSection("Test", Modifier.padding(top = 12.dp)) }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                HudButton("Warning", { vm.raiseTest(Severity.WARNING) }, kind = HudButtonKind.SMALL)
+                HudButton("Critical", { vm.raiseTest(Severity.CRITICAL) }, kind = HudButtonKind.SMALL)
+                HudButton("Resolve", vm::resolveTests, kind = HudButtonKind.SMALL)
             }
         }
     }
 }
 
 @Composable
-private fun severityColor(s: Severity): Color = when (s) {
-    Severity.INFO -> MaterialTheme.colorScheme.onSurfaceVariant
-    Severity.WARNING -> MaterialTheme.colorScheme.tertiary
-    Severity.CRITICAL -> MaterialTheme.colorScheme.error
+private fun AlertItem(row: AlertRow, vm: AlertsViewModel) {
+    val a = row.alert
+    val quiet = a.state == AlertState.ACKNOWLEDGED || row.muted || a.snoozedUntil?.isAfter(Instant.now()) == true
+    Column(
+        Modifier.fillMaxWidth().alpha(if (quiet) 0.55f else 1f).leftStripe(a.severity.color()).padding(start = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(a.title, style = HudText.small.copy(color = Hud.text), modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            HudLabel(a.severity.name, color = a.severity.color(), style = HudText.label.copy(fontSize = 10.sp))
+        }
+        val meta = buildList {
+            add(a.source)
+            add("since ${timeFmt.format(a.openedAt)}")
+            if (a.state == AlertState.ACKNOWLEDGED) add("seen")
+            a.snoozedUntil?.takeIf { it.isAfter(Instant.now()) }?.let { add("snoozed to ${timeFmt.format(it)}") }
+            if (row.muted) add("muted")
+        }
+        Text(meta.joinToString(" · "), style = HudText.meta)
+        a.detail?.let { Text(it, style = HudText.meta) }
+        Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (a.state == AlertState.OPEN) HudButton("Seen", { vm.acknowledge(a) }, kind = HudButtonKind.SMALL)
+            HudButton("Snooze 1h", { vm.snooze(a, 1) }, kind = HudButtonKind.SMALL)
+            HudButton("1d", { vm.snooze(a, 24) }, kind = HudButtonKind.SMALL)
+            HudButton(if (row.muted) "Unmute" else "Mute", { vm.setMuted(a, !row.muted) }, kind = HudButtonKind.SMALL)
+        }
+    }
 }

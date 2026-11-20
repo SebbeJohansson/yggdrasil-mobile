@@ -63,6 +63,7 @@ class AndroidNotifier(private val context: Context) : Notifier {
 
         val b = NotificationCompat.Builder(context, channelId(message.priority))
             .setSmallIcon(R.drawable.ic_notification)
+            .setColor(if (message.priority == Priority.URGENT) 0xFFFF7A8A.toInt() else 0xFF4FD8F0.toInt())
             .setContentTitle(message.title)
             .setContentText(message.text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message.text))
