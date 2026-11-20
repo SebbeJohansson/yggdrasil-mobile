@@ -27,9 +27,9 @@ the desktop Yggdrasil's dashboard (`ui/`):
 - **Alerts:** the alert list keeps its severity line and its Seen, Snooze 1h,
   1d and Mute buttons.
 
-| Norn | Alerts | Messages |
-| --- | --- | --- |
-| ![Norn](docs/screenshots/1-norn.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) |
+| Norn | Alerts | Messages | Phone |
+| --- | --- | --- | --- |
+| ![Norn](docs/screenshots/1-norn.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) | ![Phone](docs/screenshots/4-phone.png) |
 
 `ScreenshotTest` draws these on the JVM (Robolectric) into
 `app/build/screenshots/`.
@@ -46,7 +46,7 @@ packages in one app, not processes talking HTTP.
 | **Hermóðr** | every message to you, as Android notifications | working |
 | **Dellingr** | scheduled jobs, on WorkManager | planned |
 | **Huginn** | reacts to what just happened (incoming notifications) | planned |
-| **Veðrfölnir** | the phone itself: battery, storage, heat, network | planned |
+| **Veðrfölnir** | the phone itself: battery, storage, memory, heat | working |
 
 Sindri, Heimdall, Munin and Ratatoskr are desktop jobs and have no phone part.
 
@@ -84,6 +84,23 @@ Hermóðr. Both keep their state in `ygg.db` (SQLite).
 Notification buttons: **Seen** on messages, **Acknowledge** and **Snooze 1 h**
 on alerts. The Alerts and Messages tabs have test buttons that run the
 whole path on the phone.
+
+## The phone: `vedrfolnir/`
+
+Veðrfölnir watches the phone as the desktop part watches the machine. One
+problem is one alert with Gjallar (source `vedrfolnir`), and the alert
+resolves by itself when its check passes again. It fixes nothing.
+
+| Check | Warning | Critical |
+| --- | --- | --- |
+| `battery-low` | 15% or less and not charging | 5% |
+| `storage` | 90% full | 95% |
+| `heat` | Android's thermal status is severe, or the battery is 45 °C or more | Android's thermal status is critical |
+
+It checks when the app starts, and every 15 minutes through WorkManager,
+which is Android's shortest period. The Phone tab shows the readouts live,
+every 5 s while it's open, and has a segment on the arc reactor. A reading
+the phone doesn't give, such as a battery level, raises nothing.
 
 ## Models: `llm/`
 

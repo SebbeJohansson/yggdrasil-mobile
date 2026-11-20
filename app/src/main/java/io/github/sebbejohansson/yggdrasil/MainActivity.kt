@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -74,6 +75,8 @@ import io.github.sebbejohansson.yggdrasil.ui.HudText
 import io.github.sebbejohansson.yggdrasil.ui.PartState
 import io.github.sebbejohansson.yggdrasil.ui.ReactorPart
 import io.github.sebbejohansson.yggdrasil.ui.YggTheme
+import io.github.sebbejohansson.yggdrasil.vedrfolnir.PhoneScreen
+import io.github.sebbejohansson.yggdrasil.vedrfolnir.PhoneViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.time.LocalTime
@@ -105,6 +108,7 @@ class MainActivity : ComponentActivity() {
         const val TAB_CHAT = 0
         const val TAB_ALERTS = 1
         const val TAB_MESSAGES = 2
+        const val TAB_PHONE = 3
     }
 }
 
@@ -120,6 +124,8 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
     val chat: ChatViewModel = viewModel(factory = ChatViewModel.factory(container))
     val alerts: AlertsViewModel = viewModel(factory = AlertsViewModel.factory(container))
     val messages: MessagesViewModel = viewModel(factory = MessagesViewModel.factory(container))
+    val phone: PhoneViewModel = viewModel(factory = PhoneViewModel.factory(container))
+    val phoneFailing by container.vedrfolnir.failing.collectAsStateWithLifecycle()
 
     // Ask once for notifications (Android 13+), and look again on every return:
     // the user may have changed it in Android's settings.
@@ -152,6 +158,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
             },
         ),
         ReactorPart("Hermóðr", if (messageState.blocked != null) PartState.TROUBLED else PartState.UP),
+        ReactorPart("Veðrfölnir", if (phoneFailing.isEmpty()) PartState.UP else PartState.TROUBLED),
         ReactorPart("Claude", chatState.providers.firstOrNull { it.leavesDevice }?.status.toPart()),
     )
 
@@ -163,6 +170,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
                 when (tab) {
                     MainActivity.TAB_ALERTS -> AlertsScreen(alerts)
                     MainActivity.TAB_MESSAGES -> MessagesScreen(messages)
+                    MainActivity.TAB_PHONE -> PhoneScreen(phone)
                     else -> ChatScreen(chat)
                 }
             }
@@ -172,6 +180,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
                     Tab(tab == MainActivity.TAB_CHAT, "Norn", 0) { tab = MainActivity.TAB_CHAT }
                     Tab(tab == MainActivity.TAB_ALERTS, "Alerts", openAlerts) { tab = MainActivity.TAB_ALERTS }
                     Tab(tab == MainActivity.TAB_MESSAGES, "Messages", unseen) { tab = MainActivity.TAB_MESSAGES }
+                    Tab(tab == MainActivity.TAB_PHONE, "Phone", phoneFailing.size) { tab = MainActivity.TAB_PHONE }
                 }
             }
         }
@@ -225,7 +234,7 @@ private fun TabBar(content: @Composable RowScope.() -> Unit) {
             .topLine(Hud.surface0)
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         content = content,
     )
 }
@@ -246,13 +255,15 @@ private fun RowScope.Tab(selected: Boolean, label: String, count: Int, onClick: 
             label.uppercase(),
             style = HudText.label.copy(
                 fontFamily = HudFonts.mono,
-                fontSize = 12.sp,
+                // Four tabs share a phone's width: a little tighter than the dashboard's labels.
+                fontSize = 11.sp,
+                letterSpacing = 0.08.em,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 color = if (selected) Hud.onCyan else Hud.subtext1,
             ),
         )
         if (count > 0) {
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(4.dp))
             HudBadge(count, color = if (selected) Hud.onCyan else Hud.amber)
         }
     }

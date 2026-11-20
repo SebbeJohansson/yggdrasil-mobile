@@ -1,6 +1,7 @@
 package io.github.sebbejohansson.yggdrasil
 
 import android.app.Application
+import androidx.work.Configuration
 import io.github.sebbejohansson.yggdrasil.core.YggDatabase
 import io.github.sebbejohansson.yggdrasil.gjallar.GjallarService
 import io.github.sebbejohansson.yggdrasil.hermodr.AndroidNotifier
@@ -13,14 +14,22 @@ import io.github.sebbejohansson.yggdrasil.llm.litert.LiteRtLmProvider
 import io.github.sebbejohansson.yggdrasil.model.ModelCatalog
 import io.github.sebbejohansson.yggdrasil.model.ModelDownloader
 import io.github.sebbejohansson.yggdrasil.model.ModelStore
+import io.github.sebbejohansson.yggdrasil.vedrfolnir.AndroidPhoneReader
+import io.github.sebbejohansson.yggdrasil.vedrfolnir.VedrfolnirService
+import io.github.sebbejohansson.yggdrasil.vedrfolnir.VedrfolnirWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-class YggApp : Application() {
+class YggApp : Application(), Configuration.Provider {
     lateinit var container: AppContainer
         private set
+
+    // WorkManager starts on first use from this, not from its startup provider
+    // (removed in the manifest), so it also works where that provider doesn't run.
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().build()
 
     override fun onCreate() {
         super.onCreate()
@@ -30,7 +39,7 @@ class YggApp : Application() {
 }
 
 /** Everything the parts share. Built once, by hand: no DI framework yet. */
-class AppContainer(app: Application) {
+class AppContainer(private val app: Application) {
     /** Lives as long as the process; for work that must outlive a screen. */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -55,14 +64,17 @@ class AppContainer(app: Application) {
         quietHours = { hermodrSettings.quietHours },
     )
     val gjallar = GjallarService(db.alerts, hermodr)
+    val vedrfolnir = VedrfolnirService(AndroidPhoneReader(app), gjallar)
 
     fun start() {
         notifier.createChannels()
+        VedrfolnirWorker.schedule(app)
         appScope.launch {
             hermodr.prune()
             gjallar.prune()
             // Anything held past its time (the phone was off, or Doze ran late).
             hermodr.flushHeld()
+            vedrfolnir.check()
         }
     }
 }

@@ -1,6 +1,10 @@
 package io.github.sebbejohansson.yggdrasil
 
+import android.app.ActivityManager
+import android.content.Intent
 import android.graphics.Bitmap
+import android.os.BatteryManager
+import android.os.Environment
 import android.os.Looper
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
@@ -20,6 +24,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowStatFs
 import java.io.File
 
 /**
@@ -67,5 +72,20 @@ class ScreenshotTest {
         shot("2-alerts")
         compose.onNodeWithText("MESSAGES").performClick()
         shot("3-messages")
+        // Robolectric's phone has no battery or disk: give it a believable one.
+        val app = ApplicationProvider.getApplicationContext<YggApp>()
+        app.sendStickyBroadcast(
+            Intent(Intent.ACTION_BATTERY_CHANGED)
+                .putExtra(BatteryManager.EXTRA_LEVEL, 13).putExtra(BatteryManager.EXTRA_SCALE, 100)
+                .putExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_DISCHARGING)
+                .putExtra(BatteryManager.EXTRA_TEMPERATURE, 312),
+        )
+        ShadowStatFs.registerStats(Environment.getDataDirectory(), 62_500_000, 27_000_000, 27_000_000)
+        shadowOf(app.getSystemService(ActivityManager::class.java)).setMemoryInfo(
+            ActivityManager.MemoryInfo().apply { totalMem = 16_000_000_000; availMem = 6_400_000_000 },
+        )
+        runBlocking { c.vedrfolnir.check() }
+        compose.onNodeWithText("PHONE").performClick()
+        shot("4-phone")
     }
 }
