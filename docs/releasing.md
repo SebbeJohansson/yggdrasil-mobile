@@ -1,12 +1,18 @@
 # Releasing
 
-Push a tag, and GitHub Actions builds a signed APK and publishes it as a
-GitHub Release (`.github/workflows/release.yml`):
+GitHub Actions builds a signed APK and publishes it as a GitHub Release
+(`.github/workflows/release.yml`). Start it in either of two ways:
 
-```bash
-git tag v0.2.0
-git push origin v0.2.0
-```
+- **From GitHub (works on the phone):** Actions → release → Run workflow,
+  pick the branch (`main`), and type the version, e.g. `0.2.0`. The workflow
+  makes the tag `v0.2.0` on the commit it built. It stops if that tag
+  already exists.
+- **From a terminal:**
+
+  ```bash
+  git tag v0.2.0
+  git push origin v0.2.0
+  ```
 
 - The tag sets the version: `v1.2.3` is versionName `1.2.3` and versionCode
   `10203`. Each part must stay below 100.

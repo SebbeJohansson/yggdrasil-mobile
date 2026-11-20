@@ -1,16 +1,22 @@
 name: release
 
-# Push a tag like v0.2.0 to build a signed APK and publish it as a GitHub
-# Release. Needs the signing secrets in docs/releasing.md.
+# Builds a signed APK and publishes it as a GitHub Release. Start it by
+# pushing a tag like v0.2.0, or with "Run workflow" on GitHub (it then makes
+# the tag on the commit it built). Needs the signing secrets in docs/releasing.md.
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.2.0 (becomes tag v0.2.0)"
+        required: true
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -19,16 +25,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read the version from the tag
+      - name: Read the version
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          tag="${GITHUB_REF_NAME}"
-          version="${tag#v}"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            version="${INPUT_VERSION#v}"
+            tag="v$version"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "::error::Tag $tag already exists. Pick a new version."
+              exit 1
+            fi
+          else
+            tag="${GITHUB_REF_NAME}"
+            version="${tag#v}"
+          fi
           if ! [[ "$version" =~ ^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Tag '$tag' isn't vMAJOR.MINOR.PATCH with each part below 100 (e.g. v0.2.0, v1.0.0-rc.1)."
             exit 1
           fi
           echo "name=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if [[ "$version" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
 
       - name: Check the signing secrets
@@ -85,7 +103,8 @@ jobs:
         run: |
           flags=(--generate-notes --title "Yggdrasil ${{ steps.version.outputs.name }}")
           if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then flags+=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" "${flags[@]}" \
+          # On a manual run the tag doesn't exist yet: --target makes it on the commit built here.
+          gh release create "${{ steps.version.outputs.tag }}" --target "$GITHUB_SHA" "${flags[@]}" \
             "${{ steps.apk.outputs.file }}" "${{ steps.apk.outputs.file }}.sha256"
 
       - name: Remove the keystore
