@@ -18,6 +18,8 @@ class VedrfolnirWorker(context: Context, params: WorkerParameters) : CoroutineWo
         c.dellingr.tick()
         // Huginn's look at the calendar: meetings starting soon, meetings just ended.
         c.huginnRuntime.checkCalendar()
+        // Sága catches up with Mímir at least this often while the app is closed.
+        c.saga.sync()
         return Result.success()
     }
 

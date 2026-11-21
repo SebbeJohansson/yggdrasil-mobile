@@ -77,6 +77,7 @@ packages in one app, not processes talking HTTP.
 | **Dellingr** | runs the jobs you put on a clock | working |
 | **Huginn** | reacts to what just happened: messages, meetings, alerts | working |
 | **Veðrfölnir** | the phone itself: battery, storage, memory, heat | working |
+| **Sága** | keeps the phone's alerts and the desktop's in step, through Mímir | working (alerts) |
 
 Sindri, Heimdall, Munin and Ratatoskr are desktop jobs and have no phone part.
 
@@ -122,6 +123,33 @@ Hermóðr. Both keep their state in `ygg.db` (SQLite).
 Notification buttons: **Seen** on messages, **Acknowledge** and **Snooze 1 h**
 on alerts. The Alerts and Messages tabs have test buttons that run the
 whole path on the phone.
+
+## Syncing with the desktop: `saga/`
+
+Sága keeps the phone's alerts and the desktop's in step through
+[Mímir](https://github.com/SebbeJohansson/mimir), a small event log on your
+VPS, reached over Tailscale. The desktop runs the same part (`ygg saga`).
+Either side can be off: what the other sent waits in Mímir until it starts.
+What each event means is in Mímir's `docs/events.md`.
+
+- **The phone's alerts** go to Mímir each time something about one changes
+  (opened, seen, snoozed, muted, resolved), not each time it is raised again.
+  On the desktop they show in Gjallar as source `phone`, and are never pushed
+  there: the phone already told you.
+- **The desktop's alerts** are listed in the Alerts tab under *Desktop*, and
+  never pushed here. **Seen**, **Snooze** and **Mute** on one ask the desktop
+  to do the same. The alert shows it at once; the desktop's answer settles it.
+- **What the desktop asks of the phone's alerts**, Sága does here, and takes
+  the notification back.
+- Every event waits in an outbox in `ygg.db` until Mímir has it.
+
+It syncs a couple of seconds after an alert changes, when the app comes to
+the front, and every 15 minutes with Veðrfölnir's check while it is closed.
+
+Set up in the Alerts tab, under *Mímir*: the URL (`https://<vps>.<tailnet>.ts.net`,
+HTTPS only: Android refuses plain HTTP) and this phone's token, both printed
+by Mímir's `deploy/install.sh`. Keep the name `phone` unless you gave the token
+another one. The phone needs Tailscale on.
 
 ## The phone: `vedrfolnir/`
 
@@ -337,7 +365,7 @@ message doesn't feed the whole chat to the model again.
 ## Develop
 
 ```bash
-./gradlew :app:testDebugUnitTest   # router, Gjallar, Hermóðr, quiet hours
+./gradlew :app:testDebugUnitTest   # router, Gjallar, Hermóðr, quiet hours, Sága
 ./gradlew :app:assembleDebug
 ```
 

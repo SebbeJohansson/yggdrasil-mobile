@@ -36,10 +36,14 @@ import io.github.sebbejohansson.yggdrasil.hermodr.Message
 import io.github.sebbejohansson.yggdrasil.hermodr.MessageState
 import io.github.sebbejohansson.yggdrasil.hermodr.MessageStore
 import io.github.sebbejohansson.yggdrasil.hermodr.Priority
+import io.github.sebbejohansson.yggdrasil.saga.AlertSnapshot
+import io.github.sebbejohansson.yggdrasil.saga.Mirror
+import io.github.sebbejohansson.yggdrasil.saga.Outgoing
+import io.github.sebbejohansson.yggdrasil.saga.SagaStore
 import java.time.Instant
 
 /** One SQLite file for every part's state: `ygg.db`. Times are epoch millis. */
-class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 5) {
+class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 6) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -67,6 +71,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         createHuginn(db)
         createNorn(db)
         createHistory(db)
+        createSaga(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -74,6 +79,21 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         if (oldVersion < 2) createDellingr(db)
         if (oldVersion < 3) createHuginn(db)
         if (oldVersion < 4) createNorn(db)
+        if (oldVersion < 6) createSaga(db)
+    }
+
+    // Version 6: Sága's outbox, marks, what it sent, and the other devices' alerts.
+    private fun createSaga(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS saga_outbox (seq INTEGER PRIMARY KEY, at INTEGER NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS saga_marks (name TEXT PRIMARY KEY, value INTEGER NOT NULL)")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS saga_published (source TEXT NOT NULL, key TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY (source, key))",
+        )
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS saga_mirrors (
+                device TEXT NOT NULL, source TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL,
+                state TEXT NOT NULL, received_at INTEGER NOT NULL, PRIMARY KEY (device, source, key))""",
+        )
     }
 
     // Version 5: the world tree's history, kept for good.
@@ -141,6 +161,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
     val memories: MemoryStore by lazy { SqliteMemoryStore(this) }
     val chats: ChatStore by lazy { SqliteChatStore(this) }
     val history: HistoryStore by lazy { SqliteHistoryStore(this) }
+    val saga: SagaStore by lazy { SqliteSagaStore(this) }
 }
 
 private fun Cursor.str(c: String): String = getString(getColumnIndexOrThrow(c))
@@ -453,5 +474,95 @@ private class SqliteHistoryStore(private val h: YggDatabase) : HistoryStore {
     override fun all() = h.readableDatabase.query("history", null, null, null, null, null, "at ASC").all {
         HistoryEvent(HistoryKind.valueOf(str("kind")), str("id"), long("at"), str("words"),
             getColumnIndexOrThrow("started_at").let { if (isNull(it)) null else getLong(it) })
+    }
+}
+
+private class SqliteSagaStore(private val h: YggDatabase) : SagaStore {
+    private val db get() = h.writableDatabase
+
+    override fun mark(name: String): Long? =
+        db.query("saga_marks", arrayOf("value"), "name = ?", arrayOf(name), null, null, null)
+            .use { if (it.moveToFirst()) it.getLong(0) else null }
+
+    override fun setMark(name: String, value: Long) {
+        db.insertWithOnConflict(
+            "saga_marks", null, ContentValues().apply { put("name", name); put("value", value) },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
+    override fun enqueue(at: Instant, kind: String, body: String): Long = transaction {
+        val seq = (mark("seq") ?: 0) + 1
+        db.insertOrThrow(
+            "saga_outbox", null,
+            ContentValues().apply { put("seq", seq); put("at", at.toEpochMilli()); put("kind", kind); put("body", body) },
+        )
+        setMark("seq", seq)
+        seq
+    }
+
+    override fun outbox(limit: Int) =
+        db.query("saga_outbox", null, null, null, null, null, "seq ASC", "$limit").all {
+            Outgoing(long("seq"), long("at"), str("kind"), str("body"))
+        }
+
+    override fun outboxSize() = db.rawQuery("SELECT COUNT(*) FROM saga_outbox", null).use { it.moveToFirst(); it.getInt(0) }
+
+    override fun sent(lastSeq: Long) {
+        db.delete("saga_outbox", "seq <= ?", arrayOf("$lastSeq"))
+    }
+
+    override fun renumber(lastSeq: Long) = transaction {
+        val first = db.rawQuery("SELECT MIN(seq) FROM saga_outbox", null).use { if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null }
+        if (first == null) {
+            setMark("seq", lastSeq)
+        } else {
+            val shift = lastSeq + 1 - first
+            // Through negative numbers, so no two rows share a seq on the way.
+            db.execSQL("UPDATE saga_outbox SET seq = -(seq + ?)", arrayOf(shift))
+            db.execSQL("UPDATE saga_outbox SET seq = -seq")
+            setMark("seq", db.rawQuery("SELECT MAX(seq) FROM saga_outbox", null).use { it.moveToFirst(); it.getLong(0) })
+        }
+    }
+
+    override fun published(source: String, key: String): String? =
+        db.query("saga_published", arrayOf("fingerprint"), "source = ? AND key = ?", arrayOf(source, key), null, null, null)
+            .use { if (it.moveToFirst()) it.getString(0) else null }
+
+    override fun setPublished(source: String, key: String, fingerprint: String) {
+        db.insertWithOnConflict(
+            "saga_published", null,
+            ContentValues().apply { put("source", source); put("key", key); put("fingerprint", fingerprint) },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
+    override fun mirrors() = db.query("saga_mirrors", null, null, null, null, null, null).all {
+        AlertSnapshot.parse(str("body"))?.let { Mirror(str("device"), it, instant("received_at")) }
+    }.filterNotNull()
+
+    override fun putMirror(m: Mirror) {
+        db.insertWithOnConflict(
+            "saga_mirrors", null,
+            ContentValues().apply {
+                put("device", m.device); put("source", m.alert.source); put("key", m.alert.key)
+                put("body", m.alert.toJson().toString()); put("state", m.alert.state.name)
+                putInstant("received_at", m.receivedAt)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
+    override fun deleteMirrorsResolvedBefore(t: Instant) {
+        db.delete("saga_mirrors", "state = ? AND received_at < ?", arrayOf(AlertState.RESOLVED.name, "${t.toEpochMilli()}"))
+    }
+
+    override fun <T> transaction(block: () -> T): T {
+        db.beginTransaction()
+        try {
+            return block().also { db.setTransactionSuccessful() }
+        } finally {
+            db.endTransaction()
+        }
     }
 }

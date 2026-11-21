@@ -45,12 +45,16 @@ import io.github.sebbejohansson.yggdrasil.llm.LlmRequest
 import io.github.sebbejohansson.yggdrasil.llm.LlmTier
 import io.github.sebbejohansson.yggdrasil.llm.Privacy
 import io.github.sebbejohansson.yggdrasil.llm.litert.LiteRtEmbedder
+import io.github.sebbejohansson.yggdrasil.saga.SagaService
+import io.github.sebbejohansson.yggdrasil.saga.SagaSettings
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.AndroidPhoneReader
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.VedrfolnirService
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.VedrfolnirWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 
 class YggApp : Application(), Configuration.Provider {
@@ -164,6 +168,13 @@ class AppContainer(private val app: Application) {
             .forEach { r -> history.record(HistoryEvent(HistoryKind.RAVEN, "raven:${r.id}", r.at.toEpochMilli(), r.title)) }
     }
 
+    /** Mímir on the VPS, set up from the Alerts tab. */
+    val sagaSettings = SagaSettings(app)
+
+    /** Keeps the phone's alerts and the desktop's in step through Mímir. */
+    val saga = SagaService(db.saga, gjallar, mimir = { sagaSettings.client() }, device = { sagaSettings.device })
+
+    @OptIn(FlowPreview::class)
     fun start() {
         notifier.createChannels()
         huginnRuntime.follow(gjallar, appScope)
@@ -185,6 +196,11 @@ class AppContainer(private val app: Application) {
             huginn.prune()
             huginnRuntime.checkCalendar()
             backfillHistory()
+            saga.prune()
+        }
+        // Sync a moment after any alert changes here (and once now, on start).
+        appScope.launch {
+            gjallar.changes.flow.debounce(2_000).collect { saga.sync() }
         }
     }
 }

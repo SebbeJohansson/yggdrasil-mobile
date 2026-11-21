@@ -113,6 +113,9 @@ class GjallarService(
 
     suspend fun isMuted(source: String, key: String) = withContext(io) { store.isMuted(source, key) }
 
+    /** The newest alert for this source and key, in any state. */
+    suspend fun find(source: String, key: String) = withContext(io) { store.find(source, key) }
+
     /** Open and acknowledged, like Yggdrasil's `?state=active`. */
     suspend fun active(limit: Int = 200) =
         withContext(io) { store.list(setOf(AlertState.OPEN, AlertState.ACKNOWLEDGED), limit) }
