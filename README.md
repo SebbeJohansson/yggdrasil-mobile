@@ -71,7 +71,7 @@ packages in one app, not processes talking HTTP.
 
 | Part | On the phone | Status |
 | --- | --- | --- |
-| **Norn** | chat, memory, the front desk | chat with Gemma 4 |
+| **Norn** | chat, memory, the front desk | chat with Gemma 4, saved chats, memory |
 | **Gjallar** | alerts from every part, in one place | working |
 | **Hermóðr** | every message to you, as Android notifications | working |
 | **Dellingr** | runs the jobs you put on a clock | working |
@@ -139,6 +139,37 @@ It checks when the app starts, and every 15 minutes through WorkManager,
 which is Android's shortest period. The Phone tab shows the readouts live,
 every 5 s while it's open, and has a segment on the arc reactor. A reading
 the phone doesn't give, such as a battery level, raises nothing.
+
+## Memory and chats: `norn/`
+
+Norn remembers you, under the desktop's rules (`Memory.kt`, ported from
+`norn/memory.go` with its tests):
+
+- **Learning:** after each answer, Norn picks lasting facts out of *your*
+  message, never its own answer. A small model states things confidently
+  that aren't true, and a fact taken from its answer would come back as
+  something you said.
+- **The names guard:** a fact naming someone your message didn't mention
+  is dropped. A small model copies the worked example otherwise.
+- **No duplicates:** a fact already known, by wording or by meaning, isn't
+  stored twice.
+- **Recall:** the facts that bear on a question go in front of it, in the
+  chat and in Dellingr's and Huginn's questions to Norn. In the chat they
+  sit in front of your message, not in the system prompt, so the model's
+  open conversation survives.
+- **Finding the right facts:** by meaning with EmbeddingGemma 2 (165 MB,
+  on the CPU, downloaded from the Memory page), by newest without it.
+- **Learning runs on the side:** in a conversation of its own, so it
+  doesn't close the chat's.
+- **The Memory page:** see, add and forget facts, and switch learning off.
+
+Chats are kept on the phone. **Chats** lists them and **New** starts one.
+A reopened chat gives the model exactly what it had before, memories
+included.
+
+| Memory | Chats | A reopened chat |
+| --- | --- | --- |
+| ![Memory](docs/screenshots/7-memory.png) | ![Chats](docs/screenshots/8-chats.png) | ![Chat](docs/screenshots/9-norn-chat.png) |
 
 ## Jobs: `dellingr/`
 

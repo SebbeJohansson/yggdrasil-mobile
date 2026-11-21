@@ -38,6 +38,11 @@ data class LlmRequest(
     val privacy: Privacy = Privacy.ON_DEVICE_ONLY,
     val maxOutputTokens: Int? = null,
     val temperature: Double? = null,
+    /**
+     * A short job on the side (picking facts out of a message): it shouldn't
+     * disturb the conversation a provider keeps open for the chat.
+     */
+    val side: Boolean = false,
 ) {
     init {
         require(messages.isNotEmpty()) { "a request needs at least one message" }

@@ -1,5 +1,7 @@
 package io.github.sebbejohansson.yggdrasil.norn
 
+import android.content.Context
+import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -7,15 +9,14 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.sebbejohansson.yggdrasil.AppContainer
 import io.github.sebbejohansson.yggdrasil.llm.LlmMessage
-import io.github.sebbejohansson.yggdrasil.llm.LlmRequest
-import io.github.sebbejohansson.yggdrasil.llm.LlmRole
 import io.github.sebbejohansson.yggdrasil.llm.LlmRouter
-import io.github.sebbejohansson.yggdrasil.llm.LlmTier
 import io.github.sebbejohansson.yggdrasil.llm.Privacy
 import io.github.sebbejohansson.yggdrasil.llm.ProviderStatus
+import io.github.sebbejohansson.yggdrasil.llm.litert.LiteRtEmbedder
 import io.github.sebbejohansson.yggdrasil.llm.litert.LiteRtLmProvider
 import io.github.sebbejohansson.yggdrasil.model.DownloadState
 import io.github.sebbejohansson.yggdrasil.model.LocalModel
+import io.github.sebbejohansson.yggdrasil.model.ModelCatalog
 import io.github.sebbejohansson.yggdrasil.model.ModelDownloader
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,7 @@ import kotlinx.coroutines.launch
 data class ProviderRow(val name: String, val status: ProviderStatus, val leavesDevice: Boolean)
 
 data class ChatUiState(
+    /** What you see: your words and Norn's answers. */
     val messages: List<LlmMessage> = emptyList(),
     /** The answer being written right now. */
     val pending: String? = null,
@@ -35,67 +37,99 @@ data class ChatUiState(
     val allowClaude: Boolean = false,
     val backend: String? = null,
     val error: String? = null,
+    val conversations: List<Conversation> = emptyList(),
+    val conversationId: Long? = null,
+    val memories: List<Memory> = emptyList(),
+    /** Facts learned from the last message, shown for a moment under it. */
+    val learned: List<String> = emptyList(),
+    val learning: Boolean = true,
+    val embedderReady: Boolean = false,
+    val embedderDownload: DownloadState? = null,
 ) {
     val busy get() = pending != null
 }
 
-private const val SYSTEM = """You are Norn, a personal assistant that runs on the user's phone.
-Answer briefly and plainly. Say so when you don't know."""
+/** Norn's own switches: learning from what you say. */
+class NornSettings(context: Context) {
+    private val prefs = context.getSharedPreferences("norn", Context.MODE_PRIVATE)
+    var learning: Boolean
+        get() = prefs.getBoolean("learning", true)
+        set(v) = prefs.edit { putBoolean("learning", v) }
+}
 
 class ChatViewModel(
     private val llm: LlmRouter,
     private val local: LiteRtLmProvider,
     private val model: LocalModel,
     private val downloader: ModelDownloader,
+    private val chat: NornChat,
+    private val brain: Brain,
+    private val embedder: LiteRtEmbedder,
+    private val settings: NornSettings,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(ChatUiState())
+    private val _state = MutableStateFlow(ChatUiState(learning = settings.learning, embedderReady = embedder.ready()))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     private var generation: Job? = null
     private var downloadJob: Job? = null
+    private var embedderJob: Job? = null
 
     init {
         refreshProviders()
+        viewModelScope.launch {
+            chat.openLatest()
+            showChat()
+            refreshMemory()
+        }
+        viewModelScope.launch { brain.changes.flow.collect { refreshMemory() } }
     }
 
     fun refreshProviders() = viewModelScope.launch {
         val rows = llm.statuses().map { (p, s) -> ProviderRow(p.displayName, s, p.leavesDevice) }
-        _state.update { it.copy(providers = rows, backend = local.backendName) }
+        _state.update { it.copy(providers = rows, backend = local.backendName, embedderReady = embedder.ready()) }
     }
 
     fun setAllowClaude(allow: Boolean) = _state.update { it.copy(allowClaude = allow) }
 
     fun send(text: String) {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty() || _state.value.busy) return
-        val history = _state.value.messages + LlmMessage(LlmRole.USER, trimmed)
-        _state.update { it.copy(messages = history, pending = "", error = null) }
+        val question = text.trim()
+        if (question.isEmpty() || _state.value.busy) return
+        _state.update { it.copy(messages = it.messages + LlmMessage(io.github.sebbejohansson.yggdrasil.llm.LlmRole.USER, question), pending = "", error = null, learned = emptyList()) }
+        val privacy = if (_state.value.allowClaude) Privacy.MAY_LEAVE_DEVICE else Privacy.ON_DEVICE_ONLY
 
-        val request = LlmRequest(
-            messages = history,
-            system = SYSTEM,
-            tier = LlmTier.LARGE,
-            privacy = if (_state.value.allowClaude) Privacy.MAY_LEAVE_DEVICE else Privacy.ON_DEVICE_ONLY,
-        )
         generation = viewModelScope.launch {
+            var answer = ""
             try {
+                val request = chat.ask(question, privacy)
+                _state.update { it.copy(conversationId = chat.conversationId) }
                 llm.stream(request).collect { delta ->
-                    _state.update { it.copy(pending = (it.pending ?: "") + delta) }
+                    answer += delta
+                    _state.update { it.copy(pending = answer) }
                 }
-                _state.update {
-                    it.copy(
-                        messages = it.messages + LlmMessage(LlmRole.ASSISTANT, it.pending.orEmpty()),
-                        pending = null,
-                        backend = local.backendName,
-                    )
-                }
+                chat.answered(answer)
+                showChat()
+                _state.update { it.copy(backend = local.backendName) }
+                learn(question)
             } catch (e: kotlinx.coroutines.CancellationException) {
-                _state.update { keepPartial(it) }
+                // A stopped answer stays in the chat, so the next message has the same history.
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { chat.answered(answer) }
+                showChat()
                 throw e
             } catch (e: Exception) {
-                _state.update { keepPartial(it).copy(error = e.message ?: e.javaClass.simpleName) }
+                chat.answered(answer)
+                showChat()
+                _state.update { it.copy(error = e.message ?: e.javaClass.simpleName) }
             }
+        }
+    }
+
+    /** After the answer, on the side: facts from your words, never the answer's. */
+    private fun learn(question: String) {
+        if (!settings.learning) return
+        viewModelScope.launch {
+            val learned = chat.learnFrom(question)
+            if (learned.isNotEmpty()) _state.update { it.copy(learned = learned.map { m -> m.text }) }
         }
     }
 
@@ -103,9 +137,33 @@ class ChatViewModel(
         generation?.cancel()
     }
 
-    fun clear() {
+    fun newChat() {
         stop()
-        _state.update { it.copy(messages = emptyList(), pending = null, error = null) }
+        chat.startNew()
+        showChat()
+        _state.update { it.copy(error = null, learned = emptyList()) }
+    }
+
+    /** The list of chats, read again (opening the Chats page). */
+    fun refreshChats() = viewModelScope.launch { _state.update { it.copy(conversations = chat.conversations()) } }
+
+    fun openChat(id: Long) = viewModelScope.launch {
+        stop()
+        chat.open(id)
+        showChat()
+    }
+
+    fun deleteChat(id: Long) = viewModelScope.launch {
+        chat.delete(id)
+        showChat()
+    }
+
+    fun remember(text: String) = viewModelScope.launch { brain.remember(text) }
+    fun forget(m: Memory) = viewModelScope.launch { brain.forget(m.id) }
+
+    fun setLearning(on: Boolean) {
+        settings.learning = on
+        _state.update { it.copy(learning = on) }
     }
 
     fun downloadModel() {
@@ -125,16 +183,42 @@ class ChatViewModel(
         }
     }
 
-    // A stopped answer stays in the chat, so the next message has the same history.
-    private fun keepPartial(s: ChatUiState): ChatUiState {
-        val partial = s.pending
-        return if (partial.isNullOrEmpty()) s.copy(pending = null)
-        else s.copy(messages = s.messages + LlmMessage(LlmRole.ASSISTANT, partial), pending = null)
+    /** EmbeddingGemma, so memories are found by meaning; then the old ones get vectors too. */
+    fun downloadEmbedder() {
+        if (embedderJob?.isActive == true) return
+        embedderJob = viewModelScope.launch {
+            try {
+                downloader.download(ModelCatalog.EMBEDDING_GEMMA_2).collect { s -> _state.update { it.copy(embedderDownload = s) } }
+                _state.update { it.copy(embedderDownload = null, embedderReady = embedder.ready()) }
+                brain.reembed()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(embedderDownload = null, error = "Download: ${e.message}") }
+            }
+        }
+    }
+
+    private fun showChat() {
+        _state.update {
+            it.copy(
+                messages = chat.lines.map { l -> LlmMessage(l.role, l.shown) },
+                pending = null,
+                conversationId = chat.conversationId,
+            )
+        }
+        viewModelScope.launch { _state.update { it.copy(conversations = chat.conversations()) } }
+    }
+
+    private suspend fun refreshMemory() {
+        _state.update { it.copy(memories = brain.memories(), embedderReady = embedder.ready()) }
     }
 
     companion object {
         fun factory(c: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { ChatViewModel(c.llm, c.localLlm, c.defaultModel, c.modelDownloader) }
+            initializer {
+                ChatViewModel(c.llm, c.localLlm, c.defaultModel, c.modelDownloader, c.nornChat, c.brain, c.embedder, c.nornSettings)
+            }
         }
     }
 }

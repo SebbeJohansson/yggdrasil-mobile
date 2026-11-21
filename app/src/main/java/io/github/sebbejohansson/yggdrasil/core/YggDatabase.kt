@@ -16,6 +16,14 @@ import io.github.sebbejohansson.yggdrasil.huginn.Reaction
 import io.github.sebbejohansson.yggdrasil.huginn.ReactionState
 import io.github.sebbejohansson.yggdrasil.huginn.Rule
 import io.github.sebbejohansson.yggdrasil.huginn.Trigger
+import io.github.sebbejohansson.yggdrasil.llm.LlmRole
+import io.github.sebbejohansson.yggdrasil.norn.ChatLine
+import io.github.sebbejohansson.yggdrasil.norn.ChatStore
+import io.github.sebbejohansson.yggdrasil.norn.Conversation
+import io.github.sebbejohansson.yggdrasil.norn.Memory
+import io.github.sebbejohansson.yggdrasil.norn.MemoryStore
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import org.json.JSONArray
 import org.json.JSONObject
 import io.github.sebbejohansson.yggdrasil.gjallar.AlertState
@@ -28,7 +36,7 @@ import io.github.sebbejohansson.yggdrasil.hermodr.Priority
 import java.time.Instant
 
 /** One SQLite file for every part's state: `ygg.db`. Times are epoch millis. */
-class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 3) {
+class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 4) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -54,11 +62,29 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         db.execSQL("CREATE INDEX messages_tag ON messages(tag)")
         createDellingr(db)
         createHuginn(db)
+        createNorn(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) createDellingr(db)
         if (oldVersion < 3) createHuginn(db)
+        if (oldVersion < 4) createNorn(db)
+    }
+
+    // Version 4: Norn's memories and saved chats.
+    private fun createNorn(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, source TEXT NOT NULL,
+                created_at INTEGER NOT NULL, embedding BLOB, model TEXT)""",
+        )
+        db.execSQL("CREATE TABLE conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+        db.execSQL(
+            """CREATE TABLE chat_lines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL,
+                role TEXT NOT NULL, shown TEXT NOT NULL, sent TEXT NOT NULL, at INTEGER NOT NULL)""",
+        )
+        db.execSQL("CREATE INDEX chat_lines_conv ON chat_lines(conversation_id, id)")
     }
 
     // Version 3: Huginn's rules, what it did, and the calendar events it already told.
@@ -99,6 +125,8 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
     val messages: MessageStore by lazy { SqliteMessageStore(this) }
     val jobs: JobStore by lazy { SqliteJobStore(this) }
     val huginn: HuginnStore by lazy { SqliteHuginnStore(this) }
+    val memories: MemoryStore by lazy { SqliteMemoryStore(this) }
+    val chats: ChatStore by lazy { SqliteChatStore(this) }
 }
 
 private fun Cursor.str(c: String): String = getString(getColumnIndexOrThrow(c))
@@ -331,5 +359,70 @@ private class SqliteHuginnStore(private val h: YggDatabase) : HuginnStore {
 
     override fun forgetSightsBefore(t: Instant) {
         h.writableDatabase.delete("huginn_seen", "at < ?", arrayOf("${t.toEpochMilli()}"))
+    }
+}
+
+private fun FloatArray.toBlob(): ByteArray =
+    ByteBuffer.allocate(size * 4).order(ByteOrder.LITTLE_ENDIAN).also { b -> forEach { b.putFloat(it) } }.array()
+
+private fun ByteArray.toFloats(): FloatArray {
+    val b = ByteBuffer.wrap(this).order(ByteOrder.LITTLE_ENDIAN)
+    return FloatArray(size / 4) { b.getFloat() }
+}
+
+private class SqliteMemoryStore(private val h: YggDatabase) : MemoryStore {
+    private fun Cursor.memory(): Memory {
+        val blob = getColumnIndexOrThrow("embedding").let { if (isNull(it)) null else getBlob(it) }
+        return Memory(long("id"), str("text"), str("source"), instant("created_at"), blob?.toFloats(), strOrNull("model"))
+    }
+
+    override fun memories() = h.readableDatabase.query("memories", null, null, null, null, null, "id DESC").all { memory() }
+
+    override fun add(text: String, source: String, at: Instant, embedding: FloatArray?, model: String?): Memory {
+        val v = ContentValues().apply {
+            put("text", text); put("source", source); putInstant("created_at", at)
+            if (embedding != null) put("embedding", embedding.toBlob()) else putNull("embedding")
+            put("model", model)
+        }
+        val id = h.writableDatabase.insertOrThrow("memories", null, v)
+        return Memory(id, text, source, at, embedding, model)
+    }
+
+    override fun setEmbedding(id: Long, embedding: FloatArray, model: String) {
+        val v = ContentValues().apply { put("embedding", embedding.toBlob()); put("model", model) }
+        h.writableDatabase.update("memories", v, "id = ?", arrayOf("$id"))
+    }
+
+    override fun delete(id: Long) {
+        h.writableDatabase.delete("memories", "id = ?", arrayOf("$id"))
+    }
+}
+
+private class SqliteChatStore(private val h: YggDatabase) : ChatStore {
+    override fun conversations(limit: Int) = h.readableDatabase.query(
+        "conversations", null, null, null, null, null, "updated_at DESC", "$limit",
+    ).all { Conversation(long("id"), str("title"), instant("updated_at")) }
+
+    override fun lines(conversationId: Long) = h.readableDatabase.query(
+        "chat_lines", null, "conversation_id = ?", arrayOf("$conversationId"), null, null, "id ASC",
+    ).all { ChatLine(LlmRole.valueOf(str("role")), str("shown"), str("sent")) }
+
+    override fun create(title: String, at: Instant): Long {
+        val v = ContentValues().apply { put("title", title); putInstant("updated_at", at) }
+        return h.writableDatabase.insertOrThrow("conversations", null, v)
+    }
+
+    override fun append(conversationId: Long, line: ChatLine, at: Instant) {
+        val db = h.writableDatabase
+        db.insertOrThrow("chat_lines", null, ContentValues().apply {
+            put("conversation_id", conversationId); put("role", line.role.name)
+            put("shown", line.shown); put("sent", line.sent); putInstant("at", at)
+        })
+        db.update("conversations", ContentValues().apply { putInstant("updated_at", at) }, "id = ?", arrayOf("$conversationId"))
+    }
+
+    override fun delete(conversationId: Long) {
+        h.writableDatabase.delete("chat_lines", "conversation_id = ?", arrayOf("$conversationId"))
+        h.writableDatabase.delete("conversations", "id = ?", arrayOf("$conversationId"))
     }
 }

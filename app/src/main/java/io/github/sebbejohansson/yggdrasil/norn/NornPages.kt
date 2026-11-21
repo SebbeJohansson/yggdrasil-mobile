@@ -1,0 +1,149 @@
+package io.github.sebbejohansson.yggdrasil.norn
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import io.github.sebbejohansson.yggdrasil.model.DownloadState
+import io.github.sebbejohansson.yggdrasil.model.ModelCatalog
+import io.github.sebbejohansson.yggdrasil.ui.Hud
+import io.github.sebbejohansson.yggdrasil.ui.HudButton
+import io.github.sebbejohansson.yggdrasil.ui.HudButtonKind
+import io.github.sebbejohansson.yggdrasil.ui.HudLabel
+import io.github.sebbejohansson.yggdrasil.ui.HudProgress
+import io.github.sebbejohansson.yggdrasil.ui.HudSection
+import io.github.sebbejohansson.yggdrasil.ui.HudText
+import io.github.sebbejohansson.yggdrasil.ui.HudTextField
+import io.github.sebbejohansson.yggdrasil.ui.HudToggle
+import io.github.sebbejohansson.yggdrasil.ui.hudPanel
+import io.github.sebbejohansson.yggdrasil.ui.leftStripe
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+private val whenFmt = DateTimeFormatter.ofPattern("EEE d MMM HH:mm").withZone(ZoneId.systemDefault())
+
+@Composable
+private fun PageHead(title: String, line: String, onBack: () -> Unit, trailing: @Composable () -> Unit = {}) {
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = HudText.title)
+            HudLabel(line)
+        }
+        trailing()
+        Spacer(Modifier.width(6.dp))
+        HudButton("Back", onBack, kind = HudButtonKind.SMALL)
+    }
+}
+
+/** Your chats with Norn, newest first: open one to carry on, or start a new one. */
+@Composable
+fun ChatsPage(s: ChatUiState, onOpen: (Long) -> Unit, onDelete: (Long) -> Unit, onNew: () -> Unit, onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize()) {
+        PageHead("Chats", "${s.conversations.size} kept on this phone", onBack) {
+            HudButton("New", onNew, kind = HudButtonKind.SMALL)
+        }
+        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (s.conversations.isEmpty()) item { Text("No chats yet.", style = HudText.small.copy(color = Hud.overlay0)) }
+            items(s.conversations, key = { it.id }) { c ->
+                val open = c.id == s.conversationId
+                Row(
+                    Modifier.fillMaxWidth().leftStripe(if (open) Hud.cyan else Hud.surface1).clickable { onOpen(c.id) }.padding(start = 10.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(c.title, style = HudText.small.copy(color = if (open) Hud.bright else Hud.text), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(whenFmt.format(c.updatedAt) + if (open) " · open" else "", style = HudText.meta)
+                    }
+                    HudButton("Delete", { onDelete(c.id) }, kind = HudButtonKind.SMALL)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * What Norn remembers about you, as on the desktop: learned from your own
+ * words (never its answers), or told to it. Found by meaning once
+ * EmbeddingGemma is on the phone; by newest until then.
+ */
+@Composable
+fun MemoryPage(s: ChatUiState, vm: ChatViewModel, onBack: () -> Unit) {
+    var fact by rememberSaveable { mutableStateOf("") }
+    Column(Modifier.fillMaxSize()) {
+        PageHead(
+            "Memory",
+            "${s.memories.size} remembered · " + if (s.embedderReady) "found by meaning" else "newest first",
+            onBack,
+        )
+        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                Column(Modifier.fillMaxWidth().hudPanel(warn = !s.embedderReady).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                            HudLabel("Learn from what I say", color = Hud.group)
+                            Text("After each answer, Norn picks lasting facts out of your message. Never out of its own answers.", style = HudText.meta)
+                        }
+                        HudToggle(s.learning, vm::setLearning)
+                    }
+                    HudLabel("Recall by meaning", color = if (s.embedderReady) Hud.green else Hud.amber)
+                    when (val d = s.embedderDownload) {
+                        is DownloadState.Downloading -> {
+                            HudProgress(d.fraction, Modifier.fillMaxWidth())
+                            HudLabel("%.0f of %.0f MB".format(d.bytes / 1e6, d.total / 1e6))
+                        }
+                        DownloadState.Verifying -> HudLabel("Checking the file…", color = Hud.cyan)
+                        DownloadState.Done, null -> if (s.embedderReady) {
+                            Text("EmbeddingGemma finds the memories that bear on each question, on this phone.", style = HudText.meta)
+                        } else {
+                            Text(
+                                "Without it, Norn gets your newest memories. EmbeddingGemma 2 (%.0f MB) finds the ones that matter.".format(ModelCatalog.EMBEDDING_GEMMA_2.sizeBytes / 1e6),
+                                style = HudText.meta,
+                            )
+                            HudButton("Download", vm::downloadEmbedder, kind = HudButtonKind.PRIMARY)
+                        }
+                    }
+                }
+            }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    HudTextField(fact, { fact = it }, placeholder = "Remember that…", modifier = Modifier.weight(1f), maxLines = 3)
+                    Spacer(Modifier.width(8.dp))
+                    HudButton("Save", { vm.remember(fact); fact = "" }, kind = HudButtonKind.GHOST, enabled = fact.isNotBlank())
+                }
+            }
+            item { HudSection("Remembered", Modifier.padding(top = 4.dp)) }
+            if (s.memories.isEmpty()) item { Text("Nothing yet. Tell Norn about yourself, or save a fact above.", style = HudText.small.copy(color = Hud.overlay0)) }
+            items(s.memories, key = { it.id }) { m ->
+                Row(Modifier.fillMaxWidth().leftStripe(if (m.source == "manual") Hud.cyan else Hud.green).padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(m.text, style = HudText.small)
+                        HudLabel(
+                            (if (m.source == "manual") "told" else "learned") + " · " + whenFmt.format(m.createdAt),
+                            color = Hud.overlay0, style = HudText.label.copy(fontSize = 10.sp),
+                        )
+                    }
+                    HudButton("Forget", { vm.forget(m) }, kind = HudButtonKind.SMALL)
+                }
+            }
+        }
+    }
+}

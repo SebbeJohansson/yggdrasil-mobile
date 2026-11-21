@@ -51,6 +51,15 @@ class ScreenshotTest {
         capture(name)
     }
 
+    /** Lets taps and reads land with the clock stepped by hand. */
+    private fun settle() {
+        repeat(4) {
+            Thread.sleep(150)
+            shadowOf(Looper.getMainLooper()).idle()
+            compose.mainClock.advanceTimeBy(400)
+        }
+    }
+
     private fun capture(name: String) {
         val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
         File(out, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -121,5 +130,23 @@ class ScreenshotTest {
         }
         compose.onNodeWithText("Huginn").performClick()
         shot("6-huginn")
+        runBlocking {
+            c.brain.remember("The user's manager is Ada Lind.")
+            c.brain.remember("The user's team ships the app every second Thursday.")
+            c.brain.remember("The user takes the 8:12 train to work.")
+            c.nornChat.startNew()
+            c.nornChat.ask("What should I bring to the release review?", io.github.sebbejohansson.yggdrasil.llm.Privacy.ON_DEVICE_ONLY)
+            c.nornChat.answered("The release notes, the crash numbers since the last build, and anything Ada asked to see.")
+        }
+        compose.onNodeWithText("NORN").performClick()
+        settle()
+        compose.onNodeWithText("Memory").performClick()
+        shot("7-memory")
+        compose.onNodeWithText("Back").performClick()
+        settle()
+        compose.onNodeWithText("Chats").performClick()
+        shot("8-chats")
+        compose.onNodeWithText("What should I bring to the release review?").performClick()
+        shot("9-norn-chat")
     }
 }
