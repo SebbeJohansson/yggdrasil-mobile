@@ -382,6 +382,60 @@ Release builds keep themselves up to date from this repo's GitHub releases.
 - **Play Protect:** if it blocks the update, install it by hand once (see
   `docs/releasing.md`).
 
+## Focus: `hermodr/Focus.kt`
+
+Ported from the desktop's `hermodr/focus.go` and the dashboard's focus
+button, offer and recap.
+
+- **Starting a focus:**
+  - **Top bar:** tap the ring and pick 25 min, 50 min, 90 min or *until
+    before your next meeting*. Each length ends 5 minutes before your next
+    meeting if that comes first.
+  - **Ask page:** when a free stretch is worth it (30 min or more), Ygg
+    offers it: "1 h 55 min free until Sprint review at 14:00".
+  - **Quick Settings:** add the *Focus* tile. It focuses for 50 min, and
+    tapping it again ends the focus.
+- **While it runs:**
+  - Only urgent messages reach you; everything else waits.
+  - A violet strip under the top bar shows until when, with *End*.
+  - It's kept in `ygg.db`, so a restart doesn't end it.
+- **When it ends:** two or more messages that waited arrive as one
+  **Focus done** recap, not a burst of notifications.
+  - **Quiet hours:** if a focus ends in quiet hours, the recap waits too,
+    so you get one notification in the morning.
+  - **Messages:** each message stays in Messages.
+- **Focus blocks:** calendar events called *Focus* or *Focus time*
+  (Outlook's) hold `hold` messages the way a meeting does, even when shown
+  as free.
+- **Settings:** the Focus panel shows the last 7 days of focus.
+
+| Focusing | The recap |
+| --- | --- |
+| ![Focus](docs/screenshots/13-focus.png) | ![Recap](docs/screenshots/14-focus-recap.png) |
+
+## Watching you: `ratatoskr/`
+
+Ported from the desktop's `ratatoskr/you.go`: the parts' watchdog pointed
+at your own rhythm. It runs with Veðrfölnir's 15-minute check.
+
+| Pattern | When |
+| --- | --- |
+| A long run of meetings | 4 h or more back to back with no 15-minute gap. A focus block carries the run on; a *Break* event ends it |
+| It's late | the phone in use past 23:00 (the desktop watches your coding sessions) |
+| A full week | meetings fill 60% or more of the working hours (09–17) left this week |
+
+- **How often:** at most one note per pattern per day (the full week: per
+  week).
+- **How it's sent:** quiet and low priority, held through meetings. Each
+  note says what to do, e.g. "The pause at 11:00 is enough to stand up and
+  get some water".
+- **Privacy:** notes carry times only. Meeting titles and people never go
+  into one.
+- **Quiet hours:** nothing is sent then, except *It's late*, which is
+  listed in Messages without a notification.
+- **Settings:** switch it on or off, choose notification or listed only,
+  and see what it sees right now.
+
 ## Models: `llm/`
 
 Parts never pick a model. They make an `LlmRequest` with:

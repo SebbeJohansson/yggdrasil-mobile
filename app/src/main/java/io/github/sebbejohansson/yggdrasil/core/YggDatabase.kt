@@ -1,5 +1,8 @@
 package io.github.sebbejohansson.yggdrasil.core
 
+import io.github.sebbejohansson.yggdrasil.hermodr.Focus
+import io.github.sebbejohansson.yggdrasil.hermodr.FocusSession
+import io.github.sebbejohansson.yggdrasil.hermodr.FocusStore
 import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
@@ -47,7 +50,7 @@ import io.github.sebbejohansson.yggdrasil.saga.SessionAsk
 import java.time.Instant
 
 /** One SQLite file for every part's state: `ygg.db`. Times are epoch millis. */
-class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 7) {
+class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 8) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -77,6 +80,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         createHistory(db)
         createSaga(db)
         createSagaSessions(db)
+        createFocus(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -86,6 +90,17 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         if (oldVersion < 4) createNorn(db)
         if (oldVersion < 6) createSaga(db)
         if (oldVersion < 7) createSagaSessions(db)
+        if (oldVersion < 8) createFocus(db)
+    }
+
+    // Version 8: the focus going on (one row), and the log of every focus.
+    private fun createFocus(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS focus (id INTEGER PRIMARY KEY CHECK (id = 1), started INTEGER NOT NULL, until INTEGER NOT NULL, intent TEXT)")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS focus_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, started INTEGER NOT NULL, ended INTEGER, until INTEGER NOT NULL, intent TEXT)""",
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS focus_log_started ON focus_log(started)")
     }
 
     // Version 7: other machines' coding sessions, and what you asked of them.
@@ -178,6 +193,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
     val chats: ChatStore by lazy { SqliteChatStore(this) }
     val history: HistoryStore by lazy { SqliteHistoryStore(this) }
     val saga: SagaStore by lazy { SqliteSagaStore(this) }
+    val focus: FocusStore by lazy { SqliteFocusStore(this) }
 }
 
 private fun Cursor.str(c: String): String = getString(getColumnIndexOrThrow(c))
@@ -476,6 +492,44 @@ private class SqliteChatStore(private val h: YggDatabase) : ChatStore {
         h.writableDatabase.delete("chat_lines", "conversation_id = ?", arrayOf("$conversationId"))
         h.writableDatabase.delete("conversations", "id = ?", arrayOf("$conversationId"))
     }
+}
+
+private class SqliteFocusStore(private val h: YggDatabase) : FocusStore {
+    private val db get() = h.writableDatabase
+
+    override fun current(): Focus? = db.query("focus", null, "id = 1", null, null, null, null).all {
+        Focus(instant("started"), instant("until"), strOrNull("intent"))
+    }.firstOrNull()
+
+    override fun set(focus: Focus?) {
+        if (focus == null) {
+            db.delete("focus", "id = 1", null)
+            return
+        }
+        val v = ContentValues().apply {
+            put("id", 1); put("started", focus.startedAt.toEpochMilli()); put("until", focus.until.toEpochMilli()); put("intent", focus.intent)
+        }
+        db.insertWithOnConflict("focus", null, v, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    override fun opened(focus: Focus) {
+        db.insert("focus_log", null, ContentValues().apply {
+            put("started", focus.startedAt.toEpochMilli()); put("until", focus.until.toEpochMilli()); put("intent", focus.intent)
+        })
+    }
+
+    override fun extended(focus: Focus) {
+        db.update("focus_log", ContentValues().apply { put("until", focus.until.toEpochMilli()); put("intent", focus.intent) }, "ended IS NULL", null)
+    }
+
+    override fun closed(at: Instant) {
+        db.update("focus_log", ContentValues().apply { put("ended", at.toEpochMilli()) }, "ended IS NULL", null)
+    }
+
+    override fun sessions(since: Instant) =
+        db.query("focus_log", null, "started >= ?", arrayOf(since.toEpochMilli().toString()), null, null, "started ASC").all {
+            FocusSession(instant("started"), instantOrNull("ended"), instant("until"), strOrNull("intent"))
+        }
 }
 
 private class SqliteHistoryStore(private val h: YggDatabase) : HistoryStore {

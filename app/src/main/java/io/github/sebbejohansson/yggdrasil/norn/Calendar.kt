@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.provider.CalendarContract
 import androidx.core.content.ContextCompat
 import io.github.sebbejohansson.yggdrasil.hermodr.BusySignal
+import io.github.sebbejohansson.yggdrasil.hermodr.FocusPlan
 import java.time.Duration
 import java.time.Instant
 
@@ -66,7 +67,9 @@ object Busy {
 class CalendarBusySignal(private val reader: CalendarReader) : BusySignal {
     override suspend fun busyUntil(now: Instant): Instant? {
         if (!reader.allowed()) return null
-        return Busy.until(reader.between(now.minus(Duration.ofHours(12)), now.plus(Duration.ofHours(12))), now)
+        val events = reader.between(now.minus(Duration.ofHours(12)), now.plus(Duration.ofHours(12)))
+        // A focus block holds like a meeting, even one shown as free.
+        return listOfNotNull(Busy.until(events, now), FocusPlan.focusBlockUntil(events, now)).maxOrNull()
     }
 }
 

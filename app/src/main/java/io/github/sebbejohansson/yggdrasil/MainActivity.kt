@@ -1,5 +1,11 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.ui.HudSection
+import io.github.sebbejohansson.yggdrasil.ratatoskr.YouPanel
+import io.github.sebbejohansson.yggdrasil.hermodr.FocusPanel
+import io.github.sebbejohansson.yggdrasil.hermodr.FocusOfferCard
+import io.github.sebbejohansson.yggdrasil.hermodr.FocusStrip
+import io.github.sebbejohansson.yggdrasil.hermodr.FocusButton
 import io.github.sebbejohansson.yggdrasil.update.UpdatesPanel
 import androidx.activity.compose.BackHandler
 import io.github.sebbejohansson.yggdrasil.home.HomeScreenPanel
@@ -324,7 +330,10 @@ private fun Root(
                 onReactor = { systemPage = 0; tab = MainActivity.TAB_SYSTEM },
                 settingsOpen = tab == MainActivity.TAB_SETTINGS,
                 onSettings = { if (tab == MainActivity.TAB_SETTINGS) tab = beforeSettings else openSettings() },
+                focus = { FocusButton(container.hermodr, container.calendar) },
             )
+            FocusStrip(container.hermodr)
+            if (tab == MainActivity.TAB_CHAT) FocusOfferCard(container.hermodr, container.calendar)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
                     MainActivity.TAB_ALERTS, MainActivity.TAB_MESSAGES -> InboxScreen(
@@ -354,6 +363,10 @@ private fun Root(
                             onChange = { runCatching { context.startActivity(HomeRole.settings()) } },
                         )
                         UpdatesPanel(container.updater, container.appScope)
+                        HudSection("Focus", Modifier.padding(top = 8.dp))
+                        FocusPanel(container.hermodr)
+                        HudSection("Watching you", Modifier.padding(top = 8.dp))
+                        YouPanel(container.you)
                     }
                     MainActivity.TAB_APPS -> if (appsVm != null) AppsScreen(appsVm, presses) else ChatScreen(chat, onSettings = ::openSettings)
                     else -> ChatScreen(chat, onSettings = ::openSettings)
@@ -414,7 +427,14 @@ private fun ProviderStatus?.toPart() = when (this) {
 private val clockFmt = DateTimeFormatter.ofPattern("HH:mm")
 
 @Composable
-private fun TopBar(parts: List<ReactorPart>, busy: Boolean, onReactor: () -> Unit, settingsOpen: Boolean, onSettings: () -> Unit) {
+private fun TopBar(
+    parts: List<ReactorPart>,
+    busy: Boolean,
+    onReactor: () -> Unit,
+    settingsOpen: Boolean,
+    onSettings: () -> Unit,
+    focus: @Composable () -> Unit = {},
+) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -438,7 +458,7 @@ private fun TopBar(parts: List<ReactorPart>, busy: Boolean, onReactor: () -> Uni
         Spacer(Modifier.weight(1f))
         @Suppress("UNUSED_EXPRESSION") now
         HudLabel(LocalTime.now().format(clockFmt), color = Hud.subtext0, style = HudText.label.copy(fontSize = 13.sp))
-        Spacer(Modifier.width(4.dp))
+        focus()
         Box(
             Modifier.size(40.dp).clickable(onClick = onSettings),
             contentAlignment = Alignment.Center,

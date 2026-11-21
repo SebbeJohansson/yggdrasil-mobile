@@ -1,5 +1,9 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.hermodr.FocusTileService
+import io.github.sebbejohansson.yggdrasil.ratatoskr.YouSettings
+import io.github.sebbejohansson.yggdrasil.ratatoskr.YouService
+import android.os.PowerManager
 import io.github.sebbejohansson.yggdrasil.update.KeystoreTokenVault
 import io.github.sebbejohansson.yggdrasil.update.Updates
 import io.github.sebbejohansson.yggdrasil.update.UpdateWorker
@@ -148,8 +152,11 @@ class AppContainer(private val app: Application) {
         scheduler = WorkManagerFlushScheduler(app),
         quietHours = { hermodrSettings.quietHours },
         busy = CalendarBusySignal(calendar),
+        focus = db.focus,
     )
     val gjallar = GjallarService(db.alerts, hermodr)
+    // Ratatoskr's watch on your rhythm: long runs of meetings, late nights, full weeks.
+    val you = YouService(calendar, hermodr, YouSettings(app), inUse = { app.getSystemService(PowerManager::class.java).isInteractive })
     // Updates from the GitHub releases (release builds only).
     val updater = Updater(app, UpdateSettings(app), hermodr, KeystoreTokenVault(app))
     val vedrfolnir = VedrfolnirService(AndroidPhoneReader(app), gjallar)
@@ -209,6 +216,8 @@ class AppContainer(private val app: Application) {
         }
         VedrfolnirWorker.schedule(app)
         UpdateWorker.schedule(app)
+        // The Quick Settings tile follows a focus started or ended anywhere.
+        appScope.launch { hermodr.changes.flow.collect { FocusTileService.refresh(app) } }
         appScope.launch {
             updater.sayIfUpdated()
             if (Updates.due(updater.settings.lastCheck, System.currentTimeMillis())) updater.round()
@@ -224,6 +233,7 @@ class AppContainer(private val app: Application) {
             huginn.prune()
             huginnRuntime.checkCalendar()
             backfillHistory()
+            you.round()
             saga.prune()
         }
         // Sync a moment after any alert changes here (and once now, on start).

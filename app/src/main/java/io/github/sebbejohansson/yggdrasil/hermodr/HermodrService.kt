@@ -43,6 +43,8 @@ val NOT_BUSY = BusySignal { null }
  * - `push = false`: listed in the app only.
  * - Urgent: shown at once, quiet hours or not.
  * - Others wait through quiet hours; with `hold` also while you're busy.
+ * - During a [Focus] every message but an urgent one waits; when it ends,
+ *   what waited arrives as one recap.
  * - Held messages go out when the wait ends ([flushHeld]).
  * - Kept for 7 days ([prune]).
  */
@@ -54,13 +56,16 @@ class HermodrService(
     private val busy: BusySignal = NOT_BUSY,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val focus: FocusStore = InMemoryFocusStore(),
 ) : Hermodr {
 
     val changes = Changes()
     private val lock = Mutex()
 
-    override suspend fun send(request: MessageRequest): Message = locked {
-        val now = clock.instant()
+    override suspend fun send(request: MessageRequest): Message = locked { sendLocked(request, clock.instant()) }
+
+    /** Callers hold [lock]. */
+    private suspend fun sendLocked(request: MessageRequest, now: Instant): Message {
         val draft = Message(
             id = 0, sender = request.sender, title = request.title, text = request.text,
             link = request.link, priority = request.priority, hold = request.hold,
@@ -69,8 +74,8 @@ class HermodrService(
             createdAt = now,
         )
         val stored = draft.copy(id = store.insert(draft))
-        if (!request.push) return@locked stored
-        deliverOrHold(stored, now)
+        if (!request.push) return stored
+        return deliverOrHold(stored, now)
     }
 
     override suspend fun withdraw(tag: String) = locked {
@@ -88,7 +93,66 @@ class HermodrService(
     /** Sends every held message whose wait is over; reschedules the rest. */
     suspend fun flushHeld() = locked {
         val now = clock.instant()
+        // A focus that ran out ends here: its scheduled flush is this call.
+        val ran = focus.current()?.takeIf { !it.until.isAfter(now) }
+        if (ran != null) finishFocus(ran, ran.until, now) else for (m in store.held()) deliverOrHold(m, now)
+    }
+
+    /** The focus going on now, or null. */
+    fun focusNow(): Focus? = focus.current()?.takeIf { it.until.isAfter(clock.instant()) }
+
+    /** Every focus since [since], oldest first. */
+    suspend fun focusSessions(since: Instant): List<FocusSession> = withContext(io) { focus.sessions(since) }
+
+    /**
+     * Focus until [until], at most 12 hours. Again while focusing changes
+     * the end and keeps when it started.
+     */
+    suspend fun startFocus(until: Instant, intent: String? = null): Focus = locked {
+        val now = clock.instant()
+        require(until.isAfter(now)) { "a focus ends ahead" }
+        val end = minOf(until, now.plus(FocusPlan.MAX))
+        val going = focus.current()?.takeIf { it.until.isAfter(now) }
+        val stale = focus.current()?.takeIf { !it.until.isAfter(now) }
+        if (stale != null) focus.closed(stale.until)
+        val next = Focus(going?.startedAt ?: now, end, intent?.trim()?.take(200)?.ifEmpty { null } ?: going?.intent)
+        focus.set(next)
+        if (going != null) focus.extended(next) else focus.opened(next)
+        scheduler.flushAt(end)
+        next
+    }
+
+    /** Ends the focus now: what waited arrives at once, as one recap. */
+    suspend fun endFocus() = locked {
+        val now = clock.instant()
+        focus.current()?.let { finishFocus(it, minOf(now, it.until), now) }
+    }
+
+    /**
+     * Callers hold [lock]. Closes the focus, then lets out what waited. Two
+     * or more that came in during it become one recap instead of a burst of
+     * notifications: they're marked sent and stay in Messages, and the recap
+     * itself still waits through quiet hours, so it's one notification then.
+     */
+    private suspend fun finishFocus(f: Focus, endedAt: Instant, now: Instant) {
+        focus.set(null)
+        focus.closed(endedAt)
+        val waited = store.held().filter { !it.createdAt.isBefore(f.startedAt) && !it.createdAt.isAfter(endedAt) }
+        if (waited.size >= 2) {
+            for (m in waited) store.update(m.copy(state = MessageState.SENT, sentAt = now, failure = null))
+        }
         for (m in store.held()) deliverOrHold(m, now)
+        sendLocked(
+            MessageRequest(
+                sender = "hermodr",
+                title = "Focus done",
+                text = FocusPlan.recapText(Duration.between(f.startedAt, endedAt), waited),
+                priority = if (waited.size >= 2) Priority.NORMAL else Priority.LOW,
+                push = waited.size >= 2,
+                tag = "focus-recap",
+            ),
+            now,
+        )
     }
 
     suspend fun list(limit: Int = 200): List<Message> = withContext(io) { store.recent(limit) }
@@ -120,6 +184,7 @@ class HermodrService(
     private suspend fun waitUntil(m: Message, now: Instant): Instant? {
         if (m.priority == Priority.URGENT) return null
         quietHours().endAfter(now, clock.zone)?.let { return it }
+        focus.current()?.until?.takeIf { it.isAfter(now) }?.let { return it }
         if (m.hold) busy.busyUntil(now)?.takeIf { it.isAfter(now) }?.let { return it }
         return null
     }

@@ -182,5 +182,19 @@ class ScreenshotTest {
         shot("10-tree")
         compose.onNodeWithText("Runes").performClick()
         shot("11-runes")
+
+        // Focus: the strip under the top bar, on the Ask page.
+        runBlocking { c.hermodr.startFocus(java.time.Instant.now().plus(java.time.Duration.ofMinutes(50))) }
+        compose.onNodeWithText("ASK").performClick()
+        shot("13-focus")
+        runBlocking {
+            c.hermodr.send(MessageRequest("huginn", "Kim asked about the release", priority = Priority.NORMAL))
+            c.hermodr.send(MessageRequest("dellingr", "Weekly recap is ready", priority = Priority.NORMAL))
+            c.hermodr.endFocus()
+        }
+        compose.onNodeWithText("INBOX").performClick()
+        settle()
+        compose.onNodeWithText("Messages", substring = false).performClick()
+        shot("14-focus-recap")
     }
 }
