@@ -17,7 +17,7 @@ import io.github.sebbejohansson.yggdrasil.llm.litert.LiteRtLmProvider
 import io.github.sebbejohansson.yggdrasil.model.DownloadState
 import io.github.sebbejohansson.yggdrasil.model.LocalModel
 import io.github.sebbejohansson.yggdrasil.model.ModelCatalog
-import io.github.sebbejohansson.yggdrasil.model.ModelDownloader
+import io.github.sebbejohansson.yggdrasil.model.ModelDownloads
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,6 +45,8 @@ data class ChatUiState(
     val learning: Boolean = true,
     val embedderReady: Boolean = false,
     val embedderDownload: DownloadState? = null,
+    /** The download waits for a network connection. */
+    val downloadWaiting: Boolean = false,
 ) {
     val busy get() = pending != null
 }
@@ -61,7 +63,7 @@ class ChatViewModel(
     private val llm: LlmRouter,
     private val local: LiteRtLmProvider,
     private val model: LocalModel,
-    private val downloader: ModelDownloader,
+    private val downloads: ModelDownloads,
     private val chat: NornChat,
     private val brain: Brain,
     private val embedder: LiteRtEmbedder,
@@ -72,8 +74,6 @@ class ChatViewModel(
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     private var generation: Job? = null
-    private var downloadJob: Job? = null
-    private var embedderJob: Job? = null
 
     init {
         refreshProviders()
@@ -83,6 +83,31 @@ class ChatViewModel(
             refreshMemory()
         }
         viewModelScope.launch { brain.changes.flow.collect { refreshMemory() } }
+        // The downloads run as background jobs; the screen only follows them.
+        viewModelScope.launch {
+            // WorkManager remembers a finished download: load the model only after one this screen saw run.
+            var sawRunning = false
+            downloads.state(model).collect { d ->
+                if (d?.state is DownloadState.Downloading || d?.state == DownloadState.Verifying) sawRunning = true
+                _state.update { it.copy(download = d?.state?.takeIf { s -> s != DownloadState.Done }, downloadWaiting = d?.waiting == true) }
+                d?.error?.let { e -> _state.update { it.copy(error = "Download: $e") } }
+                if (d?.state == DownloadState.Done && sawRunning) {
+                    sawRunning = false
+                    refreshProviders()
+                    local.warmUp()
+                    _state.update { it.copy(backend = local.backendName) }
+                }
+            }
+        }
+        viewModelScope.launch {
+            downloads.state(ModelCatalog.EMBEDDING_GEMMA_2).collect { d ->
+                _state.update { it.copy(embedderDownload = d?.state?.takeIf { s -> s != DownloadState.Done }) }
+                if (d?.state == DownloadState.Done && !_state.value.embedderReady) {
+                    _state.update { it.copy(embedderReady = embedder.ready()) }
+                    brain.reembed()
+                }
+            }
+        }
     }
 
     fun refreshProviders() = viewModelScope.launch {
@@ -166,38 +191,11 @@ class ChatViewModel(
         _state.update { it.copy(learning = on) }
     }
 
-    fun downloadModel() {
-        if (downloadJob?.isActive == true) return
-        downloadJob = viewModelScope.launch {
-            try {
-                downloader.download(model).collect { s -> _state.update { it.copy(download = s) } }
-                _state.update { it.copy(download = null) }
-                refreshProviders()
-                local.warmUp()
-                _state.update { it.copy(backend = local.backendName) }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _state.update { it.copy(download = null, error = "Download: ${e.message}") }
-            }
-        }
-    }
+    /** Starts the model download in the background; it goes on when you leave the app. */
+    fun downloadModel() = downloads.start(model)
 
-    /** EmbeddingGemma, so memories are found by meaning; then the old ones get vectors too. */
-    fun downloadEmbedder() {
-        if (embedderJob?.isActive == true) return
-        embedderJob = viewModelScope.launch {
-            try {
-                downloader.download(ModelCatalog.EMBEDDING_GEMMA_2).collect { s -> _state.update { it.copy(embedderDownload = s) } }
-                _state.update { it.copy(embedderDownload = null, embedderReady = embedder.ready()) }
-                brain.reembed()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _state.update { it.copy(embedderDownload = null, error = "Download: ${e.message}") }
-            }
-        }
-    }
+    /** EmbeddingGemma, so memories are found by meaning; once in, the old ones get vectors too. */
+    fun downloadEmbedder() = downloads.start(ModelCatalog.EMBEDDING_GEMMA_2)
 
     private fun showChat() {
         _state.update {
@@ -217,7 +215,7 @@ class ChatViewModel(
     companion object {
         fun factory(c: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                ChatViewModel(c.llm, c.localLlm, c.defaultModel, c.modelDownloader, c.nornChat, c.brain, c.embedder, c.nornSettings)
+                ChatViewModel(c.llm, c.localLlm, c.defaultModel, c.modelDownloads, c.nornChat, c.brain, c.embedder, c.nornSettings)
             }
         }
     }

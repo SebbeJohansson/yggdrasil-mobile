@@ -137,7 +137,9 @@ private fun SetupPanel(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("%.0f%%".format(d.fraction * 100), style = HudText.number.copy(color = Hud.cyan))
                     Spacer(Modifier.width(8.dp))
-                    HudLabel("%.2f / %.2f GB".format(d.bytes / 1e9, d.total / 1e9))
+                    HudLabel(
+                        if (s.downloadWaiting) "waiting for a network" else "%.2f / %.2f GB · goes on in the background".format(d.bytes / 1e9, d.total / 1e9),
+                    )
                 }
             }
             DownloadState.Verifying -> HudLabel("Checking the file…", color = Hud.cyan)

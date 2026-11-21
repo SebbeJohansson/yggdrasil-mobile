@@ -19,6 +19,7 @@ import io.github.sebbejohansson.yggdrasil.llm.claude.ClaudeBridgeProvider
 import io.github.sebbejohansson.yggdrasil.llm.litert.LiteRtLmProvider
 import io.github.sebbejohansson.yggdrasil.model.ModelCatalog
 import io.github.sebbejohansson.yggdrasil.model.ModelDownloader
+import io.github.sebbejohansson.yggdrasil.model.ModelDownloads
 import io.github.sebbejohansson.yggdrasil.model.ModelStore
 import io.github.sebbejohansson.yggdrasil.norn.AndroidCalendarReader
 import io.github.sebbejohansson.yggdrasil.norn.CalendarBusySignal
@@ -64,6 +65,7 @@ class AppContainer(private val app: Application) {
     // Models
     val modelStore = ModelStore(app)
     val modelDownloader = ModelDownloader(modelStore)
+    val modelDownloads = ModelDownloads(app)
     val defaultModel = ModelCatalog.GEMMA_4_E2B
     val localLlm = LiteRtLmProvider(defaultModel, modelStore, app.cacheDir)
     val claudeBridge = ClaudeBridgeProvider()

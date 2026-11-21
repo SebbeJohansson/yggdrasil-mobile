@@ -55,4 +55,6 @@ object ModelCatalog {
     )
 
     val all = listOf(GEMMA_4_E2B, GEMMA_4_E4B)
+
+    fun byId(id: String) = (all + EMBEDDING_GEMMA_2).firstOrNull { it.id == id }
 }
