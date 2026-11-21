@@ -30,15 +30,15 @@ class UpdatesTest {
         {"tag_name":"v0.9.0","name":"v0.9.0","draft":false,"prerelease":false,"published_at":"2026-11-21T12:00:00Z",
          "body":"## What's Changed\n- Ygg as the home screen\n- Smaller APK\n\n**Full Changelog**: x",
          "assets":[
-           {"name":"yggdrasil-0.9.0.apk.sha256","size":90,"browser_download_url":"https://e/sha"},
-           {"name":"yggdrasil-0.9.0.apk","size":27720680,"browser_download_url":"https://e/apk"}]}
+           {"name":"yggdrasil-0.9.0.apk.sha256","size":90,"url":"https://api/sha","browser_download_url":"https://e/sha"},
+           {"name":"yggdrasil-0.9.0.apk","size":27720680,"url":"https://api/apk","browser_download_url":"https://e/apk"}]}
     """.trimIndent()
 
     @Test fun readsGithubsLatestRelease() {
         val r = Updates.parse(JSONObject(github))!!
         assertEquals(v("0.9.0"), r.version)
-        assertEquals("https://e/apk", r.apkUrl)
-        assertEquals("https://e/sha", r.shaUrl)
+        assertEquals("https://api/apk", r.apkUrl)
+        assertEquals("https://api/sha", r.shaUrl)
         assertEquals(27720680L, r.apkSize)
         assertEquals("What's Changed\nYgg as the home screen\nSmaller APK", r.summary())
     }
@@ -63,5 +63,15 @@ class UpdatesTest {
         val hex = "a".repeat(64)
         assertEquals(hex, Updates.shaFrom("$hex  yggdrasil-0.9.0.apk\n"))
         assertNull(Updates.shaFrom("not a hash"))
+    }
+
+    @Test fun explainsRefusalsAndChecksTokens() {
+        assertEquals("The repo is private: add a GitHub token below.", Updates.refusal(404, hasToken = false))
+        assertTrue(Updates.refusal(404, hasToken = true).contains("Contents: read"))
+        assertTrue(Updates.refusal(401, hasToken = true).contains("expired"))
+        assertEquals("github_pat_" + "a".repeat(30), Updates.tokenShape("  github_pat_" + "a".repeat(30) + "\n"))
+        assertEquals("ghp_" + "B1".repeat(15), Updates.tokenShape("ghp_" + "B1".repeat(15)))
+        assertNull(Updates.tokenShape("hunter2"))
+        assertNull(Updates.tokenShape("github_pat_short"))
     }
 }

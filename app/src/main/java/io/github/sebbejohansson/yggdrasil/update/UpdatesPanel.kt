@@ -1,5 +1,11 @@
 package io.github.sebbejohansson.yggdrasil.update
 
+import io.github.sebbejohansson.yggdrasil.ui.HudTextField
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,6 +47,9 @@ fun UpdatesPanel(updater: Updater, scope: CoroutineScope) {
     val context = LocalContext.current
     var allowed by remember { mutableStateOf(updater.allowed()) }
     var auto by remember { mutableStateOf(updater.settings.auto) }
+    var hasToken by remember { mutableStateOf(updater.hasToken) }
+    var pasted by remember { mutableStateOf("") }
+    var tokenNote by remember { mutableStateOf<String?>(null) }
     LifecycleResumeEffect(Unit) {
         allowed = updater.allowed()
         onPauseOrDispose { }
@@ -79,6 +88,23 @@ fun UpdatesPanel(updater: Updater, scope: CoroutineScope) {
                 Text("Android asks you once to let Ygg install apps. After that, updates need no taps.", style = HudText.meta)
                 HudButton("Allow Ygg to install updates", { runCatching { context.startActivity(updater.allowIntent()) } }, kind = HudButtonKind.GHOST)
             }
+            TokenLines(
+                hasToken = hasToken,
+                pasted = pasted,
+                note = tokenNote,
+                onPaste = { pasted = it; tokenNote = null },
+                onSave = {
+                    if (updater.setToken(pasted)) {
+                        pasted = ""
+                        hasToken = true
+                        tokenNote = null
+                        scope.launch { updater.check() }
+                    } else {
+                        tokenNote = "That doesn't look like a GitHub token (github_pat_… or ghp_…)."
+                    }
+                },
+                onRemove = { updater.removeToken(); hasToken = false },
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val busy = s is UpdateState.Checking || s is UpdateState.Downloading || s is UpdateState.Installing
                 val ready = s as? UpdateState.Ready
@@ -97,4 +123,44 @@ fun UpdatesPanel(updater: Updater, scope: CoroutineScope) {
 private fun ReleaseLines(release: Release, what: String) {
     Text("Ygg ${release.version} $what", style = HudText.small)
     release.summary(3).takeIf { it.isNotBlank() }?.let { Text(it, style = HudText.meta) }
+}
+
+/**
+ * The token for a private repo: a fine-grained GitHub token with read access
+ * to this repo's contents and nothing else. Shown as dots, kept encrypted.
+ */
+@Composable
+private fun TokenLines(
+    hasToken: Boolean,
+    pasted: String,
+    note: String?,
+    onPaste: (String) -> Unit,
+    onSave: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    HudSection("GitHub token")
+    if (hasToken) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Set, kept encrypted on this phone.", style = HudText.meta, modifier = Modifier.weight(1f))
+            HudButton("Remove", onRemove, kind = HudButtonKind.SMALL)
+        }
+        return
+    }
+    Text(
+        "The repo is private, so GitHub wants a token. On github.com: Settings → Developer settings → " +
+            "Fine-grained tokens → Generate. Repository access: only yggdrasil-mobile. Permissions: Contents, read-only. Paste it here.",
+        style = HudText.meta,
+    )
+    HudTextField(
+        value = pasted,
+        onValueChange = onPaste,
+        placeholder = "github_pat_…",
+        maxLines = 1,
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { onSave() }),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    note?.let { Text(it, style = HudText.meta.copy(color = Hud.amber)) }
+    HudButton("Save token", onSave, enabled = pasted.isNotBlank(), kind = HudButtonKind.GHOST)
 }

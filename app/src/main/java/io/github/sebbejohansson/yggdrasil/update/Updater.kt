@@ -98,6 +98,8 @@ class Updater(
     private val context: Context,
     val settings: UpdateSettings,
     private val hermodr: HermodrService,
+    /** The GitHub token for a private repo; none for a public one. */
+    private val vault: TokenVault,
     private val current: String = BuildConfig.VERSION_NAME,
     private val enabled: Boolean = !BuildConfig.DEBUG,
 ) {
@@ -115,24 +117,67 @@ class Updater(
     fun allowIntent(): Intent =
         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:${context.packageName}".toUri())
 
-    private fun open(url: String, accept: String? = null) = (URL(url).openConnection() as HttpURLConnection).apply {
-        instanceFollowRedirects = true
-        connectTimeout = 15_000
-        readTimeout = 30_000
-        // GitHub wants a User-Agent; a generic one, nothing about you.
-        setRequestProperty("User-Agent", "yggdrasil-mobile-updater")
-        accept?.let { setRequestProperty("Accept", it) }
+    /** Whether a GitHub token is kept. The token itself never leaves this class. */
+    val hasToken: Boolean get() = vault.get() != null
+
+    /** Keeps a pasted token; false when it doesn't look like one. */
+    fun setToken(text: String): Boolean {
+        val token = Updates.tokenShape(text) ?: return false
+        vault.set(token)
+        return true
     }
 
-    private fun readText(url: String, accept: String? = null): String {
+    fun removeToken() = vault.set(null)
+
+    private class Refused(val code: Int) : IOException("HTTP $code")
+
+    /**
+     * Opens [url], following redirects by hand: the token goes to GitHub's API
+     * only, never to the storage host a download redirects to.
+     */
+    private fun open(url: String, accept: String): HttpURLConnection {
+        val token = vault.get()
+        var at = URL(url)
+        repeat(5) {
+            val conn = (at.openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false
+                connectTimeout = 15_000
+                readTimeout = 30_000
+                // GitHub wants a User-Agent; a generic one, nothing about you.
+                setRequestProperty("User-Agent", "yggdrasil-mobile-updater")
+                setRequestProperty("Accept", accept)
+                if (token != null && at.host == "api.github.com") {
+                    setRequestProperty("Authorization", "Bearer $token")
+                    setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+                }
+            }
+            val code = conn.responseCode
+            if (code in 300..399) {
+                val next = conn.getHeaderField("Location") ?: throw IOException("a redirect without a Location")
+                conn.disconnect()
+                at = URL(at, next)
+                if (at.protocol != "https") throw IOException("a redirect away from https")
+                return@repeat
+            }
+            if (code != HttpURLConnection.HTTP_OK) {
+                conn.disconnect()
+                throw Refused(code)
+            }
+            return conn
+        }
+        throw IOException("too many redirects")
+    }
+
+    private fun readText(url: String, accept: String): String {
         val conn = open(url, accept)
         try {
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) throw IOException("GitHub answered HTTP ${conn.responseCode}")
             return conn.inputStream.bufferedReader().use { it.readText() }
         } finally {
             conn.disconnect()
         }
     }
+
+    private fun why(e: Exception): String = if (e is Refused) Updates.refusal(e.code, hasToken) else e.message ?: e.javaClass.simpleName
 
     private fun fileFor(r: Release) = File(dir, "yggdrasil-${r.version}.apk")
 
@@ -141,7 +186,7 @@ class Updater(
         if (!enabled) return null
         _state.value = UpdateState.Checking
         try {
-            val release = withContext(Dispatchers.IO) { Updates.parse(JSONObject(readText(Updates.LATEST_URL, "application/vnd.github+json"))) }
+            val release = withContext(Dispatchers.IO) { Updates.parse(JSONObject(readText(Updates.LATEST_URL, GITHUB_JSON))) }
             settings.lastCheck = System.currentTimeMillis()
             if (release == null || !Updates.isNewer(release, current)) {
                 withContext(Dispatchers.IO) { dir.listFiles()?.forEach { it.delete() } }
@@ -154,7 +199,7 @@ class Updater(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            _state.value = UpdateState.Failed("Couldn't look for updates: ${e.message ?: e.javaClass.simpleName}")
+            _state.value = UpdateState.Failed("Couldn't look for updates. ${why(e)}")
             null
         }
     }
@@ -169,9 +214,8 @@ class Updater(
                 if (!(file.isFile && file.length() == release.apkSize)) {
                     val part = File(dir, file.name + ".part")
                     _state.value = UpdateState.Downloading(release, 0, release.apkSize)
-                    val conn = open(release.apkUrl)
+                    val conn = open(release.apkUrl, BINARY)
                     try {
-                        if (conn.responseCode != HttpURLConnection.HTTP_OK) throw IOException("HTTP ${conn.responseCode}")
                         var have = 0L
                         conn.inputStream.use { input ->
                             part.outputStream().use { out ->
@@ -194,7 +238,7 @@ class Updater(
                         conn.disconnect()
                     }
                     release.shaUrl?.let { url ->
-                        val want = Updates.shaFrom(readText(url)) ?: throw IOException("the release's SHA-256 file can't be read")
+                        val want = Updates.shaFrom(readText(url, BINARY)) ?: throw IOException("the release's SHA-256 file can't be read")
                         if (sha256(part) != want) {
                             part.delete()
                             throw IOException("the download doesn't match its SHA-256")
@@ -211,7 +255,7 @@ class Updater(
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            _state.value = UpdateState.Failed("Couldn't download ${release.version}: ${e.message ?: e.javaClass.simpleName}", release)
+            _state.value = UpdateState.Failed("Couldn't download ${release.version}. ${why(e)}", release)
             null
         }
     }
@@ -319,6 +363,11 @@ class Updater(
         hermodr.send(MessageRequest("updates", "Ygg updated to $current", "From $last.", priority = Priority.LOW, push = false, tag = "update"))
     }
 }
+
+private const val GITHUB_JSON = "application/vnd.github+json"
+
+/** Asks the API for a release asset's bytes rather than its description. */
+private const val BINARY = "application/octet-stream"
 
 /** Looks for a release every few hours, on any network. */
 class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {

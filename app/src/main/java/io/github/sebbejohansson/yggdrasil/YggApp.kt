@@ -1,5 +1,6 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.update.KeystoreTokenVault
 import io.github.sebbejohansson.yggdrasil.update.Updates
 import io.github.sebbejohansson.yggdrasil.update.UpdateWorker
 import io.github.sebbejohansson.yggdrasil.update.UpdateSettings
@@ -150,7 +151,7 @@ class AppContainer(private val app: Application) {
     )
     val gjallar = GjallarService(db.alerts, hermodr)
     // Updates from the GitHub releases (release builds only).
-    val updater = Updater(app, UpdateSettings(app), hermodr)
+    val updater = Updater(app, UpdateSettings(app), hermodr, KeystoreTokenVault(app))
     val vedrfolnir = VedrfolnirService(AndroidPhoneReader(app), gjallar)
     val jobAlarm = AndroidJobAlarm(app)
     // Norn's memory: facts are picked out on the side, at temperature 0, on the phone only.

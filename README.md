@@ -341,6 +341,16 @@ Release builds keep themselves up to date from this repo's GitHub releases.
   automatic switch.
 - **After an update:** Messages says what you came from, and Dellingr's
   alarms are set again.
+- **Private repo:** GitHub only shows a private repo's releases with a
+  token. Make a fine-grained token on github.com (Settings → Developer
+  settings → Fine-grained tokens):
+  - **Repository access:** only `yggdrasil-mobile`
+  - **Permissions:** Contents, read-only
+
+  Paste it under Parts → Settings → Updates → GitHub token. It's encrypted
+  with a key in the phone's Android Keystore, and only sent to
+  `api.github.com`, never to the storage host downloads redirect to.
+  When it expires, Updates says so; make a new one.
 - **Dev builds** never update themselves.
 - **Play Protect:** if it blocks the update, install it by hand once (see
   `docs/releasing.md`).

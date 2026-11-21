@@ -51,10 +51,11 @@ data class Release(
     val version: Version,
     val tag: String,
     val notes: String,
+    /** The API address of the APK: works for a private repo, with a token. */
     val apkUrl: String,
     val apkName: String,
     val apkSize: Long,
-    /** The `.sha256` file published next to the APK, when there is one. */
+    /** The `.sha256` file published next to the APK (API address), when there is one. */
     val shaUrl: String?,
     val publishedAt: String?,
 ) {
@@ -90,13 +91,28 @@ object Updates {
             version = version,
             tag = tag,
             notes = json.optString("body").takeUnless { json.isNull("body") }.orEmpty(),
-            apkUrl = apk.optString("browser_download_url"),
+            apkUrl = apk.optString("url"),
             apkName = name,
             apkSize = apk.optLong("size"),
-            shaUrl = sha?.optString("browser_download_url"),
+            shaUrl = sha?.optString("url"),
             publishedAt = json.optString("published_at").ifEmpty { null },
         )
     }
+
+    /**
+     * What to tell you when GitHub says no. A private repo answers 404 to
+     * anyone without a token, so 404 without one means "add a token".
+     */
+    fun refusal(code: Int, hasToken: Boolean): String = when {
+        code == 401 -> "GitHub refused the token. It may have expired: make a new one."
+        (code == 404 || code == 403) && !hasToken -> "The repo is private: add a GitHub token below."
+        code == 404 -> "GitHub can't find the releases with this token. Does it cover yggdrasil-mobile with Contents: read?"
+        code == 403 -> "GitHub said no (HTTP 403): the token lacks Contents: read, or the rate limit was hit."
+        else -> "GitHub answered HTTP $code."
+    }
+
+    /** Looks like a GitHub token: what's pasted is trimmed and checked before it's kept. */
+    fun tokenShape(text: String): String? = text.trim().takeIf { it.matches(Regex("(github_pat_|gh[pousr]_)[A-Za-z0-9_]{20,}")) }
 
     /** The hash in a `sha256sum` line: `<hex>  <file>`. */
     fun shaFrom(text: String): String? =

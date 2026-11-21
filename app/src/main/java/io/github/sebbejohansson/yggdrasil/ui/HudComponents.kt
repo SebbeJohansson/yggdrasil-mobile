@@ -1,5 +1,6 @@
 package io.github.sebbejohansson.yggdrasil.ui
 
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.background
@@ -155,6 +156,7 @@ fun HudTextField(
     leading: String? = null,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
@@ -168,6 +170,7 @@ fun HudTextField(
         singleLine = maxLines == 1,
         keyboardOptions = keyboardOptions,
         keyboardActions = keyboardActions,
+        visualTransformation = visualTransformation,
         interactionSource = interaction,
         decorationBox = { inner ->
             Row(
