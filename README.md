@@ -113,6 +113,11 @@ Hermóðr. Both keep their state in `ygg.db` (SQLite).
 - When notifications are off, the message is kept with the reason, and the
   Messages tab says why.
 - Messages are kept for 7 days.
+- **Do Not Disturb:** Android silences Yggdrasil too. The Messages tab says
+  whether the Urgent channel gets through, and *Let urgent through* opens
+  Android's settings for that channel, where only you can switch on
+  "Override Do Not Disturb". Critical alerts and urgent messages then still
+  reach you, and the rest stay quiet.
 
 Notification buttons: **Seen** on messages, **Acknowledge** and **Snooze 1 h**
 on alerts. The Alerts and Messages tabs have test buttons that run the

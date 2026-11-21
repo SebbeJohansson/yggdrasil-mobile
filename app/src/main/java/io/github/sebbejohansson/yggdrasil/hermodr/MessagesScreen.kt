@@ -68,6 +68,7 @@ data class MessagesUiState(
     /** When the meeting you're in ends; null when free. */
     val busyUntil: Instant? = null,
     val nextMeeting: CalendarEvent? = null,
+    val dnd: DndStatus? = null,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -102,6 +103,7 @@ class MessagesViewModel(
                 messages = hermodr.list(),
                 quietHours = q,
                 blocked = notifier.blockedReason(Priority.NORMAL),
+                dnd = notifier.dnd(),
                 calendarAllowed = allowed,
                 busyUntil = Busy.until(events, now),
                 nextMeeting = Busy.next(events, now),
@@ -201,6 +203,7 @@ fun MessagesScreen(vm: MessagesViewModel, modifier: Modifier = Modifier) {
             }
         }
         item { MeetingsPanel(s, onAllowed = vm::recheckPermission) }
+        s.dnd?.let { d -> item { DndPanel(d) } }
         item { HudSection("Messages", Modifier.padding(top = 8.dp)) }
         if (s.messages.isEmpty()) {
             item {
@@ -281,5 +284,44 @@ private fun MeetingsPanel(s: MessagesUiState, onAllowed: () -> Unit) {
             },
             style = HudText.meta,
         )
+    }
+}
+
+/**
+ * Android's Do Not Disturb silences Yggdrasil too. Letting only the urgent
+ * channel through keeps critical alerts and urgent messages loud, the rest
+ * quiet. Only you can switch that on, in Android's settings for the channel.
+ */
+@Composable
+private fun DndPanel(d: DndStatus) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Column(
+        Modifier.fillMaxWidth().hudPanel(warn = d.on && !d.urgentGetsThrough).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            HudLabel("Do Not Disturb", color = Hud.group, modifier = Modifier.weight(1f))
+            HudLabel(
+                if (d.urgentGetsThrough) "urgent gets through" else "urgent silenced",
+                color = if (d.urgentGetsThrough) Hud.green else if (d.on) Hud.amber else Hud.overlay0,
+            )
+        }
+        Text(
+            when {
+                d.urgentGetsThrough && d.on -> "On now. Urgent messages and critical alerts still reach you; the rest wait quietly."
+                d.urgentGetsThrough -> "When it's on, urgent messages and critical alerts still reach you; the rest stay quiet."
+                d.on -> "On now: even urgent messages and critical alerts are silent. Let the Urgent channel through to change that."
+                else -> "When it's on, everything from Yggdrasil is silent. Let only the Urgent channel through, and critical alerts still reach you."
+            },
+            style = HudText.meta,
+        )
+        if (!d.urgentGetsThrough) {
+            HudButton(
+                "Let urgent through",
+                { context.startActivity(AndroidNotifier.urgentChannelSettings(context)) },
+                kind = HudButtonKind.SMALL,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
     }
 }
