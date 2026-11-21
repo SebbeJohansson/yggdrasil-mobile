@@ -54,7 +54,7 @@ numbers. When Android's animations are off it stands still.
 - **Other opens:** the quick check, the same in about a second. It's
   see-through and lets every touch through.
 - **From a notification:** you get at most the quick one.
-- **Settings:** under Parts → Boot (daily boot, voice, quick check, Run it
+- **Settings:** under Parts → Settings (daily boot, voice, quick check, Run it
   now).
 
 | Waiting for a tap | Systems check |
@@ -265,6 +265,34 @@ the memories, healed alerts and reactions you already have.
 | Tree | Runes |
 | --- | --- |
 | ![Tree](docs/screenshots/10-tree.png) | ![Runes](docs/screenshots/11-runes.png) |
+
+## Home screen: `home/`
+
+Ygg can be the phone's home screen, so pressing Home brings you to Ygg. It's
+optional: nothing changes until you choose it.
+
+- **Turning it on:** Parts → Settings → *Use Ygg as home screen*, or
+  Android's Settings → Apps → Default apps → Home app. Switch back the same
+  way.
+- **Apps tab:** your pinned apps on top, then every app A-Z under its
+  letter.
+  - **Search:** type to find an app. It matches the start of the name or of
+    a word, the initials ("gm" finds Google Maps) and accents. Enter opens
+    the first match.
+  - **Long-press:** pin, move, App info, Uninstall.
+  - **Work apps:** apps in a work profile are listed too, marked *work*.
+- **Home and Back:** Home always comes back to the apps and clears the
+  search. Back goes to the apps and never leaves Ygg.
+- **Light on the phone:**
+  - **Boot:** as the home screen Ygg shows the daily boot only, never the
+    quick check.
+  - **Gemma:** the model still loads on your first question, never on Home.
+- **One APK:** the home screen is a second entry point to the same app, a
+  few kilobytes. Opening Ygg from its icon still works as before.
+
+| Apps | Search |
+| --- | --- |
+| ![Apps](docs/screenshots/home-apps.png) | ![Search](docs/screenshots/home-search.png) |
 
 ## Models: `llm/`
 

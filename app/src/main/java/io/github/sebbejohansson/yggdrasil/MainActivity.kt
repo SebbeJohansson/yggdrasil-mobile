@@ -1,5 +1,10 @@
 package io.github.sebbejohansson.yggdrasil
 
+import androidx.activity.compose.BackHandler
+import io.github.sebbejohansson.yggdrasil.home.HomeScreenPanel
+import io.github.sebbejohansson.yggdrasil.home.HomeRole
+import io.github.sebbejohansson.yggdrasil.home.AppsScreen
+import io.github.sebbejohansson.yggdrasil.home.AppsViewModel
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import io.github.sebbejohansson.yggdrasil.history.RunesScreen
@@ -113,7 +118,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-class MainActivity : ComponentActivity() {
+open class MainActivity : ComponentActivity() {
+
+    /** True in [io.github.sebbejohansson.yggdrasil.home.HomeActivity]: Ygg as the phone's home screen. */
+    protected open val home: Boolean = false
+
+    /** Home-button presses while Ygg is the home screen. */
+    protected val homePresses = MutableStateFlow(0)
 
     /** Which tab a notification asked for. */
     private val requestedTab = MutableStateFlow<Int?>(null)
@@ -125,7 +136,7 @@ class MainActivity : ComponentActivity() {
         requestedTab.value = intent.tabExtra()
         val container = (application as YggApp).container
         val fromNotification = requestedTab.value != null
-        setContent { YggTheme { Root(container, requestedTab, fromNotification) } }
+        setContent { YggTheme { Root(container, requestedTab, fromNotification, home, homePresses) } }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -141,13 +152,20 @@ class MainActivity : ComponentActivity() {
         const val TAB_ALERTS = 1
         const val TAB_MESSAGES = 2
         const val TAB_PHONE = 3
+        const val TAB_APPS = 4
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, fromNotification: Boolean = false) {
-    var tab by rememberSaveable { mutableIntStateOf(MainActivity.TAB_CHAT) }
+private fun Root(
+    container: AppContainer,
+    requestedTab: MutableStateFlow<Int?>,
+    fromNotification: Boolean = false,
+    home: Boolean = false,
+    homePresses: MutableStateFlow<Int> = MutableStateFlow(0),
+) {
+    var tab by rememberSaveable { mutableIntStateOf(if (home) MainActivity.TAB_APPS else MainActivity.TAB_CHAT) }
     val context = LocalContext.current
 
     // The boot sequence: the full one once a day, the quick one on other opens. Opened from a
@@ -155,7 +173,12 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, 
     var boot by rememberSaveable {
         mutableStateOf(
             BootLogic.kind(container.bootSettings.choice, container.bootSettings.lastDay, LocalDate.now()).let {
-                if (fromNotification && it == BootKind.FULL) BootKind.QUICK else it
+                when {
+                    fromNotification && it == BootKind.FULL -> BootKind.QUICK
+                    // As the home screen it's open all day: the daily boot only, never the quick check.
+                    home && it == BootKind.QUICK -> BootKind.NONE
+                    else -> it
+                }
             },
         )
     }
@@ -179,6 +202,14 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, 
     val jobs: JobsViewModel = viewModel(factory = JobsViewModel.factory(container))
     val huginnVm: HuginnViewModel = viewModel(factory = HuginnViewModel.factory(container, LocalContext.current))
     val historyVm: HistoryViewModel = viewModel(factory = HistoryViewModel.factory(container))
+    val appsVm: AppsViewModel? = if (home) viewModel(factory = AppsViewModel.factory(container)) else null
+    val presses by homePresses.collectAsStateWithLifecycle()
+    // Home goes to the apps, whatever page you were on.
+    LaunchedEffect(presses) { if (home && presses > 0) tab = MainActivity.TAB_APPS }
+    // Back never leaves the home screen: it goes back to the apps.
+    BackHandler(enabled = home && tab != MainActivity.TAB_APPS) { tab = MainActivity.TAB_APPS }
+    var homeHeld by remember { mutableStateOf(HomeRole.held(context)) }
+    val askHome = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { homeHeld = HomeRole.held(context) }
     val huginnState by huginnVm.state.collectAsStateWithLifecycle()
     val jobsState by jobs.state.collectAsStateWithLifecycle()
     val failingJobs = jobsState.jobs.count { it.failures >= DellingrService.FAILING_AFTER }
@@ -197,6 +228,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, 
         chat.refreshProviders()
         jobs.recheck()
         huginnVm.recheck()
+        homeHeld = HomeRole.held(context)
         onPauseOrDispose { }
     }
 
@@ -269,17 +301,28 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, 
                 when (tab) {
                     MainActivity.TAB_ALERTS -> AlertsScreen(alerts)
                     MainActivity.TAB_MESSAGES -> MessagesScreen(messages)
-                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs, huginnVm, historyVm, container.bootSettings, onRunBoot = { boot = BootKind.FULL })
+                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs, huginnVm, historyVm, container.bootSettings, onRunBoot = { boot = BootKind.FULL }) {
+                        HomeScreenPanel(
+                            held = homeHeld,
+                            onUse = {
+                                val ask = HomeRole.request(context)
+                                runCatching { if (ask != null) askHome.launch(ask) else context.startActivity(HomeRole.settings()) }
+                            },
+                            onChange = { runCatching { context.startActivity(HomeRole.settings()) } },
+                        )
+                    }
+                    MainActivity.TAB_APPS -> if (appsVm != null) AppsScreen(appsVm, presses) else ChatScreen(chat)
                     else -> ChatScreen(chat)
                 }
             }
             // Out of the way while typing; the keyboard takes that space.
             if (!WindowInsets.isImeVisible) {
                 TabBar {
-                    Tab(tab == MainActivity.TAB_CHAT, "Norn", 0) { tab = MainActivity.TAB_CHAT }
-                    Tab(tab == MainActivity.TAB_ALERTS, "Alerts", openAlerts) { tab = MainActivity.TAB_ALERTS }
-                    Tab(tab == MainActivity.TAB_MESSAGES, "Messages", unseen) { tab = MainActivity.TAB_MESSAGES }
-                    Tab(tab == MainActivity.TAB_PHONE, "Parts", phoneFailing.size + failingJobs) { tab = MainActivity.TAB_PHONE }
+                    if (home) Tab(tab == MainActivity.TAB_APPS, "Apps", 0, tight = true) { tab = MainActivity.TAB_APPS }
+                    Tab(tab == MainActivity.TAB_CHAT, "Norn", 0, tight = home) { tab = MainActivity.TAB_CHAT }
+                    Tab(tab == MainActivity.TAB_ALERTS, "Alerts", openAlerts, tight = home) { tab = MainActivity.TAB_ALERTS }
+                    Tab(tab == MainActivity.TAB_MESSAGES, "Messages", unseen, tight = home) { tab = MainActivity.TAB_MESSAGES }
+                    Tab(tab == MainActivity.TAB_PHONE, "Parts", phoneFailing.size + failingJobs, tight = home) { tab = MainActivity.TAB_PHONE }
                 }
             }
         }
@@ -372,7 +415,7 @@ private fun TabBar(content: @Composable RowScope.() -> Unit) {
 
 /** A menu leaf as the dashboard's: solid cyan when it's the page you're on. */
 @Composable
-private fun RowScope.Tab(selected: Boolean, label: String, count: Int, onClick: () -> Unit) {
+private fun RowScope.Tab(selected: Boolean, label: String, count: Int, tight: Boolean = false, onClick: () -> Unit) {
     Row(
         Modifier
             .weight(1f)
@@ -387,11 +430,14 @@ private fun RowScope.Tab(selected: Boolean, label: String, count: Int, onClick: 
             style = HudText.label.copy(
                 fontFamily = HudFonts.mono,
                 // Four tabs share a phone's width: a little tighter than the dashboard's labels.
-                fontSize = 11.sp,
-                letterSpacing = 0.08.em,
+                // Five (as the home screen) tighter still.
+                fontSize = if (tight) 10.sp else 11.sp,
+                letterSpacing = if (tight) 0.03.em else 0.08.em,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 color = if (selected) Hud.onCyan else Hud.subtext1,
             ),
+            maxLines = 1,
+            softWrap = false,
         )
         if (count > 0) {
             Spacer(Modifier.width(4.dp))
@@ -411,14 +457,22 @@ private fun Modifier.topLine(c: Color) = drawBehind {
 
 /** The parts with no tab of their own, under page tabs as on the dashboard (`PageTabs.vue`). */
 @Composable
-private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel, huginn: HuginnViewModel, history: HistoryViewModel, bootSettings: BootSettings, onRunBoot: () -> Unit) {
+private fun PartsScreen(
+    phone: PhoneViewModel,
+    jobs: JobsViewModel,
+    huginn: HuginnViewModel,
+    history: HistoryViewModel,
+    bootSettings: BootSettings,
+    onRunBoot: () -> Unit,
+    settingsMore: @Composable () -> Unit = {},
+) {
     var page by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(top = 8.dp).bottomLine(Color(0xFF17323F)).horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            listOf("Phone", "Jobs", "Huginn", "Tree", "Runes", "Boot").forEachIndexed { i, label ->
+            listOf("Phone", "Jobs", "Huginn", "Tree", "Runes", "Settings").forEachIndexed { i, label ->
                 val on = page == i
                 Text(
                     label,
@@ -437,7 +491,7 @@ private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel, huginn: Hugi
                 2 -> HuginnScreen(huginn)
                 3 -> TreeScreen(history)
                 4 -> RunesScreen(history)
-                else -> BootSettingsScreen(bootSettings, onRunBoot)
+                else -> BootSettingsScreen(bootSettings, onRunBoot, settingsMore)
             }
         }
     }

@@ -1,5 +1,7 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.home.HomeSettings
+import io.github.sebbejohansson.yggdrasil.home.InstalledApps
 import android.app.Application
 import androidx.work.Configuration
 import io.github.sebbejohansson.yggdrasil.boot.BootSettings
@@ -108,6 +110,10 @@ class AppContainer(private val app: Application) {
     val notifier = AndroidNotifier(app)
     val hermodrSettings = HermodrSettings(app)
     val bootSettings = BootSettings(app)
+
+    // The home screen, when you make Ygg the phone's launcher.
+    val installedApps = InstalledApps(app)
+    val homeSettings = HomeSettings(app)
 
     /** The phone's calendars, for Norn and for Hermóðr's hold. */
     val calendar = AndroidCalendarReader(app)

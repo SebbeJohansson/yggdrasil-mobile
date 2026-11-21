@@ -26,7 +26,7 @@ import io.github.sebbejohansson.yggdrasil.ui.hudPanel
 
 /** The boot sequence's switches, as the dashboard's Settings → Boot sequence. */
 @Composable
-fun BootSettingsScreen(settings: BootSettings, onRunNow: () -> Unit) {
+fun BootSettingsScreen(settings: BootSettings, onRunNow: () -> Unit, more: @Composable () -> Unit = {}) {
     var choice by remember { mutableStateOf(settings.choice) }
     fun set(c: BootChoice) {
         choice = c
@@ -42,6 +42,7 @@ fun BootSettingsScreen(settings: BootSettings, onRunNow: () -> Unit) {
             Switch("Quick check", "Every other open: the same check in about a second, see-through.", choice.quick) { set(choice.copy(quick = it)) }
         }
         HudButton("Run it now", onRunNow, kind = HudButtonKind.GHOST)
+        more()
     }
 }
 

@@ -17,6 +17,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!-- The home screen lists the apps you can open, and only those. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".YggApp"
         android:allowBackup="false"
@@ -39,6 +47,28 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            Ygg as the phone's home screen: the same app with an Apps page. Optional:
+            it does nothing until you pick it under Settings → Apps → Default apps → Home app
+            (or Parts → Settings → Use Ygg as home screen).
+        -->
+        <activity
+            android:name=".home.HomeActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:clearTaskOnLaunch="true"
+            android:excludeFromRecents="true"
+            android:resumeWhilePausing="true"
+            android:taskAffinity="io.github.sebbejohansson.yggdrasil.home"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 

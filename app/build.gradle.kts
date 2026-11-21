@@ -47,8 +47,11 @@ android {
 
     buildTypes {
         release {
-            // LiteRT-LM finds tools by reflection; shrinking would need keep rules first.
-            isMinifyEnabled = false
+            // R8 shrinks the code to a fraction; proguard-rules.pro keeps what
+            // LiteRT-LM's native side and reflection reach by name.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (releaseKeystore != null) signingConfig = signingConfigs.getByName("release")
         }
     }
