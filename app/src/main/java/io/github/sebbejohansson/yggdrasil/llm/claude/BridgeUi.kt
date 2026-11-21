@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -154,13 +155,13 @@ fun PhoneCloudPanel(vm: BridgeViewModel, onSetUp: () -> Unit) {
         when {
             !s.checked -> Text("Looking for the bridge…", style = HudText.meta)
             s.health == null -> {
-                Text("Start cloud sessions from here, with no computer on: Ygg's Claude bridge runs Claude Code in Termux on this phone.", style = HudText.small)
-                Text("Not running. In Termux: ygg-bridge start. Not installed yet: Settings → Claude bridge.", style = HudText.meta)
+                Text("Start cloud sessions from here, with no computer on: Ygg's Claude bridge runs Claude Code on this phone, in Android's Linux Terminal.", style = HudText.small)
+                Text("Not running. Open Terminal (it starts with it), or ygg-bridge start. Not installed yet: Settings → Claude bridge.", style = HudText.meta)
                 HudButton("Set it up", onSetUp, kind = HudButtonKind.SMALL)
             }
             s.health.claude.isEmpty() -> Text("The bridge runs, but Claude Code isn't installed in it: run its installer again.", style = HudText.meta.copy(color = Hud.amber))
             !s.hasKey -> {
-                Text("The bridge runs. Paste its key (ygg-bridge key in Termux) under Settings → Claude bridge.", style = HudText.meta)
+                Text("The bridge runs. Paste its key (ygg-bridge key) under Settings → Claude bridge.", style = HudText.meta)
                 HudButton("Set it up", onSetUp, kind = HudButtonKind.SMALL)
             }
             else -> {
@@ -215,21 +216,27 @@ fun FollowUp(id: String, s: BridgeUiState, vm: BridgeViewModel, draft: String, o
 }
 
 /**
- * Settings → Claude bridge: whether it runs, its key, and the install
- * command to paste into Termux.
+ * Settings → Claude bridge: where it runs (Android's Linux Terminal, or
+ * Termux), whether it does, its key, and the install command to paste.
  */
 @Composable
-fun BridgePanel(vm: BridgeViewModel) {
+fun BridgePanel(vm: BridgeViewModel, settings: BridgeSettings) {
     val s = vm.state.collectAsStateWithLifecycle().value
     val context = LocalContext.current
     var key by remember { mutableStateOf("") }
     var note by remember { mutableStateOf<String?>(null) }
+    var place by remember { mutableStateOf(settings.place) }
     FollowBridge(vm)
     Text(
-        "Claude Code on this phone, in Termux, with your own subscription: start and follow up cloud sessions from the Code tab " +
-            "with no computer on, and let Claude answer when you allow it. Only on 127.0.0.1, and only with its key.",
+        "Claude Code on this phone, with your own subscription: start and follow up cloud sessions from the Code tab " +
+            "with no computer on, and let Claude answer when you allow it. Reached only from the phone, and only with its key.",
         style = HudText.meta,
     )
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        BridgePlace.entries.forEach { p ->
+            HudButton(p.label, { place = p; settings.place = p; note = null }, kind = if (p == place) HudButtonKind.PRIMARY else HudButtonKind.GHOST)
+        }
+    }
     Column(Modifier.fillMaxWidth().hudPanel(warn = s.checked && !s.ready).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         HudLabel(
             when {
@@ -243,21 +250,39 @@ fun BridgePanel(vm: BridgeViewModel) {
         )
         if (s.health != null && !s.health.github) Text("No GitHub token: public repos only (ygg-bridge github <token>).", style = HudText.meta)
         Text(
-            "1. Install Termux from F-Droid (and Termux:Boot to start with the phone).\n" +
-                "2. Copy the install command, paste it into Termux and run it.\n" +
-                "3. Sign Claude Code in: ygg-bridge login\n" +
-                "4. Paste the key it shows (ygg-bridge key) below.",
+            when (place) {
+                BridgePlace.LINUX_TERMINAL ->
+                    "1. Turn on Settings → System → Developer options → Linux development environment, and open Terminal once.\n" +
+                        "2. Copy the install command, paste it into Terminal and run it.\n" +
+                        "3. Allow port 8765 when Terminal asks (or its settings → Port control).\n" +
+                        "4. Sign Claude Code in: ygg-bridge login\n" +
+                        "5. Paste the key it shows (ygg-bridge key) below.\n" +
+                        "It runs while Terminal's Linux is on: keep Terminal open in the background."
+                BridgePlace.TERMUX ->
+                    "1. Install Termux from F-Droid (and Termux:Boot to start with the phone).\n" +
+                        "2. Copy the install command, paste it into Termux and run it.\n" +
+                        "3. Sign Claude Code in: ygg-bridge login\n" +
+                        "4. Paste the key it shows (ygg-bridge key) below."
+            },
             style = HudText.small,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             HudButton("Copy install command", {
-                copy(context, BridgeClient.installCommand(context))
-                note = "Copied. Paste it into Termux."
+                copy(context, BridgeClient.installCommand(context, place))
+                note = "Copied. Paste it into ${place.label}."
             }, kind = HudButtonKind.SMALL)
-            HudButton("Open Termux", {
-                runCatching {
-                    context.startActivity(context.packageManager.getLaunchIntentForPackage("com.termux")?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) ?: error("no Termux"))
-                }.onFailure { note = "Termux isn't installed: get it from F-Droid." }
+            HudButton("Open ${place.label}", {
+                val launch = context.packageManager.getLaunchIntentForPackage(place.app)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                when {
+                    launch != null -> context.startActivity(launch)
+                    place == BridgePlace.LINUX_TERMINAL -> {
+                        note = "Turn on Linux development environment in Developer options first."
+                        runCatching {
+                            context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }
+                    }
+                    else -> note = "Termux isn't installed: get it from F-Droid."
+                }
             }, kind = HudButtonKind.SMALL)
         }
         if (s.hasKey) {

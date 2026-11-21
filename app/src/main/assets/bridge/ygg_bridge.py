@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Ygg's Claude bridge: the real `claude` CLI, on this phone, for the Ygg app.
 
-Runs in Termux's Ubuntu (proot-distro), where Claude Code is supported, and
-listens on 127.0.0.1 only. The app asks it to:
+Runs in Android's Linux Terminal (a Debian VM; install-debian.sh) or in
+Termux's Ubuntu (install.sh), where Claude Code is supported. The app asks it to:
 
   - start a Claude Code cloud session for a repo   `claude --cloud "<task>"`
   - send a follow-up to any cloud session          `claude -p "<text>" --cloud <id>`
@@ -36,6 +36,11 @@ from pathlib import Path
 VERSION = "1"
 HOME = Path(os.environ.get("YGG_BRIDGE_HOME", Path.home() / ".ygg-bridge"))
 PORT = int(os.environ.get("YGG_BRIDGE_PORT", "8765"))
+# 127.0.0.1 in Termux (it shares the phone's network). In Android's Linux
+# Terminal the bridge is in a VM, and the Terminal's port forwarding brings
+# 8765 to the phone; there it listens on the VM's own addresses, which only
+# the phone can reach, and the key guards it as everywhere.
+HOST = os.environ.get("YGG_BRIDGE_HOST", "127.0.0.1")
 CLAUDE = os.environ.get("CLAUDE_BIN", "claude")
 START_WAIT = int(os.environ.get("YGG_BRIDGE_START_WAIT", "180"))
 # Where repos are cloned from; a test points it at local ones.
@@ -340,8 +345,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve() -> None:
     key()
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"Ygg's Claude bridge on 127.0.0.1:{PORT} (claude: {claude_version() or 'not installed'})", flush=True)
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(f"Ygg's Claude bridge on {HOST}:{PORT} (claude: {claude_version() or 'not installed'})", flush=True)
     server.serve_forever()
 
 

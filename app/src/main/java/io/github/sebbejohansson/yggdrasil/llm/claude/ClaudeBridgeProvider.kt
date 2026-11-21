@@ -34,7 +34,7 @@ class ClaudeBridgeProvider(private val bridge: BridgeClient) : LlmProvider {
     override suspend fun status(): ProviderStatus = try {
         val h = bridge.health()
         when {
-            h == null -> ProviderStatus.NeedsSetup("start the Claude bridge in Termux: ygg-bridge start")
+            h == null -> ProviderStatus.NeedsSetup("start the Claude bridge: open Terminal, or ygg-bridge start")
             h.claude.isEmpty() -> ProviderStatus.NeedsSetup("Claude Code isn't installed in the bridge: run its installer again")
             !bridge.hasKey -> ProviderStatus.NeedsSetup("paste the bridge's key in Settings (ygg-bridge key)")
             else -> ProviderStatus.Ready

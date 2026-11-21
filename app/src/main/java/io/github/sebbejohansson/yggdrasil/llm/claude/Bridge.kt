@@ -130,18 +130,35 @@ class BridgeClient(
 
     companion object {
         /**
-         * The one command to paste into Termux: it writes the bridge and its
-         * installer from the app (the repo is private, so nothing is fetched
-         * from GitHub) and runs the installer.
+         * The one command to paste into the terminal: it writes the bridge and
+         * its installer from the app (the repo is private, so nothing is
+         * fetched from GitHub) and runs the installer for [place].
          */
-        fun installCommand(context: Context): String {
+        fun installCommand(context: Context, place: BridgePlace = BridgePlace.LINUX_TERMINAL): String {
             fun b64(name: String) = Base64.encodeToString(context.assets.open("bridge/$name").use { it.readBytes() }, Base64.DEFAULT).trim()
             return buildString {
-                append("mkdir -p ~/ygg-bridge && cd ~/ygg-bridge && ")
+                append("mkdir -p ~/ygg-bridge-setup && cd ~/ygg-bridge-setup && ")
                 append("base64 -d > ygg_bridge.py <<'YGG_EOF'\n").append(b64("ygg_bridge.py")).append("\nYGG_EOF\n")
-                append("base64 -d > install.sh <<'YGG_EOF'\n").append(b64("install.sh")).append("\nYGG_EOF\n")
-                append("bash install.sh\n")
+                append("base64 -d > ${place.installer} <<'YGG_EOF'\n").append(b64(place.installer)).append("\nYGG_EOF\n")
+                append("bash ${place.installer}\n")
             }
         }
     }
+}
+
+/** Where the bridge runs, and how it's installed there. */
+enum class BridgePlace(val label: String, val installer: String, val app: String) {
+    /** Android's Linux Terminal: a Debian VM Google ships (Android 15+ on Pixels). */
+    LINUX_TERMINAL("Linux Terminal", "install-debian.sh", "com.android.virtualization.terminal"),
+
+    /** Termux, with an Ubuntu inside it (proot-distro). */
+    TERMUX("Termux", "install.sh", "com.termux"),
+}
+
+/** Which place you set the bridge up in, for the steps and the install command. */
+class BridgeSettings(context: Context) {
+    private val prefs = context.getSharedPreferences("bridge", Context.MODE_PRIVATE)
+    var place: BridgePlace
+        get() = runCatching { BridgePlace.valueOf(prefs.getString("place", null) ?: "") }.getOrDefault(BridgePlace.LINUX_TERMINAL)
+        set(v) = prefs.edit().putString("place", v.name).apply()
 }
