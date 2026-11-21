@@ -4,6 +4,8 @@
 
     <!-- Model download, and the Claude bridge on 127.0.0.1. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The boot sequence's network line. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Hermóðr's messages and Gjallar's alerts. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Hermóðr holds messages that ask to wait while you're in a meeting. Read on the phone only. -->
@@ -11,6 +13,17 @@
     <!-- Dellingr: wake on the minute a job is due (the user allows it from Android 14), and after a restart. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Model downloads run as a foreground job, so they carry on outside the app. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- The home screen lists the apps you can open, and only those. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <application
         android:name=".YggApp"
@@ -37,6 +50,28 @@
             </intent-filter>
         </activity>
 
+        <!--
+            Ygg as the phone's home screen: the same app with an Apps page. Optional:
+            it does nothing until you pick it under Settings → Apps → Default apps → Home app
+            (or Parts → Settings → Use Ygg as home screen).
+        -->
+        <activity
+            android:name=".home.HomeActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:clearTaskOnLaunch="true"
+            android:excludeFromRecents="true"
+            android:resumeWhilePausing="true"
+            android:taskAffinity="io.github.sebbejohansson.yggdrasil.home"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- WorkManager initialises on demand from YggApp's Configuration.Provider. -->
         <provider
             android:name="androidx.startup.InitializationProvider"
@@ -52,6 +87,23 @@
         <receiver
             android:name=".hermodr.NotificationActionReceiver"
             android:exported="false" />
+        <!-- Huginn reads other apps' notifications, once you allow it in Settings → Notification access. -->
+        <service
+            android:name=".huginn.HuginnListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- WorkManager's foreground service, declared as a data sync for the model downloads. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
         <receiver
             android:name=".dellingr.DellingrAlarmReceiver"
             android:exported="false" />

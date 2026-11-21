@@ -6,6 +6,8 @@ import io.github.sebbejohansson.yggdrasil.hermodr.MessageRequest
 import io.github.sebbejohansson.yggdrasil.hermodr.Priority
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -35,6 +37,11 @@ class GjallarService(
     val changes = Changes()
     private val lock = Mutex()
 
+    private val _events = MutableSharedFlow<Pair<AlertChange, Alert>>(extraBufferCapacity = 64)
+
+    /** Opened, escalated and resolved alerts, muted ones left out. Huginn follows this. */
+    val events: SharedFlow<Pair<AlertChange, Alert>> = _events
+
     override suspend fun raise(
         source: String,
         key: String,
@@ -63,14 +70,25 @@ class GjallarService(
                 severity = severity, title = title, detail = detail, link = link, lastSeenAt = now,
             ) to RaiseResult.UPDATED
         }
-        store.update(push(alert, result, now))
+        val stored = push(alert, result, now)
+        store.update(stored)
+        val change = when {
+            result == RaiseResult.OPENED -> AlertChange.OPENED
+            result == RaiseResult.REOPENED && old?.state == AlertState.RESOLVED -> AlertChange.OPENED
+            result == RaiseResult.REOPENED -> AlertChange.ESCALATED
+            old != null && stored.state == AlertState.OPEN && severity > old.severity -> AlertChange.ESCALATED
+            else -> null
+        }
+        if (change != null && !store.isMuted(source, key)) _events.tryEmit(change to stored)
         result
     }
 
     override suspend fun resolve(source: String, key: String): Boolean = locked {
         val a = store.find(source, key)?.takeIf { it.state != AlertState.RESOLVED } ?: return@locked false
-        store.update(a.copy(state = AlertState.RESOLVED, resolvedAt = clock.instant()))
+        val resolved = a.copy(state = AlertState.RESOLVED, resolvedAt = clock.instant(), lastSeenAt = clock.instant())
+        store.update(resolved)
         hermodr.withdraw(a.notificationTag)
+        if (!store.isMuted(source, key)) _events.tryEmit(AlertChange.RESOLVED to resolved)
         true
     }
 

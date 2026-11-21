@@ -27,9 +27,9 @@ the desktop Yggdrasil's dashboard (`ui/`):
 - **Alerts:** the alert list keeps its severity line and its Seen, Snooze 1h,
   1d and Mute buttons.
 
-| Norn | Alerts | Messages | Phone | Jobs |
-| --- | --- | --- | --- | --- |
-| ![Norn](docs/screenshots/1-norn.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) | ![Phone](docs/screenshots/4-phone.png) | ![Jobs](docs/screenshots/5-jobs.png) |
+| Norn | Alerts | Messages | Phone | Jobs | Huginn |
+| --- | --- | --- | --- | --- | --- |
+| ![Norn](docs/screenshots/1-norn.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) | ![Phone](docs/screenshots/4-phone.png) | ![Jobs](docs/screenshots/5-jobs.png) | ![Huginn](docs/screenshots/6-huginn.png) |
 
 **Bifröst at night**, as on the desktop: after the working day (09:00–17:00,
 Monday to Friday), when the app has gone 20 s untouched (5 min during
@@ -43,6 +43,24 @@ numbers. When Android's animations are off it stands still.
 | --- | --- |
 | ![Calm aurora](docs/screenshots/aurora-calm.png) | ![Stormy aurora](docs/screenshots/aurora-stormy.png) |
 
+**The boot sequence**, as on the desktop (`boot/`):
+
+- **Once a day:** the first open shows a heads-up display that waits for a
+  tap. It brings the parts online line by line, then the outside (network,
+  calendar access, notifications), then the phone, and gives a verdict.
+- **Voice:** a calm voice says how it went. Only a voice installed on the
+  phone is used, never a network one; with none installed there's no voice.
+- **Ending it:** any tap ends it, and *Skip it for today* skips it.
+- **Other opens:** the quick check, the same in about a second. It's
+  see-through and lets every touch through.
+- **From a notification:** you get at most the quick one.
+- **Settings:** under Parts → Settings (daily boot, voice, quick check, Run it
+  now).
+
+| Waiting for a tap | Systems check |
+| --- | --- |
+| ![Boot](docs/screenshots/0-boot.png) | ![Systems check](docs/screenshots/0-boot-check.png) |
+
 `ScreenshotTest` and `AuroraScreenshotTest` draw these on the JVM (Robolectric) into
 `app/build/screenshots/`.
 
@@ -53,11 +71,11 @@ packages in one app, not processes talking HTTP.
 
 | Part | On the phone | Status |
 | --- | --- | --- |
-| **Norn** | chat, memory, the front desk | chat with Gemma 4 |
+| **Norn** | chat, memory, the front desk | chat with Gemma 4, saved chats, memory |
 | **Gjallar** | alerts from every part, in one place | working |
 | **Hermóðr** | every message to you, as Android notifications | working |
 | **Dellingr** | runs the jobs you put on a clock | working |
-| **Huginn** | reacts to what just happened (incoming notifications) | planned |
+| **Huginn** | reacts to what just happened: messages, meetings, alerts | working |
 | **Veðrfölnir** | the phone itself: battery, storage, memory, heat | working |
 | **Sága** | keeps the phone's alerts and the desktop's in step, through Mímir | working (alerts) |
 
@@ -96,6 +114,11 @@ Hermóðr. Both keep their state in `ygg.db` (SQLite).
 - When notifications are off, the message is kept with the reason, and the
   Messages tab says why.
 - Messages are kept for 7 days.
+- **Do Not Disturb:** Android silences Yggdrasil too. The Messages tab says
+  whether the Urgent channel gets through, and *Let urgent through* opens
+  Android's settings for that channel, where only you can switch on
+  "Override Do Not Disturb". Critical alerts and urgent messages then still
+  reach you, and the rest stay quiet.
 
 Notification buttons: **Seen** on messages, **Acknowledge** and **Snooze 1 h**
 on alerts. The Alerts and Messages tabs have test buttons that run the
@@ -145,6 +168,37 @@ which is Android's shortest period. The Phone tab shows the readouts live,
 every 5 s while it's open, and has a segment on the arc reactor. A reading
 the phone doesn't give, such as a battery level, raises nothing.
 
+## Memory and chats: `norn/`
+
+Norn remembers you, under the desktop's rules (`Memory.kt`, ported from
+`norn/memory.go` with its tests):
+
+- **Learning:** after each answer, Norn picks lasting facts out of *your*
+  message, never its own answer. A small model states things confidently
+  that aren't true, and a fact taken from its answer would come back as
+  something you said.
+- **The names guard:** a fact naming someone your message didn't mention
+  is dropped. A small model copies the worked example otherwise.
+- **No duplicates:** a fact already known, by wording or by meaning, isn't
+  stored twice.
+- **Recall:** the facts that bear on a question go in front of it, in the
+  chat and in Dellingr's and Huginn's questions to Norn. In the chat they
+  sit in front of your message, not in the system prompt, so the model's
+  open conversation survives.
+- **Finding the right facts:** by meaning with EmbeddingGemma 2 (165 MB,
+  on the CPU, downloaded from the Memory page), by newest without it.
+- **Learning runs on the side:** in a conversation of its own, so it
+  doesn't close the chat's.
+- **The Memory page:** see, add and forget facts, and switch learning off.
+
+Chats are kept on the phone. **Chats** lists them and **New** starts one.
+A reopened chat gives the model exactly what it had before, memories
+included.
+
+| Memory | Chats | A reopened chat |
+| --- | --- | --- |
+| ![Memory](docs/screenshots/7-memory.png) | ![Chats](docs/screenshots/8-chats.png) | ![Chat](docs/screenshots/9-norn-chat.png) |
+
 ## Jobs: `dellingr/`
 
 Dellingr runs the jobs you put on a clock (Parts → Jobs), under the desktop
@@ -170,6 +224,103 @@ part's rules:
   move it by some minutes. Veðrfölnir's 15-minute check also ticks
   Dellingr, so nothing waits longer than that. Alarms are set again after a
   restart.
+
+## Reactions: `huginn/`
+
+Huginn reacts to what just happened (Parts → Huginn), under the desktop
+part's rules. A rule is a trigger (an event and its filters) and an
+action: *Tell me* (a text with `{fields}` filled in) or *Ask Norn*. It's
+delivered through Hermóðr, with hold when it should wait out a meeting.
+
+| Event | From | Fields |
+| --- | --- | --- |
+| `notification.arrived` | other apps' notifications, the phone's inbox (`HuginnListener`, once you allow notification access) | `{from} {app} {summary} {text}` |
+| `calendar.soon`, `calendar.ended` | the phone's calendars: starting within 30 minutes, or ended in the last 20 | `{subject} {start} {end} {where} {notes}` |
+| `alert.opened`, `alert.escalated`, `alert.resolved` | Gjallar, muted alerts left out | `{title} {detail} {severity} {source}` |
+
+The built-in rules can be switched off, but never changed or removed:
+
+- **Message from someone who matters:** "People who matter" is the phone's
+  stand-in for the desktop's manager-or-above, a list of names you keep.
+  Told with high priority.
+- **Urgent message:** a one-to-one message that says urgent, ASAP,
+  emergency, akut or brådskande. Told with urgent priority.
+- **Meeting in the next half hour:** Norn writes a brief from the invite.
+  It waits out the meeting you're in.
+
+As on the desktop:
+
+- An event more than an hour old is skipped.
+- When two rules would tell you the same event the same way, only the
+  first one does.
+- Reactions are listed for 7 days.
+
+Notification text is read and matched on the phone. Only what a rule sends
+is kept, and the app's own notifications are never read. The calendar is
+looked at on start and with Veðrfölnir's 15-minute check, so a brief comes
+15 to 30 minutes before the meeting.
+
+## World tree and runestones: `history/`
+
+Ported from the desktop's Tree and Runes pages (`tree.ts`, `futhark.ts`,
+`runestones.ts`). Both live under Parts → Tree and Parts → Runes.
+
+**The tree** grows from what happened:
+
+- **Branch:** a fact Norn came to remember.
+- **Scar:** an alert that healed.
+- **Raven:** a time Huginn told you something.
+- **Leaves:** follow the seasons of your weeks. A busy week is summer, a
+  quiet one turns to autumn.
+- **Time:** drag the slider back through it, or tap *Grow* to watch it
+  grow from the first day. Tap a branch, scar or raven to see what it was.
+
+**Runestones** are carved for moments worth keeping:
+
+- the first memory, then 100 and 1000
+- a busy day
+- the first raven, then 100
+- a long storm that passed
+- a quiet week
+
+Each stone says it in English, written in Elder Futhark and drawn stroke
+by stroke. Tap a stone for the plain words and the day.
+
+The history is an append-only `history` table, so a forgotten memory or
+a pruned alert stays in the tree. On first start the app fills it from
+the memories, healed alerts and reactions you already have.
+
+| Tree | Runes |
+| --- | --- |
+| ![Tree](docs/screenshots/10-tree.png) | ![Runes](docs/screenshots/11-runes.png) |
+
+## Home screen: `home/`
+
+Ygg can be the phone's home screen, so pressing Home brings you to Ygg. It's
+optional: nothing changes until you choose it.
+
+- **Turning it on:** Parts → Settings → *Use Ygg as home screen*, or
+  Android's Settings → Apps → Default apps → Home app. Switch back the same
+  way.
+- **Apps tab:** your pinned apps on top, then every app A-Z under its
+  letter.
+  - **Search:** type to find an app. It matches the start of the name or of
+    a word, the initials ("gm" finds Google Maps) and accents. Enter opens
+    the first match.
+  - **Long-press:** pin, move, App info, Uninstall.
+  - **Work apps:** apps in a work profile are listed too, marked *work*.
+- **Home and Back:** Home always comes back to the apps and clears the
+  search. Back goes to the apps and never leaves Ygg.
+- **Light on the phone:**
+  - **Boot:** as the home screen Ygg shows the daily boot only, never the
+    quick check.
+  - **Gemma:** the model still loads on your first question, never on Home.
+- **One APK:** the home screen is a second entry point to the same app, a
+  few kilobytes. Opening Ygg from its icon still works as before.
+
+| Apps | Search |
+| --- | --- |
+| ![Apps](docs/screenshots/home-apps.png) | ![Search](docs/screenshots/home-search.png) |
 
 ## Models: `llm/`
 

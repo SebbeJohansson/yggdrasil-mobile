@@ -103,9 +103,23 @@ class AndroidNotifier(private val context: Context) : Notifier {
 
     override fun cancel(notificationTag: String) = nm.cancel(notificationTag, NOTIFICATION_ID)
 
+    override fun dnd(): DndStatus {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val on = manager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+        // Only you can let a channel through Do Not Disturb: Android's channel setting "Override Do Not Disturb".
+        val bypass = manager.getNotificationChannel(channelId(Priority.URGENT))?.canBypassDnd() == true
+        return DndStatus(on, bypass)
+    }
+
     companion object {
         const val ALERT_TAG_PREFIX = "alert:"
         private const val NOTIFICATION_ID = 1
         fun channelId(p: Priority) = "hermodr_${p.name.lowercase()}"
+
+        /** Android's settings for the urgent channel, where "Override Do Not Disturb" is. */
+        fun urgentChannelSettings(context: Context): Intent =
+            Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, channelId(Priority.URGENT))
     }
 }

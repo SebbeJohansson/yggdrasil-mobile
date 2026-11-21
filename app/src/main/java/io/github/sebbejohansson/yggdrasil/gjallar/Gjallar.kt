@@ -29,6 +29,9 @@ data class Alert(
 
 enum class RaiseResult { OPENED, REOPENED, UPDATED }
 
+/** What an alert just did, for whoever follows Gjallar (Huginn), as the desktop's alert stream. */
+enum class AlertChange { OPENED, ESCALATED, RESOLVED }
+
 /**
  * What the other parts may call. Same rules as Yggdrasil's Gjallar:
  * the same source and key updates the open alert; a resolved one opens

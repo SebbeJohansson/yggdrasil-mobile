@@ -51,6 +51,21 @@ installing from that app when Android asks. An APK from the `build`
 workflow is debug-signed, so it can't update a release install, and the
 other way round. Uninstall one before installing the other.
 
+**Blocked by Play Protect?** Google blocks apps that can read notifications
+(Huginn) when they're installed from a browser or file manager. Either
+turn off *Scan apps with Play Protect* in the Play Store for the install and
+back on after, or install over USB with `adb install -r yggdrasil-X.Y.Z.apk`,
+which the block doesn't cover.
+
+## Size
+
+Release builds are shrunk by R8 (`isMinifyEnabled`, `isShrinkResources`):
+about 28 MB instead of 52. Most of what's left is LiteRT-LM's native
+library (23 MB); the models download separately. `app/proguard-rules.pro`
+keeps LiteRT-LM whole, because its native code reaches its Java classes by
+name. If a release crashes where a debug build doesn't, a keep rule is the
+first thing to suspect.
+
 ## Build a signed APK locally
 
 ```bash

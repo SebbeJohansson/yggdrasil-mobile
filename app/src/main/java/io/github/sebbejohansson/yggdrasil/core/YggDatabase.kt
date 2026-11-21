@@ -11,6 +11,24 @@ import io.github.sebbejohansson.yggdrasil.dellingr.JobStore
 import io.github.sebbejohansson.yggdrasil.dellingr.Run
 import io.github.sebbejohansson.yggdrasil.dellingr.RunState
 import io.github.sebbejohansson.yggdrasil.gjallar.Alert
+import io.github.sebbejohansson.yggdrasil.huginn.HuginnStore
+import io.github.sebbejohansson.yggdrasil.huginn.Reaction
+import io.github.sebbejohansson.yggdrasil.huginn.ReactionState
+import io.github.sebbejohansson.yggdrasil.huginn.Rule
+import io.github.sebbejohansson.yggdrasil.huginn.Trigger
+import io.github.sebbejohansson.yggdrasil.llm.LlmRole
+import io.github.sebbejohansson.yggdrasil.norn.ChatLine
+import io.github.sebbejohansson.yggdrasil.norn.ChatStore
+import io.github.sebbejohansson.yggdrasil.norn.Conversation
+import io.github.sebbejohansson.yggdrasil.norn.Memory
+import io.github.sebbejohansson.yggdrasil.norn.MemoryStore
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import io.github.sebbejohansson.yggdrasil.history.HistoryEvent
+import io.github.sebbejohansson.yggdrasil.history.HistoryKind
+import io.github.sebbejohansson.yggdrasil.history.HistoryStore
+import org.json.JSONArray
+import org.json.JSONObject
 import io.github.sebbejohansson.yggdrasil.gjallar.AlertState
 import io.github.sebbejohansson.yggdrasil.gjallar.AlertStore
 import io.github.sebbejohansson.yggdrasil.gjallar.Severity
@@ -25,7 +43,7 @@ import io.github.sebbejohansson.yggdrasil.saga.SagaStore
 import java.time.Instant
 
 /** One SQLite file for every part's state: `ygg.db`. Times are epoch millis. */
-class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 3) {
+class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 6) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -50,26 +68,73 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         db.execSQL("CREATE INDEX messages_state ON messages(state)")
         db.execSQL("CREATE INDEX messages_tag ON messages(tag)")
         createDellingr(db)
+        createHuginn(db)
+        createNorn(db)
+        createHistory(db)
         createSaga(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 5) createHistory(db)
         if (oldVersion < 2) createDellingr(db)
-        if (oldVersion < 3) createSaga(db)
+        if (oldVersion < 3) createHuginn(db)
+        if (oldVersion < 4) createNorn(db)
+        if (oldVersion < 6) createSaga(db)
     }
 
-    // Version 3: Sága's outbox, marks, what it sent, and the other devices' alerts.
+    // Version 6: Sága's outbox, marks, what it sent, and the other devices' alerts.
     private fun createSaga(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE saga_outbox (seq INTEGER PRIMARY KEY, at INTEGER NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL)")
-        db.execSQL("CREATE TABLE saga_marks (name TEXT PRIMARY KEY, value INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS saga_outbox (seq INTEGER PRIMARY KEY, at INTEGER NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS saga_marks (name TEXT PRIMARY KEY, value INTEGER NOT NULL)")
         db.execSQL(
-            "CREATE TABLE saga_published (source TEXT NOT NULL, key TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY (source, key))",
+            "CREATE TABLE IF NOT EXISTS saga_published (source TEXT NOT NULL, key TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY (source, key))",
         )
         db.execSQL(
-            """CREATE TABLE saga_mirrors (
+            """CREATE TABLE IF NOT EXISTS saga_mirrors (
                 device TEXT NOT NULL, source TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL,
                 state TEXT NOT NULL, received_at INTEGER NOT NULL, PRIMARY KEY (device, source, key))""",
         )
+    }
+
+    // Version 5: the world tree's history, kept for good.
+    private fun createHistory(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS history (
+                id TEXT PRIMARY KEY, kind TEXT NOT NULL, at INTEGER NOT NULL, words TEXT NOT NULL, started_at INTEGER)""",
+        )
+    }
+
+    // Version 4: Norn's memories and saved chats.
+    private fun createNorn(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, source TEXT NOT NULL,
+                created_at INTEGER NOT NULL, embedding BLOB, model TEXT)""",
+        )
+        db.execSQL("CREATE TABLE conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+        db.execSQL(
+            """CREATE TABLE chat_lines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL,
+                role TEXT NOT NULL, shown TEXT NOT NULL, sent TEXT NOT NULL, at INTEGER NOT NULL)""",
+        )
+        db.execSQL("CREATE INDEX chat_lines_conv ON chat_lines(conversation_id, id)")
+    }
+
+    // Version 3: Huginn's rules, what it did, and the calendar events it already told.
+    private fun createHuginn(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE huginn_rules (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, built_in INTEGER NOT NULL, enabled INTEGER NOT NULL,
+                trigger_json TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL,
+                push INTEGER NOT NULL, hold INTEGER NOT NULL)""",
+        )
+        db.execSQL(
+            """CREATE TABLE huginn_reactions (
+                id TEXT PRIMARY KEY, rule_id TEXT NOT NULL, rule_name TEXT NOT NULL, event TEXT NOT NULL,
+                event_at INTEGER NOT NULL, title TEXT NOT NULL, text TEXT, state TEXT NOT NULL, reason TEXT, at INTEGER NOT NULL)""",
+        )
+        db.execSQL("CREATE INDEX huginn_reactions_at ON huginn_reactions(at)")
+        db.execSQL("CREATE TABLE huginn_seen (key TEXT PRIMARY KEY, at INTEGER NOT NULL)")
     }
 
     // Version 2: Dellingr's jobs and their runs.
@@ -92,6 +157,10 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
     val alerts: AlertStore by lazy { SqliteAlertStore(this) }
     val messages: MessageStore by lazy { SqliteMessageStore(this) }
     val jobs: JobStore by lazy { SqliteJobStore(this) }
+    val huginn: HuginnStore by lazy { SqliteHuginnStore(this) }
+    val memories: MemoryStore by lazy { SqliteMemoryStore(this) }
+    val chats: ChatStore by lazy { SqliteChatStore(this) }
+    val history: HistoryStore by lazy { SqliteHistoryStore(this) }
     val saga: SagaStore by lazy { SqliteSagaStore(this) }
 }
 
@@ -251,6 +320,160 @@ private class SqliteJobStore(private val h: YggDatabase) : JobStore {
     ).all { run() }
     override fun forgetRunsBefore(t: Instant) {
         h.writableDatabase.delete("runs", "started_at < ?", arrayOf("${t.toEpochMilli()}"))
+    }
+}
+
+private class SqliteHuginnStore(private val h: YggDatabase) : HuginnStore {
+    private fun Trigger.json() = JSONObject().apply {
+        put("event", event); put("app", app); put("from", from); put("text", text); put("source", source)
+        important?.let { put("important", it) }
+        urgent?.let { put("urgent", it) }
+        direct?.let { put("direct", it) }
+        put("severity", JSONArray(severity.toList()))
+    }.toString()
+
+    private fun trigger(s: String): Trigger {
+        val o = JSONObject(s)
+        fun bool(k: String) = if (o.has(k)) o.getBoolean(k) else null
+        val sev = o.optJSONArray("severity")
+        return Trigger(
+            event = o.getString("event"), app = o.optString("app"), from = o.optString("from"), text = o.optString("text"),
+            important = bool("important"), urgent = bool("urgent"), direct = bool("direct"),
+            severity = if (sev == null) emptySet() else (0 until sev.length()).map { sev.getString(it) }.toSet(),
+            source = o.optString("source"),
+        )
+    }
+
+    private fun Cursor.rule() = Rule(
+        id = str("id"), name = str("name"), on = trigger(str("trigger_json")),
+        kind = io.github.sebbejohansson.yggdrasil.huginn.ActionKind.valueOf(str("kind")), text = str("text"),
+        push = long("push") != 0L, hold = long("hold") != 0L, enabled = long("enabled") != 0L, builtIn = long("built_in") != 0L,
+    )
+
+    private fun Cursor.reaction() = Reaction(
+        id = str("id"), ruleId = str("rule_id"), ruleName = str("rule_name"), event = str("event"),
+        eventAt = instant("event_at"), title = str("title"), text = strOrNull("text"),
+        state = ReactionState.valueOf(str("state")), reason = strOrNull("reason"), at = instant("at"),
+    )
+
+    override fun rules() = h.readableDatabase.query("huginn_rules", null, null, null, null, null, null).all { rule() }
+
+    override fun putRule(rule: Rule) {
+        val v = ContentValues().apply {
+            put("id", rule.id); put("name", rule.name); put("built_in", if (rule.builtIn) 1 else 0)
+            put("enabled", if (rule.enabled) 1 else 0); put("trigger_json", rule.on.json()); put("kind", rule.kind.name)
+            put("text", rule.text); put("push", if (rule.push) 1 else 0); put("hold", if (rule.hold) 1 else 0)
+        }
+        h.writableDatabase.insertWithOnConflict("huginn_rules", null, v, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    override fun deleteRule(id: String) {
+        h.writableDatabase.delete("huginn_rules", "id = ?", arrayOf(id))
+    }
+
+    override fun putReaction(r: Reaction) {
+        val v = ContentValues().apply {
+            put("id", r.id); put("rule_id", r.ruleId); put("rule_name", r.ruleName); put("event", r.event)
+            putInstant("event_at", r.eventAt); put("title", r.title); put("text", r.text); put("state", r.state.name)
+            put("reason", r.reason); putInstant("at", r.at)
+        }
+        h.writableDatabase.insertWithOnConflict("huginn_reactions", null, v, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    override fun reactions(limit: Int) =
+        h.readableDatabase.query("huginn_reactions", null, null, null, null, null, "at DESC", "$limit").all { reaction() }
+
+    override fun forgetReactionsBefore(t: Instant) {
+        h.writableDatabase.delete("huginn_reactions", "at < ?", arrayOf("${t.toEpochMilli()}"))
+    }
+
+    override fun firstSight(key: String, at: Instant): Boolean {
+        val v = ContentValues().apply { put("key", key); putInstant("at", at) }
+        return h.writableDatabase.insertWithOnConflict("huginn_seen", null, v, SQLiteDatabase.CONFLICT_IGNORE) != -1L
+    }
+
+    override fun forgetSightsBefore(t: Instant) {
+        h.writableDatabase.delete("huginn_seen", "at < ?", arrayOf("${t.toEpochMilli()}"))
+    }
+}
+
+private fun FloatArray.toBlob(): ByteArray =
+    ByteBuffer.allocate(size * 4).order(ByteOrder.LITTLE_ENDIAN).also { b -> forEach { b.putFloat(it) } }.array()
+
+private fun ByteArray.toFloats(): FloatArray {
+    val b = ByteBuffer.wrap(this).order(ByteOrder.LITTLE_ENDIAN)
+    return FloatArray(size / 4) { b.getFloat() }
+}
+
+private class SqliteMemoryStore(private val h: YggDatabase) : MemoryStore {
+    private fun Cursor.memory(): Memory {
+        val blob = getColumnIndexOrThrow("embedding").let { if (isNull(it)) null else getBlob(it) }
+        return Memory(long("id"), str("text"), str("source"), instant("created_at"), blob?.toFloats(), strOrNull("model"))
+    }
+
+    override fun memories() = h.readableDatabase.query("memories", null, null, null, null, null, "id DESC").all { memory() }
+
+    override fun add(text: String, source: String, at: Instant, embedding: FloatArray?, model: String?): Memory {
+        val v = ContentValues().apply {
+            put("text", text); put("source", source); putInstant("created_at", at)
+            if (embedding != null) put("embedding", embedding.toBlob()) else putNull("embedding")
+            put("model", model)
+        }
+        val id = h.writableDatabase.insertOrThrow("memories", null, v)
+        return Memory(id, text, source, at, embedding, model)
+    }
+
+    override fun setEmbedding(id: Long, embedding: FloatArray, model: String) {
+        val v = ContentValues().apply { put("embedding", embedding.toBlob()); put("model", model) }
+        h.writableDatabase.update("memories", v, "id = ?", arrayOf("$id"))
+    }
+
+    override fun delete(id: Long) {
+        h.writableDatabase.delete("memories", "id = ?", arrayOf("$id"))
+    }
+}
+
+private class SqliteChatStore(private val h: YggDatabase) : ChatStore {
+    override fun conversations(limit: Int) = h.readableDatabase.query(
+        "conversations", null, null, null, null, null, "updated_at DESC", "$limit",
+    ).all { Conversation(long("id"), str("title"), instant("updated_at")) }
+
+    override fun lines(conversationId: Long) = h.readableDatabase.query(
+        "chat_lines", null, "conversation_id = ?", arrayOf("$conversationId"), null, null, "id ASC",
+    ).all { ChatLine(LlmRole.valueOf(str("role")), str("shown"), str("sent")) }
+
+    override fun create(title: String, at: Instant): Long {
+        val v = ContentValues().apply { put("title", title); putInstant("updated_at", at) }
+        return h.writableDatabase.insertOrThrow("conversations", null, v)
+    }
+
+    override fun append(conversationId: Long, line: ChatLine, at: Instant) {
+        val db = h.writableDatabase
+        db.insertOrThrow("chat_lines", null, ContentValues().apply {
+            put("conversation_id", conversationId); put("role", line.role.name)
+            put("shown", line.shown); put("sent", line.sent); putInstant("at", at)
+        })
+        db.update("conversations", ContentValues().apply { putInstant("updated_at", at) }, "id = ?", arrayOf("$conversationId"))
+    }
+
+    override fun delete(conversationId: Long) {
+        h.writableDatabase.delete("chat_lines", "conversation_id = ?", arrayOf("$conversationId"))
+        h.writableDatabase.delete("conversations", "id = ?", arrayOf("$conversationId"))
+    }
+}
+
+private class SqliteHistoryStore(private val h: YggDatabase) : HistoryStore {
+    override fun record(e: HistoryEvent) {
+        val v = ContentValues().apply {
+            put("id", e.id); put("kind", e.kind.name); put("at", e.at); put("words", e.words)
+            if (e.startedAt != null) put("started_at", e.startedAt) else putNull("started_at")
+        }
+        h.writableDatabase.insertWithOnConflict("history", null, v, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+
+    override fun all() = h.readableDatabase.query("history", null, null, null, null, null, "at ASC").all {
+        HistoryEvent(HistoryKind.valueOf(str("kind")), str("id"), long("at"), str("words"),
+            getColumnIndexOrThrow("started_at").let { if (isNull(it)) null else getLong(it) })
     }
 }
 

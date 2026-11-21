@@ -31,6 +31,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.sebbejohansson.yggdrasil.llm.LlmRole
@@ -55,23 +56,31 @@ import io.github.sebbejohansson.yggdrasil.ui.leftStripe
 @Composable
 fun ChatScreen(vm: ChatViewModel) {
     val s by vm.state.collectAsStateWithLifecycle()
-    Column(Modifier.fillMaxSize()) {
-        Header(s, onClear = vm::clear)
-        SetupPanel(s, onDownload = vm::downloadModel, onRefresh = { vm.refreshProviders() }, onAllowClaude = vm::setAllowClaude)
-        Transcript(s, Modifier.weight(1f))
-        s.error?.let {
-            Text(
-                it,
-                style = HudText.small.copy(color = Hud.red),
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).leftStripe(Hud.red).padding(start = 8.dp),
-            )
+    var page by rememberSaveable { mutableStateOf(NornPage.CHAT) }
+    when (page) {
+        NornPage.CHATS -> ChatsPage(s, onOpen = { vm.openChat(it); page = NornPage.CHAT }, onDelete = vm::deleteChat,
+            onNew = { vm.newChat(); page = NornPage.CHAT }, onBack = { page = NornPage.CHAT })
+        NornPage.MEMORY -> MemoryPage(s, vm, onBack = { page = NornPage.CHAT })
+        NornPage.CHAT -> Column(Modifier.fillMaxSize()) {
+            Header(s, onChats = { vm.refreshChats(); page = NornPage.CHATS }, onMemory = { page = NornPage.MEMORY }, onNew = vm::newChat)
+            SetupPanel(s, onDownload = vm::downloadModel, onRefresh = { vm.refreshProviders() }, onAllowClaude = vm::setAllowClaude, onSendNames = vm::sendNamesFor)
+            Transcript(s, Modifier.weight(1f))
+            s.error?.let {
+                Text(
+                    it,
+                    style = HudText.small.copy(color = Hud.red),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).leftStripe(Hud.red).padding(start = 8.dp),
+                )
+            }
+            Composer(busy = s.busy, onSend = vm::send, onStop = vm::stop)
         }
-        Composer(busy = s.busy, onSend = vm::send, onStop = vm::stop)
     }
 }
 
+enum class NornPage { CHAT, CHATS, MEMORY }
+
 @Composable
-private fun Header(s: ChatUiState, onClear: () -> Unit) {
+private fun Header(s: ChatUiState, onChats: () -> Unit, onMemory: () -> Unit, onNew: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -80,7 +89,11 @@ private fun Header(s: ChatUiState, onClear: () -> Unit) {
             Text("Norn", style = HudText.title)
             HudLabel(statusLine(s), color = if (s.providers.any { it.status == ProviderStatus.Ready }) Hud.overlay2 else Hud.amber)
         }
-        if (s.messages.isNotEmpty() || s.busy) HudButton("Clear", onClear, kind = HudButtonKind.SMALL)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudButton("Chats", onChats, kind = HudButtonKind.SMALL)
+            HudButton("Memory", onMemory, kind = HudButtonKind.SMALL)
+            if (s.messages.isNotEmpty() && !s.busy) HudButton("New", onNew, kind = HudButtonKind.SMALL)
+        }
     }
 }
 
@@ -98,6 +111,7 @@ private fun SetupPanel(
     onDownload: () -> Unit,
     onRefresh: () -> Unit,
     onAllowClaude: (Boolean) -> Unit,
+    onSendNames: (Int) -> Unit,
 ) {
     val local = s.providers.firstOrNull { !it.leavesDevice }
     val claude = s.providers.firstOrNull { it.leavesDevice }
@@ -124,7 +138,9 @@ private fun SetupPanel(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("%.0f%%".format(d.fraction * 100), style = HudText.number.copy(color = Hud.cyan))
                     Spacer(Modifier.width(8.dp))
-                    HudLabel("%.2f / %.2f GB".format(d.bytes / 1e9, d.total / 1e9))
+                    HudLabel(
+                        if (s.downloadWaiting) "waiting for a network" else "%.2f / %.2f GB · goes on in the background".format(d.bytes / 1e9, d.total / 1e9),
+                    )
                 }
             }
             DownloadState.Verifying -> HudLabel("Checking the file…", color = Hud.cyan)
@@ -147,6 +163,7 @@ private fun SetupPanel(
                 }
                 HudToggle(s.allowClaude, onAllowClaude)
             }
+            if (s.allowClaude) NamesLine(s.namesOffUntil, onSendNames)
         }
     }
 }
@@ -176,6 +193,14 @@ private fun Transcript(s: ChatUiState, modifier: Modifier) {
             if (m.role == LlmRole.USER) YouLine(m.text) else NornLine(m.text, writing = false)
         }
         s.pending?.let { item { NornLine(it, writing = true) } }
+        if (s.learned.isNotEmpty()) {
+            item {
+                HudLabel(
+                    "Remembered: " + s.learned.joinToString(" · "),
+                    color = Hud.green, style = HudText.label.copy(fontSize = 10.sp, letterSpacing = 0.06.em),
+                )
+            }
+        }
     }
 }
 
@@ -231,5 +256,23 @@ private fun Composer(busy: Boolean, onSend: (String) -> Unit, onStop: () -> Unit
         } else {
             HudButton("Send", { onSend(text); text = "" }, kind = HudButtonKind.PRIMARY, enabled = text.isNotBlank())
         }
+    }
+}
+
+private val untilFmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(java.time.ZoneId.systemDefault())
+
+/** Whether names are swapped before Claude sees them, and the desktop's way round it for a while. */
+@Composable
+private fun NamesLine(offUntil: Long, onSendNames: (Int) -> Unit) {
+    val off = offUntil > System.currentTimeMillis()
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (off) "Names go to Claude as they are until ${untilFmt.format(java.time.Instant.ofEpochMilli(offUntil))}."
+            else "Names are swapped for placeholders on this phone first. No local model, nothing sent.",
+            style = HudText.meta.copy(color = if (off) Hud.amber else Hud.overlay0),
+            modifier = Modifier.weight(1f).padding(end = 8.dp),
+        )
+        if (off) HudButton("Swap again", { onSendNames(0) }, kind = HudButtonKind.SMALL)
+        else HudButton("Send names 2 h", { onSendNames(2) }, kind = HudButtonKind.SMALL)
     }
 }

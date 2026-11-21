@@ -1,5 +1,7 @@
 package io.github.sebbejohansson.yggdrasil.ui
 
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -151,6 +153,8 @@ fun HudTextField(
     modifier: Modifier = Modifier,
     maxLines: Int = 5,
     leading: String? = null,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
@@ -161,6 +165,9 @@ fun HudTextField(
         textStyle = HudText.body.copy(color = Hud.text),
         cursorBrush = SolidColor(Hud.cyan),
         maxLines = maxLines,
+        singleLine = maxLines == 1,
+        keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
         interactionSource = interaction,
         decorationBox = { inner ->
             Row(

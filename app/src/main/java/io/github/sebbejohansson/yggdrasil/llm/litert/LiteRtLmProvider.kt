@@ -22,7 +22,9 @@ import io.github.sebbejohansson.yggdrasil.model.LocalModel
 import io.github.sebbejohansson.yggdrasil.model.ModelStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -71,6 +73,10 @@ class LiteRtLmProvider(
     }
 
     override fun stream(request: LlmRequest): Flow<String> = flow {
+        if (request.side) {
+            lock.withLock { emitAll(sideConversation(request)) }
+            return@flow
+        }
         lock.withLock {
             val conv = conversationFor(request)
             val answer = StringBuilder()
@@ -104,6 +110,40 @@ class LiteRtLmProvider(
         }
     }.flowOn(Dispatchers.Default)
 
+    /**
+     * Runs [request] in a conversation of its own and closes it, keeping the
+     * chat's open. If the engine can't hold two, the chat's is let go first
+     * (the next chat message then reads the history again). Callers hold [lock].
+     */
+    private suspend fun sideConversation(request: LlmRequest): Flow<String> {
+        val config = configFor(request)
+        val conv = try {
+            engine().createConversation(config)
+        } catch (e: Exception) {
+            Log.i(TAG, "a side conversation needs the chat's to close first", e)
+            dropConversation()
+            engine().createConversation(config)
+        }
+        val answer = StringBuilder()
+        try {
+            conv.sendMessageAsync(request.messages.last().text).collect { msg -> answer.append(msg.text()) }
+        } finally {
+            conv.close()
+        }
+        return flowOf(answer.toString())
+    }
+
+    private fun configFor(request: LlmRequest) = ConversationConfig(
+        systemInstruction = request.system?.let { Contents.of(it) },
+        initialMessages = request.messages.dropLast(1).map { it.toLiteRt() },
+        samplerConfig = SamplerConfig(
+            topK = if (request.temperature == 0.0) 1 else 64,
+            topP = 0.95,
+            temperature = request.temperature ?: 1.0,
+        ),
+        maxOutputToken = request.maxOutputTokens,
+    )
+
     /** Loads the engine now, so the first message doesn't wait for it. */
     suspend fun warmUp() = lock.withLock { engine() }
 
@@ -120,18 +160,7 @@ class LiteRtLmProvider(
     private suspend fun conversationFor(request: LlmRequest): Conversation {
         conversation?.let { if (ConversationReuse.canReuse(seen, request)) return it }
         dropConversation()
-        val history = request.messages.dropLast(1).map { it.toLiteRt() }
-        val config = ConversationConfig(
-            systemInstruction = request.system?.let { Contents.of(it) },
-            initialMessages = history,
-            samplerConfig = SamplerConfig(
-                topK = 64,
-                topP = 0.95,
-                temperature = request.temperature ?: 1.0,
-            ),
-            maxOutputToken = request.maxOutputTokens,
-        )
-        return engine().createConversation(config).also { conversation = it }
+        return engine().createConversation(configFor(request)).also { conversation = it }
     }
 
     private fun dropConversation() {

@@ -22,6 +22,7 @@ import java.time.temporal.ChronoUnit
 class NornAsker(
     private val llm: LlmRouter,
     private val calendar: CalendarReader,
+    private val brain: Brain? = null,
     private val zone: () -> ZoneId = { ZoneId.systemDefault() },
 ) : Asker {
 
@@ -45,10 +46,12 @@ class NornAsker(
                 }
             }
         }
+        // What Norn remembers about you that bears on the question.
+        val remembered = brain?.let { Brain.context(it.recallFor(prompt)) }.orEmpty()
         return llm.complete(
             LlmRequest(
                 messages = listOf(LlmMessage(LlmRole.USER, prompt)),
-                system = SYSTEM + "\n\n" + context,
+                system = listOf(SYSTEM, context, remembered).filter { it.isNotBlank() }.joinToString("\n\n"),
                 tier = LlmTier.LARGE,
                 privacy = Privacy.ON_DEVICE_ONLY,
                 maxOutputTokens = 600,

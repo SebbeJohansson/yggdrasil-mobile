@@ -18,6 +18,9 @@ data class CalendarEvent(
     val busy: Boolean,
     /** You said no to it. */
     val declined: Boolean,
+    val id: Long = 0,
+    val location: String? = null,
+    val description: String? = null,
 )
 
 /** The phone's calendars. [AndroidCalendarReader] in the app, a fake in tests. */
@@ -85,6 +88,9 @@ class AndroidCalendarReader(private val context: Context) : CalendarReader {
             CalendarContract.Instances.ALL_DAY,
             CalendarContract.Instances.AVAILABILITY,
             CalendarContract.Instances.SELF_ATTENDEE_STATUS,
+            CalendarContract.Instances.EVENT_ID,
+            CalendarContract.Instances.EVENT_LOCATION,
+            CalendarContract.Instances.DESCRIPTION,
         )
         return try {
             context.contentResolver.query(uri, cols, null, null, "${CalendarContract.Instances.BEGIN} ASC")?.use { c ->
@@ -98,6 +104,9 @@ class AndroidCalendarReader(private val context: Context) : CalendarReader {
                                 allDay = c.getInt(3) != 0,
                                 busy = c.getInt(4) == CalendarContract.Events.AVAILABILITY_BUSY,
                                 declined = c.getInt(5) == CalendarContract.Attendees.ATTENDEE_STATUS_DECLINED,
+                                id = c.getLong(6),
+                                location = c.getString(7),
+                                description = c.getString(8),
                             ),
                         )
                     }

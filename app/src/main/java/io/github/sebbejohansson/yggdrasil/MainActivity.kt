@@ -1,7 +1,29 @@
 package io.github.sebbejohansson.yggdrasil
 
+import androidx.activity.compose.BackHandler
+import io.github.sebbejohansson.yggdrasil.home.HomeScreenPanel
+import io.github.sebbejohansson.yggdrasil.home.HomeRole
+import io.github.sebbejohansson.yggdrasil.home.AppsScreen
+import io.github.sebbejohansson.yggdrasil.home.AppsViewModel
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import io.github.sebbejohansson.yggdrasil.history.RunesScreen
+import io.github.sebbejohansson.yggdrasil.history.TreeScreen
+import io.github.sebbejohansson.yggdrasil.history.HistoryViewModel
 import android.Manifest
 import android.content.Intent
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import androidx.compose.ui.platform.LocalContext
+import io.github.sebbejohansson.yggdrasil.boot.BootKind
+import io.github.sebbejohansson.yggdrasil.boot.BootLogic
+import io.github.sebbejohansson.yggdrasil.boot.BootOverlay
+import io.github.sebbejohansson.yggdrasil.boot.BootPhone
+import io.github.sebbejohansson.yggdrasil.boot.BootSettings
+import io.github.sebbejohansson.yggdrasil.boot.BootSettingsScreen
+import io.github.sebbejohansson.yggdrasil.boot.Health
+import java.time.LocalDate
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -85,6 +107,8 @@ import io.github.sebbejohansson.yggdrasil.ui.PartState
 import io.github.sebbejohansson.yggdrasil.ui.ReactorPart
 import io.github.sebbejohansson.yggdrasil.ui.YggTheme
 import io.github.sebbejohansson.yggdrasil.dellingr.DellingrService
+import io.github.sebbejohansson.yggdrasil.huginn.HuginnScreen
+import io.github.sebbejohansson.yggdrasil.huginn.HuginnViewModel
 import io.github.sebbejohansson.yggdrasil.dellingr.JobsScreen
 import io.github.sebbejohansson.yggdrasil.dellingr.JobsViewModel
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.PhoneScreen
@@ -94,7 +118,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-class MainActivity : ComponentActivity() {
+open class MainActivity : ComponentActivity() {
+
+    /** True in [io.github.sebbejohansson.yggdrasil.home.HomeActivity]: Ygg as the phone's home screen. */
+    protected open val home: Boolean = false
+
+    /** Home-button presses while Ygg is the home screen. */
+    protected val homePresses = MutableStateFlow(0)
 
     /** Which tab a notification asked for. */
     private val requestedTab = MutableStateFlow<Int?>(null)
@@ -105,7 +135,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(SystemBarStyle.dark(Color.Transparent.toArgb()), SystemBarStyle.dark(bar))
         requestedTab.value = intent.tabExtra()
         val container = (application as YggApp).container
-        setContent { YggTheme { Root(container, requestedTab) } }
+        val fromNotification = requestedTab.value != null
+        setContent { YggTheme { Root(container, requestedTab, fromNotification, home, homePresses) } }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -121,13 +152,44 @@ class MainActivity : ComponentActivity() {
         const val TAB_ALERTS = 1
         const val TAB_MESSAGES = 2
         const val TAB_PHONE = 3
+        const val TAB_APPS = 4
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) {
-    var tab by rememberSaveable { mutableIntStateOf(MainActivity.TAB_CHAT) }
+private fun Root(
+    container: AppContainer,
+    requestedTab: MutableStateFlow<Int?>,
+    fromNotification: Boolean = false,
+    home: Boolean = false,
+    homePresses: MutableStateFlow<Int> = MutableStateFlow(0),
+) {
+    var tab by rememberSaveable { mutableIntStateOf(if (home) MainActivity.TAB_APPS else MainActivity.TAB_CHAT) }
+    val context = LocalContext.current
+
+    // The boot sequence: the full one once a day, the quick one on other opens. Opened from a
+    // notification you want the thing it's about, so at most the quick one.
+    var boot by rememberSaveable {
+        mutableStateOf(
+            BootLogic.kind(container.bootSettings.choice, container.bootSettings.lastDay, LocalDate.now()).let {
+                when {
+                    fromNotification && it == BootKind.FULL -> BootKind.QUICK
+                    // As the home screen it's open all day: the daily boot only, never the quick check.
+                    home && it == BootKind.QUICK -> BootKind.NONE
+                    else -> it
+                }
+            },
+        )
+    }
+    // Let the parts' states arrive first, as the desktop waits for its first poll.
+    var bootReady by remember { mutableStateOf(false) }
+    LaunchedEffect(boot) {
+        if (boot != BootKind.NONE) {
+            delay(700)
+            bootReady = true
+        }
+    }
     val asked by requestedTab.collectAsStateWithLifecycle()
     LaunchedEffect(asked) {
         asked?.let { tab = it; requestedTab.value = null }
@@ -138,6 +200,17 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
     val messages: MessagesViewModel = viewModel(factory = MessagesViewModel.factory(container))
     val phone: PhoneViewModel = viewModel(factory = PhoneViewModel.factory(container))
     val jobs: JobsViewModel = viewModel(factory = JobsViewModel.factory(container))
+    val huginnVm: HuginnViewModel = viewModel(factory = HuginnViewModel.factory(container, LocalContext.current))
+    val historyVm: HistoryViewModel = viewModel(factory = HistoryViewModel.factory(container))
+    val appsVm: AppsViewModel? = if (home) viewModel(factory = AppsViewModel.factory(container)) else null
+    val presses by homePresses.collectAsStateWithLifecycle()
+    // Home goes to the apps, whatever page you were on.
+    LaunchedEffect(presses) { if (home && presses > 0) tab = MainActivity.TAB_APPS }
+    // Back never leaves the home screen: it goes back to the apps.
+    BackHandler(enabled = home && tab != MainActivity.TAB_APPS) { tab = MainActivity.TAB_APPS }
+    var homeHeld by remember { mutableStateOf(HomeRole.held(context)) }
+    val askHome = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { homeHeld = HomeRole.held(context) }
+    val huginnState by huginnVm.state.collectAsStateWithLifecycle()
     val jobsState by jobs.state.collectAsStateWithLifecycle()
     val failingJobs = jobsState.jobs.count { it.failures >= DellingrService.FAILING_AFTER }
     val phoneFailing by container.vedrfolnir.failing.collectAsStateWithLifecycle()
@@ -155,6 +228,8 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
         chat.refreshProviders()
         jobs.recheck()
         alerts.syncNow()
+        huginnVm.recheck()
+        homeHeld = HomeRole.held(context)
         onPauseOrDispose { }
     }
 
@@ -177,7 +252,9 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
         ReactorPart("Hermóðr", if (messageState.blocked != null) PartState.TROUBLED else PartState.UP),
         ReactorPart("Veðrfölnir", if (phoneFailing.isEmpty()) PartState.UP else PartState.TROUBLED),
         ReactorPart("Dellingr", if (failingJobs > 0) PartState.TROUBLED else PartState.UP),
-        ReactorPart("Claude", chatState.providers.firstOrNull { it.leavesDevice }?.status.toPart()),
+        ReactorPart("Huginn", if (huginnState.notificationsAllowed) PartState.UP else PartState.TROUBLED),
+        // Optional: not set up is dark (not running), not troubled.
+        ReactorPart("Claude", if (chatState.providers.firstOrNull { it.leavesDevice }?.status == ProviderStatus.Ready) PartState.UP else PartState.DOWN),
     )
 
     // Bifröst at night: idle long enough (sooner after work hours), the ground turns to aurora.
@@ -225,21 +302,64 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
                 when (tab) {
                     MainActivity.TAB_ALERTS -> AlertsScreen(alerts)
                     MainActivity.TAB_MESSAGES -> MessagesScreen(messages)
-                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs)
+                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs, huginnVm, historyVm, container.bootSettings, onRunBoot = { boot = BootKind.FULL }) {
+                        HomeScreenPanel(
+                            held = homeHeld,
+                            onUse = {
+                                val ask = HomeRole.request(context)
+                                runCatching { if (ask != null) askHome.launch(ask) else context.startActivity(HomeRole.settings()) }
+                            },
+                            onChange = { runCatching { context.startActivity(HomeRole.settings()) } },
+                        )
+                    }
+                    MainActivity.TAB_APPS -> if (appsVm != null) AppsScreen(appsVm, presses) else ChatScreen(chat)
                     else -> ChatScreen(chat)
                 }
             }
             // Out of the way while typing; the keyboard takes that space.
             if (!WindowInsets.isImeVisible) {
                 TabBar {
-                    Tab(tab == MainActivity.TAB_CHAT, "Norn", 0) { tab = MainActivity.TAB_CHAT }
-                    Tab(tab == MainActivity.TAB_ALERTS, "Alerts", openAlerts) { tab = MainActivity.TAB_ALERTS }
-                    Tab(tab == MainActivity.TAB_MESSAGES, "Messages", unseen) { tab = MainActivity.TAB_MESSAGES }
-                    Tab(tab == MainActivity.TAB_PHONE, "Parts", phoneFailing.size + failingJobs) { tab = MainActivity.TAB_PHONE }
+                    if (home) Tab(tab == MainActivity.TAB_APPS, "Apps", 0, tight = true) { tab = MainActivity.TAB_APPS }
+                    Tab(tab == MainActivity.TAB_CHAT, "Norn", 0, tight = home) { tab = MainActivity.TAB_CHAT }
+                    Tab(tab == MainActivity.TAB_ALERTS, "Alerts", openAlerts, tight = home) { tab = MainActivity.TAB_ALERTS }
+                    Tab(tab == MainActivity.TAB_MESSAGES, "Messages", unseen, tight = home) { tab = MainActivity.TAB_MESSAGES }
+                    Tab(tab == MainActivity.TAB_PHONE, "Parts", phoneFailing.size + failingJobs, tight = home) { tab = MainActivity.TAB_PHONE }
                 }
             }
         }
+        if (boot != BootKind.NONE && bootReady) {
+            val readings by container.vedrfolnir.latest.collectAsStateWithLifecycle()
+            // Claude is an add-on: listed only when it's there, never "not responding".
+            val parts = reactor.filter { it.name != "Claude" || it.state == PartState.UP }.map { it.name to it.state.toHealth() }
+            val phoneNow = BootPhone(readings?.memoryTotalBytes, readings?.batteryPercent, "heat" in phoneFailing)
+            val outside = listOf(
+                "Network" to networkUp(context),
+                "Calendar" to container.calendar.allowed(),
+                "Notifications" to (messageState.blocked == null),
+            )
+            BootOverlay(
+                kind = boot,
+                lines = BootLogic.lines(parts, outside, phoneNow),
+                speech = BootLogic.speech(parts, phoneNow, LocalTime.now()),
+                voice = container.bootSettings.choice.voice,
+                onStarted = { container.bootSettings.lastDay = LocalDate.now() },
+                onClose = { boot = BootKind.NONE },
+            )
+        }
     }
+}
+
+private fun PartState.toHealth() = when (this) {
+    PartState.UP -> Health.UP
+    PartState.TROUBLED -> Health.TROUBLED
+    PartState.DOWN -> Health.DOWN
+}
+
+private fun networkUp(context: Context): Boolean {
+    val cm = context.getSystemService(ConnectivityManager::class.java)
+    val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+    return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 }
 
 private fun ProviderStatus?.toPart() = when (this) {
@@ -296,7 +416,7 @@ private fun TabBar(content: @Composable RowScope.() -> Unit) {
 
 /** A menu leaf as the dashboard's: solid cyan when it's the page you're on. */
 @Composable
-private fun RowScope.Tab(selected: Boolean, label: String, count: Int, onClick: () -> Unit) {
+private fun RowScope.Tab(selected: Boolean, label: String, count: Int, tight: Boolean = false, onClick: () -> Unit) {
     Row(
         Modifier
             .weight(1f)
@@ -311,11 +431,14 @@ private fun RowScope.Tab(selected: Boolean, label: String, count: Int, onClick: 
             style = HudText.label.copy(
                 fontFamily = HudFonts.mono,
                 // Four tabs share a phone's width: a little tighter than the dashboard's labels.
-                fontSize = 11.sp,
-                letterSpacing = 0.08.em,
+                // Five (as the home screen) tighter still.
+                fontSize = if (tight) 10.sp else 11.sp,
+                letterSpacing = if (tight) 0.03.em else 0.08.em,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 color = if (selected) Hud.onCyan else Hud.subtext1,
             ),
+            maxLines = 1,
+            softWrap = false,
         )
         if (count > 0) {
             Spacer(Modifier.width(4.dp))
@@ -335,14 +458,22 @@ private fun Modifier.topLine(c: Color) = drawBehind {
 
 /** The parts with no tab of their own, under page tabs as on the dashboard (`PageTabs.vue`). */
 @Composable
-private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel) {
+private fun PartsScreen(
+    phone: PhoneViewModel,
+    jobs: JobsViewModel,
+    huginn: HuginnViewModel,
+    history: HistoryViewModel,
+    bootSettings: BootSettings,
+    onRunBoot: () -> Unit,
+    settingsMore: @Composable () -> Unit = {},
+) {
     var page by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 8.dp).bottomLine(Color(0xFF17323F)),
+            Modifier.fillMaxWidth().padding(top = 8.dp).bottomLine(Color(0xFF17323F)).horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            listOf("Phone", "Jobs").forEachIndexed { i, label ->
+            listOf("Phone", "Jobs", "Huginn", "Tree", "Runes", "Settings").forEachIndexed { i, label ->
                 val on = page == i
                 Text(
                     label,
@@ -350,12 +481,19 @@ private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel) {
                     modifier = Modifier
                         .clickable { page = i }
                         .then(if (on) Modifier.bottomLine(Hud.cyan, 2.dp) else Modifier)
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
                 )
             }
         }
         Box(Modifier.weight(1f)) {
-            if (page == 0) PhoneScreen(phone) else JobsScreen(jobs)
+            when (page) {
+                0 -> PhoneScreen(phone)
+                1 -> JobsScreen(jobs)
+                2 -> HuginnScreen(huginn)
+                3 -> TreeScreen(history)
+                4 -> RunesScreen(history)
+                else -> BootSettingsScreen(bootSettings, onRunBoot, settingsMore)
+            }
         }
     }
 }

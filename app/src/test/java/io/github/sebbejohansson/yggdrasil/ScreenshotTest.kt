@@ -48,6 +48,19 @@ class ScreenshotTest {
             shadowOf(Looper.getMainLooper()).idle()
             compose.mainClock.advanceTimeBy(500)
         }
+        capture(name)
+    }
+
+    /** Lets taps and reads land with the clock stepped by hand. */
+    private fun settle() {
+        repeat(4) {
+            Thread.sleep(150)
+            shadowOf(Looper.getMainLooper()).idle()
+            compose.mainClock.advanceTimeBy(400)
+        }
+    }
+
+    private fun capture(name: String) {
         val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
         File(out, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
@@ -67,6 +80,13 @@ class ScreenshotTest {
             c.hermodr.send(MessageRequest("dellingr", "Weekly recap is ready", priority = Priority.LOW, push = false))
         }
 
+        // First open of the day: the boot sequence waits for a tap.
+        shot("0-boot")
+        compose.onNodeWithText("TAP TO INITIALIZE").performClick()
+        // Every line in (190 ms each) and the verdict up, before the hold ends.
+        compose.mainClock.advanceTimeBy(3_000)
+        capture("0-boot-check")
+        repeat(10) { compose.mainClock.advanceTimeBy(1_000) }
         shot("1-norn")
         compose.onNodeWithText("ALERTS").performClick()
         shot("2-alerts")
@@ -96,5 +116,67 @@ class ScreenshotTest {
         }
         compose.onNodeWithText("Jobs").performClick()
         shot("5-jobs")
+        runBlocking {
+            c.people.names = setOf("Kim Svensson")
+            val now = java.time.Instant.now()
+            c.huginn.handle(io.github.sebbejohansson.yggdrasil.huginn.Sources.notification(
+                io.github.sebbejohansson.yggdrasil.huginn.PhoneNotification("a", "com.slack", "Slack", "Kim Svensson", "Got a minute before the review?", null, false, now),
+                c.people.names,
+            ))
+            c.huginn.handle(io.github.sebbejohansson.yggdrasil.huginn.Sources.notification(
+                io.github.sebbejohansson.yggdrasil.huginn.PhoneNotification("b", "com.microsoft.teams", "Teams", "Ops", "Prod is down, need you ASAP", null, false, now),
+                emptySet(),
+            ))
+        }
+        compose.onNodeWithText("Huginn").performClick()
+        shot("6-huginn")
+        runBlocking {
+            c.brain.remember("The user's manager is Ada Lind.")
+            c.brain.remember("The user's team ships the app every second Thursday.")
+            c.brain.remember("The user takes the 8:12 train to work.")
+            c.nornChat.startNew()
+            c.nornChat.ask("What should I bring to the release review?", io.github.sebbejohansson.yggdrasil.llm.Privacy.ON_DEVICE_ONLY)
+            c.nornChat.answered("The release notes, the crash numbers since the last build, and anything Ada asked to see.")
+        }
+        compose.onNodeWithText("NORN").performClick()
+        settle()
+        compose.onNodeWithText("Memory").performClick()
+        shot("7-memory")
+        compose.onNodeWithText("Back").performClick()
+        settle()
+        compose.onNodeWithText("Chats").performClick()
+        shot("8-chats")
+        compose.onNodeWithText("What should I bring to the release review?").performClick()
+        shot("9-norn-chat")
+
+        // A season of history, so the tree has grown and stones are carved.
+        runBlocking {
+            val day = 86_400_000L
+            val start = System.currentTimeMillis() - 120 * day
+            val facts = listOf("Works on the mobile app", "Manager is Ada Lind", "Likes short answers", "Runs on Sundays",
+                "Team ships every second Thursday", "Takes the 8:12 train", "Prefers Swedish fika at 3", "Reviews PRs mornings")
+            for (i in 0 until 40) {
+                c.history.record(io.github.sebbejohansson.yggdrasil.history.HistoryEvent(
+                    io.github.sebbejohansson.yggdrasil.history.HistoryKind.BRANCH, "seed:$i", start + (i * 2.9 * day).toLong(), facts[i % facts.size]))
+            }
+            for (i in 0 until 5) {
+                c.history.record(io.github.sebbejohansson.yggdrasil.history.HistoryEvent(
+                    io.github.sebbejohansson.yggdrasil.history.HistoryKind.BRANCH, "busy:$i", start + 30 * day + i * 3_600_000L, facts[i]))
+            }
+            c.history.record(io.github.sebbejohansson.yggdrasil.history.HistoryEvent(
+                io.github.sebbejohansson.yggdrasil.history.HistoryKind.SCAR, "healed:storm", start + 60 * day, "Battery below 15% healed", start + 59 * day))
+            c.history.record(io.github.sebbejohansson.yggdrasil.history.HistoryEvent(
+                io.github.sebbejohansson.yggdrasil.history.HistoryKind.SCAR, "healed:disk", start + 90 * day, "Storage almost full healed", start + 90 * day - 3_600_000L))
+            for (i in 0 until 4) {
+                c.history.record(io.github.sebbejohansson.yggdrasil.history.HistoryEvent(
+                    io.github.sebbejohansson.yggdrasil.history.HistoryKind.RAVEN, "raven:$i", start + (45 + i * 18) * day, "Kim Svensson asked for a minute"))
+            }
+        }
+        compose.onNodeWithText("PARTS").performClick()
+        settle()
+        compose.onNodeWithText("Tree").performClick()
+        shot("10-tree")
+        compose.onNodeWithText("Runes").performClick()
+        shot("11-runes")
     }
 }

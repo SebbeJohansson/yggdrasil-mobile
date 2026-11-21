@@ -16,7 +16,13 @@ interface Notifier {
     fun blockedReason(priority: Priority): String?
     fun show(message: Message)
     fun cancel(notificationTag: String)
+
+    /** How Android's Do Not Disturb treats the urgent channel; null where there's no such thing (tests). */
+    fun dnd(): DndStatus? = null
 }
+
+/** Whether Do Not Disturb is on, and whether urgent messages get through it anyway. */
+data class DndStatus(val on: Boolean, val urgentGetsThrough: Boolean)
 
 /** Wakes Hermóðr at [at] to send what it held. */
 interface FlushScheduler {

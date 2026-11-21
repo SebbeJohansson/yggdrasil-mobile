@@ -42,5 +42,19 @@ object ModelCatalog {
         tiers = setOf(LlmTier.LARGE),
     )
 
+    /** Norn's memory: turns facts into vectors, so they're found by meaning. Small, runs on the CPU. */
+    val EMBEDDING_GEMMA_2 = LocalModel(
+        id = "embeddinggemma-2-270m",
+        displayName = "EmbeddingGemma 2",
+        fileName = "embeddinggemma-2-text-270m.litertlm",
+        url = "$HF/embeddinggemma-2-text-270m-litert-lm/resolve/main/embeddinggemma-2-text-270m.litertlm",
+        sizeBytes = 164_626_432,
+        sha256 = "2d079ee2f6f066b1f368e8d7c819f55214eaef1d0513b312321901f30ab286fb",
+        minDeviceRamBytes = 3 * GB,
+        tiers = emptySet(),
+    )
+
     val all = listOf(GEMMA_4_E2B, GEMMA_4_E4B)
+
+    fun byId(id: String) = (all + EMBEDDING_GEMMA_2).firstOrNull { it.id == id }
 }

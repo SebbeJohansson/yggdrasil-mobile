@@ -57,7 +57,21 @@ and no tools, and returns the `result` field.
 
 ## Privacy
 
-The text goes to Anthropic. The router only sends requests marked
-`Privacy.MAY_LEAVE_DEVICE` to the bridge. A part that has people's names in
-its text swaps them for placeholders first, as Yggdrasil's Norn does. If
-the swap isn't sure, nothing is sent.
+The text goes to Anthropic, so the router only sends requests marked
+`Privacy.MAY_LEAVE_DEVICE` to the bridge, and the bridge sits behind
+`NameGuard`. It works like Yggdrasil's Norn, ported from `internal/pseudo`
+with its tests:
+
+- **Swapping:** people's names and email addresses become placeholders
+  (Person 1, Person 2…) before anything goes, and the answer gets the names
+  back.
+- **Finding names:** from People who matter, the names the local model
+  (Gemma, on the phone) finds in pieces of up to 4,000 characters, and the
+  shape of an email address.
+- **Legend:** what a placeholder is (e.g. "someone who matters to the user")
+  is told to Claude beside it.
+- **If unsure, nothing is sent:** when the local model can't look for names,
+  or a known name is still there after the swap.
+- **Turning it off for a while:** *Send names 2 h*, next to the Claude
+  switch, sends names as they are for up to two hours, like the desktop's
+  `PUT /v1/settings/send-names`. *Swap again* ends it.
