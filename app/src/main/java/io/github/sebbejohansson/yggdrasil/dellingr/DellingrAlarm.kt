@@ -64,12 +64,12 @@ class DellingrWorker(context: Context, params: WorkerParameters) : CoroutineWork
 }
 
 /**
- * After a restart alarms are gone. Starting the app process is enough:
+ * After a restart or an update alarms are gone. Starting the app process is enough:
  * YggApp sets the next one when it starts.
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         // YggApp.onCreate has already run and set the alarm; nothing else to do.
     }
 }

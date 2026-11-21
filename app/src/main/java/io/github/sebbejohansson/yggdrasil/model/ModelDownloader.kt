@@ -25,8 +25,7 @@ sealed interface DownloadState {
  * Downloads a model into [ModelStore]. A stopped download continues where it
  * left off (HTTP Range on the `.part` file). The file is checked against its
  * SHA-256 before it's renamed into place.
- *
- * TODO: move to a WorkManager foreground job so it survives leaving the app.
+ * [ModelDownloadWorker] runs it as a foreground job.
  */
 class ModelDownloader(private val store: ModelStore) {
 

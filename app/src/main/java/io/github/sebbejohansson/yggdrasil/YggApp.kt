@@ -1,5 +1,11 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.update.Updates
+import io.github.sebbejohansson.yggdrasil.update.UpdateWorker
+import io.github.sebbejohansson.yggdrasil.update.UpdateSettings
+import io.github.sebbejohansson.yggdrasil.update.Updater
+import android.os.Bundle
+import android.app.Activity
 import io.github.sebbejohansson.yggdrasil.home.HomeSettings
 import io.github.sebbejohansson.yggdrasil.home.InstalledApps
 import android.app.Application
@@ -57,6 +63,11 @@ class YggApp : Application(), Configuration.Provider {
     lateinit var container: AppContainer
         private set
 
+    private var started = 0
+
+    /** Whether one of Ygg's screens is showing: Android only lets an app on screen open a page. */
+    val onScreen: Boolean get() = started > 0
+
     // WorkManager starts on first use from this, not from its startup provider
     // (removed in the manifest), so it also works where that provider doesn't run.
     override val workManagerConfiguration: Configuration
@@ -65,6 +76,15 @@ class YggApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityStarted(a: Activity) { started++ }
+            override fun onActivityStopped(a: Activity) { started = (started - 1).coerceAtLeast(0) }
+            override fun onActivityCreated(a: Activity, b: Bundle?) {}
+            override fun onActivityResumed(a: Activity) {}
+            override fun onActivityPaused(a: Activity) {}
+            override fun onActivitySaveInstanceState(a: Activity, b: Bundle) {}
+            override fun onActivityDestroyed(a: Activity) {}
+        })
         container.start()
     }
 }
@@ -125,6 +145,8 @@ class AppContainer(private val app: Application) {
         busy = CalendarBusySignal(calendar),
     )
     val gjallar = GjallarService(db.alerts, hermodr)
+    // Updates from the GitHub releases (release builds only).
+    val updater = Updater(app, UpdateSettings(app), hermodr)
     val vedrfolnir = VedrfolnirService(AndroidPhoneReader(app), gjallar)
     val jobAlarm = AndroidJobAlarm(app)
     // Norn's memory: facts are picked out on the side, at temperature 0, on the phone only.
@@ -174,6 +196,11 @@ class AppContainer(private val app: Application) {
             }
         }
         VedrfolnirWorker.schedule(app)
+        UpdateWorker.schedule(app)
+        appScope.launch {
+            updater.sayIfUpdated()
+            if (Updates.due(updater.settings.lastCheck, System.currentTimeMillis())) updater.round()
+        }
         appScope.launch {
             hermodr.prune()
             gjallar.prune()

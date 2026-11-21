@@ -105,6 +105,12 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
             )
         }
 
+        /** Whether any model download is going now: an app update waits for it. */
+        fun anyRunning(context: Context): Boolean = (ModelCatalog.all + ModelCatalog.EMBEDDING_GEMMA_2).any { m ->
+            runCatching { WorkManager.getInstance(context).getWorkInfosForUniqueWork(name(m)).get() }
+                .getOrDefault(emptyList()).any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+        }
+
         fun cancel(context: Context, model: LocalModel) {
             WorkManager.getInstance(context).cancelUniqueWork(name(model))
         }

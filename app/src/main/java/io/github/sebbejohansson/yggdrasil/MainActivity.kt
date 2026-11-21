@@ -1,5 +1,6 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.update.UpdatesPanel
 import androidx.activity.compose.BackHandler
 import io.github.sebbejohansson.yggdrasil.home.HomeScreenPanel
 import io.github.sebbejohansson.yggdrasil.home.HomeRole
@@ -310,6 +311,7 @@ private fun Root(
                             },
                             onChange = { runCatching { context.startActivity(HomeRole.settings()) } },
                         )
+                        UpdatesPanel(container.updater, container.appScope)
                     }
                     MainActivity.TAB_APPS -> if (appsVm != null) AppsScreen(appsVm, presses) else ChatScreen(chat)
                     else -> ChatScreen(chat)

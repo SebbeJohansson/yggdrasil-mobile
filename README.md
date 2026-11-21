@@ -294,6 +294,29 @@ optional: nothing changes until you choose it.
 | --- | --- |
 | ![Apps](docs/screenshots/home-apps.png) | ![Search](docs/screenshots/home-search.png) |
 
+## Updates: `update/`
+
+Release builds keep themselves up to date from this repo's GitHub releases.
+
+- **Checking:** every 6 hours on any network, and when the app starts if
+  it's been longer.
+- **Safety checks:** a newer APK is downloaded, checked against its
+  `.sha256` file and against this install's signing key, then installed.
+- **Installing automatically** (on by default): Android 12+ lets an app
+  update itself without asking, once you've allowed Ygg to install apps.
+  - **When:** only when the screen is off or the phone is idle, and never
+    while a model downloads.
+  - **Turned off:** Hermóðr tells you once that the update is ready, and
+    you install it under Parts → Settings.
+- **Settings:** Parts → Settings → Updates shows your version and the
+  newest one. It has *Check now*, *Download*, *Install now* and the
+  automatic switch.
+- **After an update:** Messages says what you came from, and Dellingr's
+  alarms are set again.
+- **Dev builds** never update themselves.
+- **Play Protect:** if it blocks the update, install it by hand once (see
+  `docs/releasing.md`).
+
 ## Models: `llm/`
 
 Parts never pick a model. They make an `LlmRequest` with:
