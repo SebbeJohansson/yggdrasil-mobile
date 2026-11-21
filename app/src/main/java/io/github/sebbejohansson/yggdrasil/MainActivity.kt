@@ -228,6 +228,7 @@ private fun Root(
         messages.recheckPermission()
         chat.refreshProviders()
         jobs.recheck()
+        alerts.syncNow()
         huginnVm.recheck()
         homeHeld = HomeRole.held(context)
         onPauseOrDispose { }
