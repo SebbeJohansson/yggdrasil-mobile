@@ -1,5 +1,6 @@
 package io.github.sebbejohansson.yggdrasil.model
 
+import io.github.sebbejohansson.yggdrasil.core.NetMeter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -55,6 +56,9 @@ class ModelDownloader(private val store: ModelStore) {
                     HttpURLConnection.HTTP_OK -> { have = 0; false }
                     else -> throw IOException("download failed: HTTP $code")
                 }
+                val startAt = have
+                val started = System.nanoTime()
+                try {
                 conn.inputStream.use { input ->
                     FileOutputStream(part, append).use { out ->
                         val buf = ByteArray(1 shl 16)
@@ -71,6 +75,9 @@ class ModelDownloader(private val store: ModelStore) {
                             }
                         }
                     }
+                }
+                } finally {
+                    NetMeter.count("model", model.fileName, have - startAt, (System.nanoTime() - started) / 1_000_000)
                 }
             } finally {
                 conn.disconnect()

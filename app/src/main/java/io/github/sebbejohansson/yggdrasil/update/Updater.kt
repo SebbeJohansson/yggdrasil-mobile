@@ -1,5 +1,6 @@
 package io.github.sebbejohansson.yggdrasil.update
 
+import io.github.sebbejohansson.yggdrasil.core.NetMeter
 import io.github.sebbejohansson.yggdrasil.parts.Parts
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -216,8 +217,9 @@ class Updater(
                     val part = File(dir, file.name + ".part")
                     _state.value = UpdateState.Downloading(release, 0, release.apkSize)
                     val conn = open(release.apkUrl, BINARY)
+                    var have = 0L
+                    val started = System.nanoTime()
                     try {
-                        var have = 0L
                         conn.inputStream.use { input ->
                             part.outputStream().use { out ->
                                 val buf = ByteArray(1 shl 16)
@@ -236,6 +238,7 @@ class Updater(
                             }
                         }
                     } finally {
+                        NetMeter.count("updates", "apk", have, (System.nanoTime() - started) / 1_000_000)
                         conn.disconnect()
                     }
                     release.shaUrl?.let { url ->

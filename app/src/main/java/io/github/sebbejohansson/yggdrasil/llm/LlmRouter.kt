@@ -1,7 +1,7 @@
 package io.github.sebbejohansson.yggdrasil.llm
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 
 /**
@@ -11,7 +11,12 @@ import kotlinx.coroutines.flow.flow
  *  - it isn't good enough for the request's tier,
  *  - it isn't [ProviderStatus.Ready].
  */
-class LlmRouter(private val providers: List<LlmProvider>) {
+/** Told of every call the router makes: who answered, how long it took, how much it wrote, and how it failed. */
+fun interface LlmMeter {
+    fun call(request: LlmRequest, provider: LlmProvider?, ms: Long, chars: Long, failure: Throwable?)
+}
+
+class LlmRouter(private val providers: List<LlmProvider>, private val meter: LlmMeter? = null) {
 
     suspend fun pick(request: LlmRequest): LlmProvider {
         val skipped = linkedMapOf<String, String>()
@@ -34,10 +39,36 @@ class LlmRouter(private val providers: List<LlmProvider>) {
     }
 
     fun stream(request: LlmRequest): Flow<String> = flow {
-        emitAll(pick(request).stream(request))
+        val start = System.nanoTime()
+        var provider: LlmProvider? = null
+        var chars = 0L
+        try {
+            provider = pick(request)
+            provider.stream(request).collect { chars += it.length; emit(it) }
+            meter?.call(request, provider, ms(start), chars, null)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            meter?.call(request, provider, ms(start), chars, e)
+            throw e
+        }
     }
 
-    suspend fun complete(request: LlmRequest): String = pick(request).complete(request)
+    suspend fun complete(request: LlmRequest): String {
+        val start = System.nanoTime()
+        var provider: LlmProvider? = null
+        try {
+            provider = pick(request)
+            return provider.complete(request).also { meter?.call(request, provider, ms(start), it.length.toLong(), null) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            meter?.call(request, provider, ms(start), 0, e)
+            throw e
+        }
+    }
+
+    private fun ms(start: Long) = (System.nanoTime() - start) / 1_000_000
 
     /** Every provider with its status, for the settings screen. */
     suspend fun statuses(): List<Pair<LlmProvider, ProviderStatus>> =

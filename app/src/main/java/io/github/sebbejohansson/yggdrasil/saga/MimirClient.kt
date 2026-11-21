@@ -1,5 +1,6 @@
 package io.github.sebbejohansson.yggdrasil.saga
 
+import io.github.sebbejohansson.yggdrasil.core.NetMeter
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -46,6 +47,8 @@ class HttpMimirClient(baseUrl: String, private val token: String) : MimirClient 
 
     private fun call(method: String, path: String, body: String? = null): Answer {
         val connection = URL(base + path).openConnection() as HttpURLConnection
+        val start = System.nanoTime()
+        var moved = (body?.length ?: 0).toLong()
         try {
             connection.requestMethod = method
             connection.connectTimeout = 10_000
@@ -60,11 +63,13 @@ class HttpMimirClient(baseUrl: String, private val token: String) : MimirClient 
             val status = connection.responseCode
             val stream = if (status >= 400) connection.errorStream else connection.inputStream
             val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+            moved += text.length
             if (status >= 300 && status != 409 && status != 410 && status != 404) {
                 throw IOException("Mímir answered $status: ${text.take(200)}")
             }
             return Answer(status, text)
         } finally {
+            NetMeter.count("saga", "mimir", moved, (System.nanoTime() - start) / 1_000_000)
             connection.disconnect()
         }
     }

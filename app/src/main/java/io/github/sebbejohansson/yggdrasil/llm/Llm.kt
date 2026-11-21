@@ -43,6 +43,8 @@ data class LlmRequest(
      * disturb the conversation a provider keeps open for the chat.
      */
     val side: Boolean = false,
+    /** What it's for, for the Performance page: chat, memory, promises, names, huginn, jobs. */
+    val purpose: String = "chat",
 ) {
     init {
         require(messages.isNotEmpty()) { "a request needs at least one message" }

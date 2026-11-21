@@ -44,7 +44,12 @@ object LoopRules {
  * when each last ran, and whether it failed. Kept in preferences, because a
  * loop often runs in a worker after the app's own process has gone.
  */
-class Loops(context: Context, val startedAt: Instant = Instant.now()) {
+class Loops(
+    context: Context,
+    val startedAt: Instant = Instant.now(),
+    /** Times each round for the Performance page. */
+    private val perf: () -> Perf? = { null },
+) {
     private val prefs = context.getSharedPreferences("loops", Context.MODE_PRIVATE)
     val changes = Changes()
 
@@ -67,7 +72,8 @@ class Loops(context: Context, val startedAt: Instant = Instant.now()) {
     /** Runs one round of a loop and records it; a failure is recorded, never thrown. */
     suspend fun run(name: String, every: Duration, block: suspend () -> Unit) {
         try {
-            block()
+            val p = perf()
+            if (p != null) p.time(name.substringBefore('.'), name.substringAfter('.')) { block() } else block()
             record(name, every)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e

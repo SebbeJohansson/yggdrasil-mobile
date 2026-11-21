@@ -24,6 +24,8 @@ class NornAsker(
     private val calendar: CalendarReader,
     private val brain: Brain? = null,
     private val zone: () -> ZoneId = { ZoneId.systemDefault() },
+    /** Who asks, for the Performance page: huginn or jobs. */
+    private val purpose: String = "ask",
 ) : Asker {
 
     override suspend fun ask(prompt: String): String {
@@ -55,6 +57,7 @@ class NornAsker(
                 tier = LlmTier.LARGE,
                 privacy = Privacy.ON_DEVICE_ONLY,
                 maxOutputTokens = 600,
+                purpose = purpose,
             ),
         )
     }

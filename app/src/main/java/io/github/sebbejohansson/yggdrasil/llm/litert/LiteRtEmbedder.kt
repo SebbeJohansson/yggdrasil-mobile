@@ -31,6 +31,9 @@ class LiteRtEmbedder(
     private val lock = Mutex()
     private var engine: EmbeddingEngine? = null
 
+    /** Whether the embedding model is in memory now. */
+    val loaded: Boolean get() = engine != null
+
     fun ready() = store.isDownloaded(modelFile)
 
     override suspend fun embed(texts: List<String>): List<FloatArray>? {

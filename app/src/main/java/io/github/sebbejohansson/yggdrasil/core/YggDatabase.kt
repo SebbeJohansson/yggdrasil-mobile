@@ -54,7 +54,7 @@ import io.github.sebbejohansson.yggdrasil.saga.SessionAsk
 import java.time.Instant
 
 /** One SQLite file for every part's state: `ygg.db`. Times are epoch millis. */
-class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 9) {
+class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 10) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -86,6 +86,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         createSagaSessions(db)
         createFocus(db)
         createPromises(db)
+        createPerf(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -97,6 +98,17 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         if (oldVersion < 7) createSagaSessions(db)
         if (oldVersion < 8) createFocus(db)
         if (oldVersion < 9) createPromises(db)
+        if (oldVersion < 10) createPerf(db)
+    }
+
+    // Version 10: what the parts pull, for the Performance page. A week is kept.
+    private fun createPerf(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS perf (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, part TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL,
+                ms INTEGER NOT NULL, ok INTEGER NOT NULL, failure TEXT, who TEXT, amount INTEGER NOT NULL DEFAULT 0)""",
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS perf_at ON perf(at)")
     }
 
     // Version 9: the promise ledger.
@@ -214,6 +226,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
     val saga: SagaStore by lazy { SqliteSagaStore(this) }
     val focus: FocusStore by lazy { SqliteFocusStore(this) }
     val promises: PromiseStore by lazy { SqlitePromiseStore(this) }
+    val perf: PerfStore by lazy { SqlitePerfStore(this) }
 }
 
 private fun Cursor.str(c: String): String = getString(getColumnIndexOrThrow(c))
@@ -511,6 +524,24 @@ private class SqliteChatStore(private val h: YggDatabase) : ChatStore {
     override fun delete(conversationId: Long) {
         h.writableDatabase.delete("chat_lines", "conversation_id = ?", arrayOf("$conversationId"))
         h.writableDatabase.delete("conversations", "id = ?", arrayOf("$conversationId"))
+    }
+}
+
+private class SqlitePerfStore(private val h: YggDatabase) : PerfStore {
+    override fun add(step: PerfStep) {
+        h.writableDatabase.insert("perf", null, ContentValues().apply {
+            put("part", step.part); put("kind", step.kind); put("at", step.at.toEpochMilli()); put("ms", step.ms)
+            put("ok", if (step.ok) 1 else 0); put("failure", step.failure); put("who", step.who); put("amount", step.amount)
+        })
+    }
+
+    override fun since(t: Instant) =
+        h.readableDatabase.query("perf", null, "at >= ?", arrayOf(t.toEpochMilli().toString()), null, null, "at ASC").all {
+            PerfStep(str("part"), str("kind"), instant("at"), long("ms"), long("ok") == 1L, strOrNull("failure"), strOrNull("who"), long("amount"))
+        }
+
+    override fun deleteBefore(t: Instant) {
+        h.writableDatabase.delete("perf", "at < ?", arrayOf(t.toEpochMilli().toString()))
     }
 }
 

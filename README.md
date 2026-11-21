@@ -516,6 +516,37 @@ you said you'd do for someone.
 | --- | --- |
 | ![Promises](docs/screenshots/16-promises.png) | ![Today](docs/screenshots/17-today.png) |
 
+## Performance: `core/Perf.kt`
+
+What is pulling what, as the dashboard's Performance page (`perf.vue`).
+Open it from Health → *Performance*. It shows the last day or the last
+week.
+
+- **Right now:**
+  - **Memory:** the app's share of RAM (PSS), Java and native heap.
+  - **Models:** whether Gemma and the embedding model are in memory.
+  - **CPU and network:** CPU time since the app started, and the app's
+    network use since the phone started.
+- **Who pulls on the model:** every call through the model router, by
+  purpose and model.
+  - **Purposes:** chat, learning facts, finding promises, swapping names,
+    Huginn's briefs, Dellingr's jobs, and memory by meaning (embeddings).
+  - **Figures:** calls, p50 and p95 time, tokens out, time the model was
+    busy (with a bar for each purpose's share), and failures by kind
+    (timeout, no model ready, …).
+- **The parts' rounds:** each loop round (the 15-minute check, the update
+  check, promise reminders), timed the same way.
+- **Who moves the data:** bytes per part and kind: model downloads, app
+  updates, Mímir sync.
+- **Battery:** Android doesn't tell an app its own battery use. The time
+  the model is busy is the closest measure, as the model is what drains it.
+
+Steps are recorded off the main thread and kept for a week (`perf` in
+`ygg.db`, v10). Recording never fails the thing it measures, and a chat
+you stop isn't counted.
+
+![Performance](docs/screenshots/18-performance.png)
+
 ## Models: `llm/`
 
 Parts never pick a model. They make an `LlmRequest` with:

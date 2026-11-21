@@ -1,5 +1,12 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.core.NetMeter
+import io.github.sebbejohansson.yggdrasil.norn.Embedder
+import java.time.Instant
+import io.github.sebbejohansson.yggdrasil.llm.LlmMeter
+import io.github.sebbejohansson.yggdrasil.core.PerfMath
+import io.github.sebbejohansson.yggdrasil.core.PerfStep
+import io.github.sebbejohansson.yggdrasil.core.Perf
 import io.github.sebbejohansson.yggdrasil.llm.LlmRole
 import io.github.sebbejohansson.yggdrasil.llm.LlmMessage
 import io.github.sebbejohansson.yggdrasil.norn.PromiseModel
@@ -109,6 +116,9 @@ class AppContainer(private val app: Application) {
     /** Lives as long as the process; for work that must outlive a screen. */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** What the parts pull: model calls, loop rounds, bytes. For the Performance page. */
+    val perf by lazy { Perf(db.perf) }
+
     // Models
     val modelStore = ModelStore(app)
     val modelDownloader = ModelDownloader(modelStore)
@@ -123,13 +133,15 @@ class AppContainer(private val app: Application) {
         inner = ClaudeBridgeProvider(),
         finder = NameFinder { text ->
             NameAnswers.chunks(text).flatMap { chunk ->
-                val raw = localLlm.complete(
+                val raw = perf.time("model", "names", localLlm.displayName) {
+                    localLlm.complete(
                     LlmRequest(
                         messages = listOf(io.github.sebbejohansson.yggdrasil.llm.LlmMessage(io.github.sebbejohansson.yggdrasil.llm.LlmRole.USER, chunk)),
                         system = NameAnswers.SYSTEM, tier = LlmTier.SMALL, privacy = Privacy.ON_DEVICE_ONLY,
-                        maxOutputTokens = 300, temperature = 0.0, side = true,
+                        maxOutputTokens = 300, temperature = 0.0, side = true, purpose = "names",
                     ),
                 )
+                }
                 NameAnswers.read(raw, chunk)
             }.distinct()
         },
@@ -138,7 +150,14 @@ class AppContainer(private val app: Application) {
     )
 
     /** On-device first; Claude only for requests allowed to leave the phone. */
-    val llm = LlmRouter(listOf(localLlm, claudeBridge))
+    val llm = LlmRouter(listOf(localLlm, claudeBridge), meter = LlmMeter { request, provider, ms, chars, failure ->
+        perf.record(
+            PerfStep(
+                "model", request.purpose, Instant.now(), ms, failure == null, failure?.let(PerfMath::failureKind),
+                provider?.displayName, chars,
+            ),
+        )
+    })
 
     // Parts
     private val db = YggDatabase(app)
@@ -162,7 +181,7 @@ class AppContainer(private val app: Application) {
     )
     val gjallar = GjallarService(db.alerts, hermodr)
     /** The parts' timed loops, for the Health page. */
-    val loops = Loops(app)
+    val loops = Loops(app, perf = { perf })
     // Ratatoskr's watch on your rhythm: long runs of meetings, late nights, full weeks.
     val you = YouService(calendar, hermodr, YouSettings(app), inUse = { app.getSystemService(PowerManager::class.java).isInteractive })
     // Updates from the GitHub releases (release builds only).
@@ -174,13 +193,16 @@ class AppContainer(private val app: Application) {
     val nornSettings = NornSettings(app)
     /** The world tree's history, kept for good. */
     val history = HistoryLog(db.history)
-    val brain = Brain(db.memories, embedder, onRemembered = { m ->
+    val brain = Brain(db.memories, object : Embedder {
+        override val model get() = embedder.model
+        override suspend fun embed(texts: List<String>) = perf.time("model", "embed", "EmbeddingGemma") { embedder.embed(texts) }
+    }, onRemembered = { m ->
         history.record(HistoryEvent(HistoryKind.BRANCH, "memory:${m.id}", m.createdAt.toEpochMilli(), m.text))
     }, facts = FactModel { messages ->
         llm.complete(
             LlmRequest(
                 messages = messages, system = Facts.system, tier = LlmTier.SMALL, privacy = Privacy.ON_DEVICE_ONLY,
-                maxOutputTokens = 200, temperature = 0.0, side = true,
+                maxOutputTokens = 200, temperature = 0.0, side = true, purpose = "memory",
             ),
         )
     })
@@ -189,15 +211,14 @@ class AppContainer(private val app: Application) {
         llm.complete(
             LlmRequest(
                 messages = listOf(LlmMessage(LlmRole.USER, user)), system = system, tier = LlmTier.SMALL,
-                privacy = Privacy.ON_DEVICE_ONLY, maxOutputTokens = 400, temperature = 0.0, side = true,
+                privacy = Privacy.ON_DEVICE_ONLY, maxOutputTokens = 400, temperature = 0.0, side = true, purpose = "promises",
             ),
         )
     }, hermodr)
     val nornChat = NornChat(db.chats, brain, promises = promises)
-    private val nornAsker = NornAsker(llm, calendar, brain)
-    val dellingr = DellingrService(db.jobs, nornAsker, hermodr, gjallar, jobAlarm)
+    val dellingr = DellingrService(db.jobs, NornAsker(llm, calendar, brain, purpose = "jobs"), hermodr, gjallar, jobAlarm)
     val people = PeopleSettings(app)
-    val huginn = HuginnService(db.huginn, nornAsker, hermodr, onDelivered = { r ->
+    val huginn = HuginnService(db.huginn, NornAsker(llm, calendar, brain, purpose = "huginn"), hermodr, onDelivered = { r ->
         history.record(HistoryEvent(HistoryKind.RAVEN, "raven:${r.id}", r.at.toEpochMilli(), r.title))
     })
     val huginnRuntime = HuginnRuntime(huginn, calendar)
@@ -223,6 +244,9 @@ class AppContainer(private val app: Application) {
 
     @OptIn(FlowPreview::class)
     fun start() {
+        // Network code reports what it moves; the Performance page shows who pulled what.
+        NetMeter.sink = { part, kind, bytes, ms -> perf.bytes(part, kind, bytes, ms) }
+        appScope.launch(Dispatchers.IO) { perf.prune() }
         notifier.createChannels()
         huginnRuntime.follow(gjallar, appScope)
         // A scar in the tree for every alert that heals.

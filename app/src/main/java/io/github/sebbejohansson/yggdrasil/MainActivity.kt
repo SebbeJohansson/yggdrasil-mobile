@@ -1,5 +1,6 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.parts.PerformanceScreen
 import io.github.sebbejohansson.yggdrasil.today.TodayTarget
 import io.github.sebbejohansson.yggdrasil.today.TodayCard
 import io.github.sebbejohansson.yggdrasil.norn.PromisesScreen
@@ -177,6 +178,8 @@ open class MainActivity : ComponentActivity() {
         const val TAB_HEALTH = 7
         /** Inbox → Promises. */
         const val TAB_PROMISES = 8
+        /** Not in the tab bar: Health → Performance. */
+        const val TAB_PERF = 9
 
         fun isInbox(tab: Int) = tab == TAB_ALERTS || tab == TAB_MESSAGES || tab == TAB_PROMISES
     }
@@ -204,7 +207,7 @@ private fun Root(
 
     /** The arc reactor's page: every part's health. Again closes it. */
     fun toggleHealth() {
-        if (tab == MainActivity.TAB_HEALTH) {
+        if (tab == MainActivity.TAB_HEALTH || tab == MainActivity.TAB_PERF) {
             tab = beforeSettings
             return
         }
@@ -257,8 +260,11 @@ private fun Root(
     LaunchedEffect(presses) { if (home && presses > 0) tab = MainActivity.TAB_APPS }
     // Back from Settings goes to where you were.
     BackHandler(enabled = tab == MainActivity.TAB_SETTINGS || tab == MainActivity.TAB_HEALTH) { tab = beforeSettings }
+    BackHandler(enabled = tab == MainActivity.TAB_PERF) { tab = MainActivity.TAB_HEALTH }
     // Back never leaves the home screen: it goes back to the apps.
-    BackHandler(enabled = home && tab != MainActivity.TAB_APPS && tab != MainActivity.TAB_SETTINGS && tab != MainActivity.TAB_HEALTH) {
+    BackHandler(
+        enabled = home && tab != MainActivity.TAB_APPS && tab != MainActivity.TAB_SETTINGS && tab != MainActivity.TAB_HEALTH && tab != MainActivity.TAB_PERF,
+    ) {
         tab = MainActivity.TAB_APPS
     }
     var homeHeld by remember { mutableStateOf(HomeRole.held(context)) }
@@ -399,8 +405,9 @@ private fun Root(
                             ),
                             all, container.loops.startedAt, now,
                         )
-                        HealthScreen(cards, Parts.unclaimed(cards, all), alerts, onBack = { tab = beforeSettings })
+                        HealthScreen(cards, Parts.unclaimed(cards, all), alerts, onBack = { tab = beforeSettings }, onPerformance = { tab = MainActivity.TAB_PERF })
                     }
+                    MainActivity.TAB_PERF -> PerformanceScreen(container, onBack = { tab = MainActivity.TAB_HEALTH })
                     MainActivity.TAB_SETTINGS -> SettingsScreen(
                         chat = chat,
                         alerts = alerts,

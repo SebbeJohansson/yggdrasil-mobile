@@ -55,6 +55,9 @@ class LiteRtLmProvider(
 
     private val lock = Mutex()
     private var engine: Engine? = null
+
+    /** Whether the model is in memory now (it takes about as much RAM as its file). */
+    val loaded: Boolean get() = engine != null
     private var conversation: Conversation? = null
     private var seen: ConversationSnapshot? = null
 

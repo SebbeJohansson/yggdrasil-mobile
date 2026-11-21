@@ -79,4 +79,23 @@ class LlmRouterTest {
         assertEquals(listOf("Hel", "lo"), router.stream(ask()).toList())
         assertEquals("Hello", router.complete(ask()))
     }
+
+    @Test fun theMeterHearsEveryCallWithItsPurposeAndFailures() = runTest {
+        val heard = mutableListOf<Triple<String, String?, Long>>()
+        val failures = mutableListOf<Throwable?>()
+        val meter = LlmMeter { request, provider, _, chars, failure ->
+            heard += Triple(request.purpose, provider?.id, chars)
+            failures += failure
+        }
+        val router = LlmRouter(listOf(FakeProvider("gemma", answer = listOf("ab", "cde"))), meter)
+        assertEquals(listOf("ab", "cde"), router.stream(ask()).toList())
+        assertEquals("abcde", router.complete(LlmRequest(listOf(LlmMessage(LlmRole.USER, "x")), purpose = "promises")))
+        try {
+            LlmRouter(listOf(FakeProvider("gone", currentStatus = ProviderStatus.NeedsSetup("download"))), meter).complete(ask())
+            fail("expected NoProviderException")
+        } catch (_: NoProviderException) {
+        }
+        assertEquals(listOf(Triple("chat", "gemma", 5L), Triple("promises", "gemma", 5L), Triple("chat", null, 0L)), heard)
+        assertTrue(failures[2] is NoProviderException)
+    }
 }

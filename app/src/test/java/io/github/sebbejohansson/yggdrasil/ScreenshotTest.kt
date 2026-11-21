@@ -217,5 +217,24 @@ class ScreenshotTest {
         shot("16-promises")
         compose.onNodeWithText("ASK").performClick()
         shot("17-today")
+
+        // Performance, behind Health: who pulls on the model, the rounds, the data.
+        run {
+            val now = java.time.Instant.now()
+            fun step(kind: String, ms: Long, ok: Boolean = true, failure: String? = null, amount: Long = 0) = c.perf.record(
+                io.github.sebbejohansson.yggdrasil.core.PerfStep("model", kind, now, ms, ok, failure, "Gemma 4 E2B (on this phone)", amount),
+            )
+            repeat(14) { step("chat", 3_000L + it * 400, amount = 900) }
+            repeat(9) { step("memory", 700L + it * 50) }
+            step("memory", 30_000, ok = false, failure = "timeout")
+            repeat(5) { step("promises", 1_200) }
+            repeat(3) { step("huginn", 5_500) }
+            c.perf.bytes("saga", "mimir", 184_000, 2_400)
+            c.perf.bytes("updates", "apk", 27_700_000, 41_000)
+        }
+        compose.onNodeWithContentDescription("Health of the parts").performClick()
+        settle()
+        compose.onNodeWithText("Performance").performClick()
+        shot("18-performance")
     }
 }

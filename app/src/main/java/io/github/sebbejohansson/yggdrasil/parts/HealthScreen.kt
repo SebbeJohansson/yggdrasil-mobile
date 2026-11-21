@@ -53,7 +53,7 @@ private fun LoopState.color(): Color = when (this) {
  * Mute). Alerts no part claims are listed at the end.
  */
 @Composable
-fun HealthScreen(cards: List<PartCard>, unclaimed: List<AlertRow>, alerts: AlertsViewModel, onBack: () -> Unit) {
+fun HealthScreen(cards: List<PartCard>, unclaimed: List<AlertRow>, alerts: AlertsViewModel, onBack: () -> Unit, onPerformance: () -> Unit = {}) {
     val now = Instant.now()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -68,7 +68,10 @@ fun HealthScreen(cards: List<PartCard>, unclaimed: List<AlertRow>, alerts: Alert
                     if (down > 0) HudLabel("$down down", color = Hud.red)
                 }
             }
-            HudButton("Back", onBack, kind = HudButtonKind.SMALL)
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                HudButton("Back", onBack, kind = HudButtonKind.SMALL)
+                HudButton("Performance", onPerformance, kind = HudButtonKind.SMALL)
+            }
         }
         cards.forEach { PartCardView(it, alerts, now) }
         if (unclaimed.isNotEmpty()) {
