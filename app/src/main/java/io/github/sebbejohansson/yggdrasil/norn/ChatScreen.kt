@@ -63,7 +63,7 @@ fun ChatScreen(vm: ChatViewModel) {
         NornPage.MEMORY -> MemoryPage(s, vm, onBack = { page = NornPage.CHAT })
         NornPage.CHAT -> Column(Modifier.fillMaxSize()) {
             Header(s, onChats = { vm.refreshChats(); page = NornPage.CHATS }, onMemory = { page = NornPage.MEMORY }, onNew = vm::newChat)
-            SetupPanel(s, onDownload = vm::downloadModel, onRefresh = { vm.refreshProviders() }, onAllowClaude = vm::setAllowClaude)
+            SetupPanel(s, onDownload = vm::downloadModel, onRefresh = { vm.refreshProviders() }, onAllowClaude = vm::setAllowClaude, onSendNames = vm::sendNamesFor)
             Transcript(s, Modifier.weight(1f))
             s.error?.let {
                 Text(
@@ -111,6 +111,7 @@ private fun SetupPanel(
     onDownload: () -> Unit,
     onRefresh: () -> Unit,
     onAllowClaude: (Boolean) -> Unit,
+    onSendNames: (Int) -> Unit,
 ) {
     val local = s.providers.firstOrNull { !it.leavesDevice }
     val claude = s.providers.firstOrNull { it.leavesDevice }
@@ -162,6 +163,7 @@ private fun SetupPanel(
                 }
                 HudToggle(s.allowClaude, onAllowClaude)
             }
+            if (s.allowClaude) NamesLine(s.namesOffUntil, onSendNames)
         }
     }
 }
@@ -254,5 +256,23 @@ private fun Composer(busy: Boolean, onSend: (String) -> Unit, onStop: () -> Unit
         } else {
             HudButton("Send", { onSend(text); text = "" }, kind = HudButtonKind.PRIMARY, enabled = text.isNotBlank())
         }
+    }
+}
+
+private val untilFmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(java.time.ZoneId.systemDefault())
+
+/** Whether names are swapped before Claude sees them, and the desktop's way round it for a while. */
+@Composable
+private fun NamesLine(offUntil: Long, onSendNames: (Int) -> Unit) {
+    val off = offUntil > System.currentTimeMillis()
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (off) "Names go to Claude as they are until ${untilFmt.format(java.time.Instant.ofEpochMilli(offUntil))}."
+            else "Names are swapped for placeholders on this phone first. No local model, nothing sent.",
+            style = HudText.meta.copy(color = if (off) Hud.amber else Hud.overlay0),
+            modifier = Modifier.weight(1f).padding(end = 8.dp),
+        )
+        if (off) HudButton("Swap again", { onSendNames(0) }, kind = HudButtonKind.SMALL)
+        else HudButton("Send names 2 h", { onSendNames(2) }, kind = HudButtonKind.SMALL)
     }
 }

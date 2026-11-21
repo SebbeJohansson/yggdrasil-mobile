@@ -15,6 +15,11 @@ import io.github.sebbejohansson.yggdrasil.hermodr.HermodrService
 import io.github.sebbejohansson.yggdrasil.hermodr.HermodrSettings
 import io.github.sebbejohansson.yggdrasil.hermodr.WorkManagerFlushScheduler
 import io.github.sebbejohansson.yggdrasil.llm.LlmRouter
+import io.github.sebbejohansson.yggdrasil.llm.NameAnswers
+import io.github.sebbejohansson.yggdrasil.llm.NameFinder
+import io.github.sebbejohansson.yggdrasil.llm.NameGuard
+import io.github.sebbejohansson.yggdrasil.llm.complete
+import io.github.sebbejohansson.yggdrasil.norn.Person
 import io.github.sebbejohansson.yggdrasil.llm.claude.ClaudeBridgeProvider
 import io.github.sebbejohansson.yggdrasil.llm.litert.LiteRtLmProvider
 import io.github.sebbejohansson.yggdrasil.model.ModelCatalog
@@ -68,7 +73,27 @@ class AppContainer(private val app: Application) {
     val modelDownloads = ModelDownloads(app)
     val defaultModel = ModelCatalog.GEMMA_4_E2B
     val localLlm = LiteRtLmProvider(defaultModel, modelStore, app.cacheDir)
-    val claudeBridge = ClaudeBridgeProvider()
+    /**
+     * Claude, behind the names guard: names are swapped for placeholders by the
+     * local model before anything leaves the phone, or nothing is sent.
+     */
+    val claudeBridge = NameGuard(
+        inner = ClaudeBridgeProvider(),
+        finder = NameFinder { text ->
+            NameAnswers.chunks(text).flatMap { chunk ->
+                val raw = localLlm.complete(
+                    LlmRequest(
+                        messages = listOf(io.github.sebbejohansson.yggdrasil.llm.LlmMessage(io.github.sebbejohansson.yggdrasil.llm.LlmRole.USER, chunk)),
+                        system = NameAnswers.SYSTEM, tier = LlmTier.SMALL, privacy = Privacy.ON_DEVICE_ONLY,
+                        maxOutputTokens = 300, temperature = 0.0, side = true,
+                    ),
+                )
+                NameAnswers.read(raw, chunk)
+            }.distinct()
+        },
+        known = { people.names.map { Person(it, role = "someone who matters to the user", source = "people who matter") } },
+        namesOff = { nornSettings.namesOffUntil > System.currentTimeMillis() },
+    )
 
     /** On-device first; Claude only for requests allowed to leave the phone. */
     val llm = LlmRouter(listOf(localLlm, claudeBridge))

@@ -47,6 +47,8 @@ data class ChatUiState(
     val embedderDownload: DownloadState? = null,
     /** The download waits for a network connection. */
     val downloadWaiting: Boolean = false,
+    /** Until when names go to Claude unswapped (epoch ms); 0 or past when they're swapped. */
+    val namesOffUntil: Long = 0,
 ) {
     val busy get() = pending != null
 }
@@ -57,6 +59,14 @@ class NornSettings(context: Context) {
     var learning: Boolean
         get() = prefs.getBoolean("learning", true)
         set(v) = prefs.edit { putBoolean("learning", v) }
+
+    /**
+     * Until when names go to Claude as they are (epoch ms), the desktop's
+     * send-names switch: for getting by without the local model a while.
+     */
+    var namesOffUntil: Long
+        get() = prefs.getLong("names_off_until", 0)
+        set(v) = prefs.edit { putLong("names_off_until", v) }
 }
 
 class ChatViewModel(
@@ -70,7 +80,9 @@ class ChatViewModel(
     private val settings: NornSettings,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(ChatUiState(learning = settings.learning, embedderReady = embedder.ready()))
+    private val _state = MutableStateFlow(
+        ChatUiState(learning = settings.learning, embedderReady = embedder.ready(), namesOffUntil = settings.namesOffUntil),
+    )
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     private var generation: Job? = null
@@ -185,6 +197,13 @@ class ChatViewModel(
 
     fun remember(text: String) = viewModelScope.launch { brain.remember(text) }
     fun forget(m: Memory) = viewModelScope.launch { brain.forget(m.id) }
+
+    /** Names go to Claude as they are for [hours] (at most 2), or are swapped again with 0. */
+    fun sendNamesFor(hours: Int) {
+        val until = if (hours <= 0) 0L else System.currentTimeMillis() + hours.coerceAtMost(2) * 3_600_000L
+        settings.namesOffUntil = until
+        _state.update { it.copy(namesOffUntil = until) }
+    }
 
     fun setLearning(on: Boolean) {
         settings.learning = on
