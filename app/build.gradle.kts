@@ -46,6 +46,11 @@ android {
     }
 
     buildTypes {
+        // Dev builds install next to the release app instead of over it.
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             // R8 shrinks the code to a fraction; proguard-rules.pro keeps what
             // LiteRT-LM's native side and reflection reach by name.
