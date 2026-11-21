@@ -22,15 +22,20 @@ interface TokenVault {
  * and never leaves it. The ciphertext is in app-private preferences; backups
  * are off, so it stays on this phone.
  */
-class KeystoreTokenVault(context: Context) : TokenVault {
-    private val prefs = context.getSharedPreferences("updates_token", Context.MODE_PRIVATE)
+class KeystoreTokenVault(
+    context: Context,
+    prefsName: String = "updates_token",
+    /** The Keystore key's name: one per secret. */
+    private val alias: String = "ygg-update-token",
+) : TokenVault {
+    private val prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (store.getKey(ALIAS, null) as? SecretKey)?.let { return it }
+        (store.getKey(alias, null) as? SecretKey)?.let { return it }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
             init(
-                KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                     .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                     .build(),
@@ -58,7 +63,6 @@ class KeystoreTokenVault(context: Context) : TokenVault {
     }
 
     private companion object {
-        const val ALIAS = "ygg-update-token"
         const val TRANSFORM = "AES/GCM/NoPadding"
         const val IV = 12
     }

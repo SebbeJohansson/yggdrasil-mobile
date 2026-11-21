@@ -1,5 +1,7 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.llm.claude.BridgePanel
+import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeViewModel
 import io.github.sebbejohansson.yggdrasil.parts.PerformanceScreen
 import io.github.sebbejohansson.yggdrasil.today.TodayTarget
 import io.github.sebbejohansson.yggdrasil.today.TodayCard
@@ -254,6 +256,7 @@ private fun Root(
     val promiseList by promisesVm.state.collectAsStateWithLifecycle()
     val promisesDue = PromisesViewModel.dueSoon(promiseList)
     val codeVm: CodeViewModel = viewModel(factory = CodeViewModel.factory(container))
+    val bridgeVm: BridgeViewModel = viewModel(factory = BridgeViewModel.factory(container))
     val appsVm: AppsViewModel? = if (home) viewModel(factory = AppsViewModel.factory(container)) else null
     val presses by homePresses.collectAsStateWithLifecycle()
     // Home goes to the apps, whatever page you were on.
@@ -388,7 +391,7 @@ private fun Root(
                         promisesDue = promisesDue,
                         onPage = { tab = it },
                     )
-                    MainActivity.TAB_CODE -> CodeScreen(codeVm)
+                    MainActivity.TAB_CODE -> CodeScreen(codeVm, phone = bridgeVm, onSetUpPhone = ::openSettings)
                     MainActivity.TAB_SYSTEM -> SystemScreen(systemPage, { systemPage = it }, phone, jobs, huginnVm, historyVm)
                     MainActivity.TAB_HEALTH -> {
                         val loopsVersion by container.loops.changes.flow.collectAsStateWithLifecycle()
@@ -425,6 +428,8 @@ private fun Root(
                             onChange = { runCatching { context.startActivity(HomeRole.settings()) } },
                         )
                         UpdatesPanel(container.updater, container.appScope)
+                        HudSection("Claude bridge", Modifier.padding(top = 8.dp))
+                        BridgePanel(bridgeVm)
                         HudSection("Focus", Modifier.padding(top = 8.dp))
                         FocusPanel(container.hermodr)
                         HudSection("Watching you", Modifier.padding(top = 8.dp))

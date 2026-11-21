@@ -547,6 +547,22 @@ you stop isn't counted.
 
 ![Performance](docs/screenshots/18-performance.png)
 
+## Cloud sessions from the phone: the Claude bridge
+
+The Code tab has a **This phone** section. You can start a Claude Code
+cloud session for any repo and follow up on it with no computer on. Follow
+ups also work on the desktop's cloud sessions while the desktop is away.
+
+- **How:** Ygg's Claude bridge runs the real `claude` CLI in Termux (an
+  Ubuntu inside it) with your subscription, on `127.0.0.1` with its own key.
+- **Setup:** Settings → Claude bridge → *Copy install command*, paste it
+  into Termux, then `ygg-bridge login` and paste `ygg-bridge key` back.
+- **Also:** it makes the Claude provider work.
+
+Details and the contract are in [docs/claude-bridge.md](docs/claude-bridge.md).
+
+![Code](docs/screenshots/19-code.png)
+
 ## Models: `llm/`
 
 Parts never pick a model. They make an `LlmRequest` with:
@@ -561,7 +577,7 @@ is allowed, fits the tier, and is ready. When none can answer,
 | Provider | Where | Status |
 | --- | --- | --- |
 | `LiteRtLmProvider` | on the phone, GPU with CPU fallback | working: Gemma 4 E2B (default), E4B |
-| `ClaudeBridgeProvider` | Claude Code CLI on the phone, your subscription | app side done; bridge not written |
+| `ClaudeBridgeProvider` | Claude Code CLI on the phone (Termux), your subscription | working, through Ygg's Claude bridge |
 
 `LiteRtLmProvider` keeps the last conversation open, so a follow-up
 message doesn't feed the whole chat to the model again.

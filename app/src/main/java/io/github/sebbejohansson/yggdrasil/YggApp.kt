@@ -1,5 +1,6 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeClient
 import io.github.sebbejohansson.yggdrasil.core.NetMeter
 import io.github.sebbejohansson.yggdrasil.norn.Embedder
 import java.time.Instant
@@ -125,12 +126,14 @@ class AppContainer(private val app: Application) {
     val modelDownloads = ModelDownloads(app)
     val defaultModel = ModelCatalog.GEMMA_4_E2B
     val localLlm = LiteRtLmProvider(defaultModel, modelStore, app.cacheDir)
+    /** Ygg's Claude bridge in Termux: cloud sessions and the Claude provider. Its key is kept encrypted. */
+    val bridge = BridgeClient(KeystoreTokenVault(app, prefsName = "bridge_key", alias = "ygg-bridge-key"))
     /**
      * Claude, behind the names guard: names are swapped for placeholders by the
      * local model before anything leaves the phone, or nothing is sent.
      */
     val claudeBridge = NameGuard(
-        inner = ClaudeBridgeProvider(),
+        inner = ClaudeBridgeProvider(bridge),
         finder = NameFinder { text ->
             NameAnswers.chunks(text).flatMap { chunk ->
                 val raw = perf.time("model", "names", localLlm.displayName) {

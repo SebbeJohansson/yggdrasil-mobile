@@ -9,12 +9,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * Claude, through the Claude Code CLI running on this phone (Android's Linux
@@ -27,27 +24,23 @@ import java.net.URL
  * The text leaves the phone, so the router only uses this for requests marked
  * [io.github.sebbejohansson.yggdrasil.llm.Privacy.MAY_LEAVE_DEVICE].
  */
-class ClaudeBridgeProvider(
-    private val baseUrl: String = "http://127.0.0.1:8765",
-) : LlmProvider {
+class ClaudeBridgeProvider(private val bridge: BridgeClient) : LlmProvider {
 
     override val id = "claude-bridge"
     override val displayName = "Claude (Claude Code bridge)"
     override val leavesDevice = true
     override val tiers = setOf(LlmTier.LARGE)
 
-    override suspend fun status(): ProviderStatus = withContext(Dispatchers.IO) {
-        try {
-            val conn = open("/health", timeoutMs = 1_000)
-            try {
-                if (conn.responseCode == 200) ProviderStatus.Ready
-                else ProviderStatus.NeedsSetup("the bridge answered HTTP ${conn.responseCode}")
-            } finally {
-                conn.disconnect()
-            }
-        } catch (_: IOException) {
-            ProviderStatus.NeedsSetup("start the Claude bridge in the Linux Terminal")
+    override suspend fun status(): ProviderStatus = try {
+        val h = bridge.health()
+        when {
+            h == null -> ProviderStatus.NeedsSetup("start the Claude bridge in Termux: ygg-bridge start")
+            h.claude.isEmpty() -> ProviderStatus.NeedsSetup("Claude Code isn't installed in the bridge: run its installer again")
+            !bridge.hasKey -> ProviderStatus.NeedsSetup("paste the bridge's key in Settings (ygg-bridge key)")
+            else -> ProviderStatus.Ready
         }
+    } catch (e: IOException) {
+        ProviderStatus.NeedsSetup(e.message ?: "the bridge isn't answering")
     }
 
     // The bridge answers in one piece for now; `claude -p --output-format
@@ -66,26 +59,6 @@ class ClaudeBridgeProvider(
                     },
                 ),
             )
-        val conn = open("/v1/complete", timeoutMs = 300_000).apply {
-            requestMethod = "POST"
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
-        }
-        try {
-            conn.outputStream.use { it.write(body.toString().toByteArray()) }
-            val code = conn.responseCode
-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
-                ?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) throw IOException("Claude bridge: HTTP $code $text")
-            emit(JSONObject(text).getString("text"))
-        } finally {
-            conn.disconnect()
-        }
+        emit(bridge.complete(body))
     }.flowOn(Dispatchers.IO)
-
-    private fun open(path: String, timeoutMs: Int) =
-        (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
-            connectTimeout = minOf(timeoutMs, 2_000)
-            readTimeout = timeoutMs
-        }
 }

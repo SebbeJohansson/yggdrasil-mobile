@@ -9,3 +9,4 @@ captures/
 *.litertlm
 *.apk
 *.aab
+__pycache__/

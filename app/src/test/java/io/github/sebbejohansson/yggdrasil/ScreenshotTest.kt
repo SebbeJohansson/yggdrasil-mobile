@@ -236,5 +236,9 @@ class ScreenshotTest {
         settle()
         compose.onNodeWithText("Performance").performClick()
         shot("18-performance")
+
+        // Code: "This phone" offers the bridge for cloud sessions with no computer on.
+        compose.onNodeWithText("CODE").performClick()
+        shot("19-code")
     }
 }

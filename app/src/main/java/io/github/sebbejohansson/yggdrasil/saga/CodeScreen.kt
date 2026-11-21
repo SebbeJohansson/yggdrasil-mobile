@@ -1,5 +1,10 @@
 package io.github.sebbejohansson.yggdrasil.saga
 
+import io.github.sebbejohansson.yggdrasil.llm.claude.PhoneCloudPanel
+import io.github.sebbejohansson.yggdrasil.llm.claude.FollowUp
+import io.github.sebbejohansson.yggdrasil.llm.claude.FollowBridge
+import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeUiState
+import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeViewModel
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -106,8 +111,16 @@ internal fun ago(t: Instant?, now: Instant): String {
 }
 
 @Composable
-fun CodeScreen(vm: CodeViewModel, modifier: Modifier = Modifier) {
+fun CodeScreen(
+    vm: CodeViewModel,
+    modifier: Modifier = Modifier,
+    /** Ygg's Claude bridge on this phone: cloud sessions with no machine on. */
+    phone: BridgeViewModel? = null,
+    onSetUpPhone: () -> Unit = {},
+) {
     val s by vm.state.collectAsStateWithLifecycle()
+    phone?.let { FollowBridge(it) }
+    val phoneState = phone?.state?.collectAsStateWithLifecycle()?.value
     val now = Instant.now()
     LazyColumn(
         modifier.fillMaxSize(),
@@ -122,12 +135,21 @@ fun CodeScreen(vm: CodeViewModel, modifier: Modifier = Modifier) {
                         when {
                             !s.sync.configured -> "Mímir is not set up (Settings → Connection)"
                             s.devices.isEmpty() -> "no machine has sent its sessions"
-                            else -> "${s.devices.sumOf { it.sessions.size }} sessions on ${s.devices.size} machines"
+                            else -> "${s.devices.sumOf { it.sessions.size }} sessions on ${s.devices.size} " +
+                                if (s.devices.size == 1) "machine" else "machines"
                         },
                     )
                 }
                 HudButton("Sync now", { vm.syncNow() }, kind = HudButtonKind.SMALL)
             }
+        }
+        if (phone != null) {
+            item(key = "phone-h") {
+                HudSection("This phone", Modifier.padding(top = 8.dp)) {
+                    HudLabel(if (phoneState?.ready == true) "bridge ready" else "bridge")
+                }
+            }
+            item(key = "phone") { PhoneCloudPanel(phone, onSetUpPhone) }
         }
         if (s.devices.isEmpty()) {
             item {
@@ -144,13 +166,13 @@ fun CodeScreen(vm: CodeViewModel, modifier: Modifier = Modifier) {
                     HudLabel(if (d.quiet(now)) "quiet ${ago(d.heardAt, now)}" else "heard ${ago(d.heardAt, now)} ago")
                 }
             }
-            item(key = "d-${d.device}") { DevicePanel(d, s, vm, now) }
+            item(key = "d-${d.device}") { DevicePanel(d, s, vm, now, phone?.takeIf { phoneState?.ready == true }, phoneState) }
         }
     }
 }
 
 @Composable
-private fun DevicePanel(d: DeviceSessions, s: CodeUiState, vm: CodeViewModel, now: Instant) {
+private fun DevicePanel(d: DeviceSessions, s: CodeUiState, vm: CodeViewModel, now: Instant, phone: BridgeViewModel?, phoneState: BridgeUiState?) {
     val drive = d.drivableBy(s.me) && !d.quiet(now)
     Column(
         Modifier.fillMaxWidth().alpha(if (d.quiet(now)) 0.65f else 1f).hudPanel(warn = d.sessions.any { it.waiting }).padding(14.dp),
@@ -165,7 +187,7 @@ private fun DevicePanel(d: DeviceSessions, s: CodeUiState, vm: CodeViewModel, no
         d.sessions.forEach { session -> SessionItem(d, session, drive, s.asked, vm, now) }
         if (d.cloud.isNotEmpty() || (drive && d.projects.isNotEmpty())) {
             HudLabel("Cloud sessions started there")
-            d.cloud.forEach { c -> CloudItem(d, c, drive, s.asked, vm, now) }
+            d.cloud.forEach { c -> CloudItem(d, c, drive, s.asked, vm, now, phone, phoneState) }
             if (drive && d.projects.isNotEmpty()) StartCloud(d, s.asked, vm)
         }
     }
@@ -221,7 +243,16 @@ private fun SessionItem(d: DeviceSessions, s: RemoteSession, drive: Boolean, ask
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CloudItem(d: DeviceSessions, c: RemoteCloud, drive: Boolean, asked: List<Asked>, vm: CodeViewModel, now: Instant) {
+private fun CloudItem(
+    d: DeviceSessions,
+    c: RemoteCloud,
+    drive: Boolean,
+    asked: List<Asked>,
+    vm: CodeViewModel,
+    now: Instant,
+    phone: BridgeViewModel?,
+    phoneState: BridgeUiState?,
+) {
     val uri = LocalUriHandler.current
     var draft by remember(c.id) { mutableStateOf("") }
     Column(Modifier.fillMaxWidth().leftStripe(Hud.cyan).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -230,11 +261,13 @@ private fun CloudItem(d: DeviceSessions, c: RemoteCloud, drive: Boolean, asked: 
             Text("${c.cwd.trimEnd('/').substringAfterLast('/')} · ${ago(c.at, now)}", style = HudText.meta)
         }
         c.lastError?.let { Text("Last message did not go: $it", style = HudText.meta.copy(color = Hud.yellow)) }
-        if (drive) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        when {
+            drive -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 HudTextField(draft, { draft = it }, placeholder = "Follow up", maxLines = 3, modifier = Modifier.weight(1f))
                 HudButton("Send", { vm.follow(d.device, c, draft.trim()); draft = "" }, kind = HudButtonKind.SMALL, enabled = draft.isNotBlank())
             }
+            // A cloud session takes a follow-up from any machine of yours: with this one away, the phone's bridge sends it.
+            phone != null && phoneState != null -> FollowUp(c.id, phoneState, phone, draft) { draft = it }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             HudButton("Open in Claude", { uri.openUri(c.url) }, kind = HudButtonKind.SMALL)
