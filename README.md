@@ -436,6 +436,34 @@ at your own rhythm. It runs with Veðrfölnir's 15-minute check.
 - **Settings:** switch it on or off, choose notification or listed only,
   and see what it sees right now.
 
+## Health: `parts/`
+
+Tap the **arc reactor** for Health, as on the dashboard
+(`pages/dashboard/parts.vue`). Tap it again, or Back, to return.
+
+- **One card per part:** Norn, Huginn, Dellingr, Hermóðr, Veðrfölnir,
+  Sága, Claude, Gjallar and Ratatoskr.
+  - **State:** up, needs a look, down, or not set up (Claude, and Sága
+    without Mímir).
+  - **Contents:** what the part does, what's wrong in one line, and a few
+    facts, e.g. the model, memories, held messages, battery or the last
+    sync.
+- **Loops:** each part's timed loops, with when each last ran, judged by
+  Ratatoskr's rule:
+  - **Late:** past twice the loop's interval.
+  - **Stalled:** past three intervals and a minute. A stalled or failed
+    loop makes its part *need a look*.
+  - **Where they come from:** the phone's parts run in-app rather than as
+    servers, so `core/Loops.kt` records each round of the 15-minute check
+    and the update check in place of `/health`.
+- **Alerts:**
+  - **On the cards:** each part lists the alerts it raised or that name
+    it, with Seen, Snooze and Mute. An open critical alert makes its part
+    *need a look*.
+  - **Other alerts:** alerts no part claims are listed at the end.
+
+![Health](docs/screenshots/15-health.png)
+
 ## Models: `llm/`
 
 Parts never pick a model. They make an `LlmRequest` with:

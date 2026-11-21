@@ -1,5 +1,10 @@
 package io.github.sebbejohansson.yggdrasil
 
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import io.github.sebbejohansson.yggdrasil.parts.partReports
+import io.github.sebbejohansson.yggdrasil.parts.Parts
+import io.github.sebbejohansson.yggdrasil.parts.HealthScreen
 import io.github.sebbejohansson.yggdrasil.ui.HudSection
 import io.github.sebbejohansson.yggdrasil.ratatoskr.YouPanel
 import io.github.sebbejohansson.yggdrasil.hermodr.FocusPanel
@@ -165,6 +170,8 @@ open class MainActivity : ComponentActivity() {
         const val TAB_CODE = 5
         /** Not in the tab bar: the gear in the top bar opens it. */
         const val TAB_SETTINGS = 6
+        /** Not in the tab bar: the arc reactor opens it. */
+        const val TAB_HEALTH = 7
 
         fun isInbox(tab: Int) = tab == TAB_ALERTS || tab == TAB_MESSAGES
     }
@@ -186,8 +193,18 @@ private fun Root(
     var systemPage by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(tab) { if (MainActivity.isInbox(tab)) lastInbox = tab }
     fun openSettings() {
-        if (tab != MainActivity.TAB_SETTINGS) beforeSettings = tab
+        if (tab != MainActivity.TAB_SETTINGS && tab != MainActivity.TAB_HEALTH) beforeSettings = tab
         tab = MainActivity.TAB_SETTINGS
+    }
+
+    /** The arc reactor's page: every part's health. Again closes it. */
+    fun toggleHealth() {
+        if (tab == MainActivity.TAB_HEALTH) {
+            tab = beforeSettings
+            return
+        }
+        if (tab != MainActivity.TAB_SETTINGS) beforeSettings = tab
+        tab = MainActivity.TAB_HEALTH
     }
     val context = LocalContext.current
 
@@ -231,9 +248,11 @@ private fun Root(
     // Home goes to the apps, whatever page you were on.
     LaunchedEffect(presses) { if (home && presses > 0) tab = MainActivity.TAB_APPS }
     // Back from Settings goes to where you were.
-    BackHandler(enabled = tab == MainActivity.TAB_SETTINGS) { tab = beforeSettings }
+    BackHandler(enabled = tab == MainActivity.TAB_SETTINGS || tab == MainActivity.TAB_HEALTH) { tab = beforeSettings }
     // Back never leaves the home screen: it goes back to the apps.
-    BackHandler(enabled = home && tab != MainActivity.TAB_APPS && tab != MainActivity.TAB_SETTINGS) { tab = MainActivity.TAB_APPS }
+    BackHandler(enabled = home && tab != MainActivity.TAB_APPS && tab != MainActivity.TAB_SETTINGS && tab != MainActivity.TAB_HEALTH) {
+        tab = MainActivity.TAB_APPS
+    }
     var homeHeld by remember { mutableStateOf(HomeRole.held(context)) }
     val askHome = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { homeHeld = HomeRole.held(context) }
     val huginnState by huginnVm.state.collectAsStateWithLifecycle()
@@ -326,8 +345,8 @@ private fun Root(
             TopBar(
                 reactor,
                 busy = chatState.busy,
-                // The ring is the parts' health: it opens System → Phone, as the dashboard's Health.
-                onReactor = { systemPage = 0; tab = MainActivity.TAB_SYSTEM },
+                // The ring is the parts' health: it opens the Health page, as the dashboard's.
+                onReactor = ::toggleHealth,
                 settingsOpen = tab == MainActivity.TAB_SETTINGS,
                 onSettings = { if (tab == MainActivity.TAB_SETTINGS) tab = beforeSettings else openSettings() },
                 focus = { FocusButton(container.hermodr, container.calendar) },
@@ -346,6 +365,23 @@ private fun Root(
                     )
                     MainActivity.TAB_CODE -> CodeScreen(codeVm)
                     MainActivity.TAB_SYSTEM -> SystemScreen(systemPage, { systemPage = it }, phone, jobs, huginnVm, historyVm)
+                    MainActivity.TAB_HEALTH -> {
+                        val loopsVersion by container.loops.changes.flow.collectAsStateWithLifecycle()
+                        val readings by container.vedrfolnir.latest.collectAsStateWithLifecycle()
+                        val focusVersion by container.hermodr.changes.flow.collectAsStateWithLifecycle()
+                        @Suppress("UNUSED_EXPRESSION") loopsVersion
+                        @Suppress("UNUSED_EXPRESSION") focusVersion
+                        val now = java.time.Instant.now()
+                        val all = alertState.active
+                        val cards = Parts.cards(
+                            partReports(
+                                chatState, messageState, container.hermodr.focusNow(), jobsState, huginnState, readings, phoneFailing,
+                                alertState, container.you, container.updater, container.loops, now,
+                            ),
+                            all, container.loops.startedAt, now,
+                        )
+                        HealthScreen(cards, Parts.unclaimed(cards, all), alerts, onBack = { tab = beforeSettings })
+                    }
                     MainActivity.TAB_SETTINGS -> SettingsScreen(
                         chat = chat,
                         alerts = alerts,
@@ -466,7 +502,10 @@ private fun TopBar(
             Text("⚙", style = HudText.title.copy(fontSize = 20.sp, color = if (settingsOpen) Hud.cyan else Hud.subtext0))
         }
         Spacer(Modifier.width(4.dp))
-        ArcReactor(parts, busy = busy, size = 36.dp, modifier = Modifier.clickable(onClick = onReactor))
+        ArcReactor(
+            parts, busy = busy, size = 36.dp,
+            modifier = Modifier.semantics { contentDescription = "Health of the parts" }.clickable(onClick = onReactor),
+        )
     }
 }
 

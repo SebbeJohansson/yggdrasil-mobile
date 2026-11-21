@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
@@ -196,5 +197,9 @@ class ScreenshotTest {
         settle()
         compose.onNodeWithText("Messages", substring = false).performClick()
         shot("14-focus-recap")
+
+        // The arc reactor opens Health: every part, its loops and its alerts.
+        compose.onNodeWithContentDescription("Health of the parts").performClick()
+        shot("15-health")
     }
 }

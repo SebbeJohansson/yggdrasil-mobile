@@ -1,5 +1,7 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.parts.Parts
+import io.github.sebbejohansson.yggdrasil.core.Loops
 import io.github.sebbejohansson.yggdrasil.hermodr.FocusTileService
 import io.github.sebbejohansson.yggdrasil.ratatoskr.YouSettings
 import io.github.sebbejohansson.yggdrasil.ratatoskr.YouService
@@ -155,6 +157,8 @@ class AppContainer(private val app: Application) {
         focus = db.focus,
     )
     val gjallar = GjallarService(db.alerts, hermodr)
+    /** The parts' timed loops, for the Health page. */
+    val loops = Loops(app)
     // Ratatoskr's watch on your rhythm: long runs of meetings, late nights, full weeks.
     val you = YouService(calendar, hermodr, YouSettings(app), inUse = { app.getSystemService(PowerManager::class.java).isInteractive })
     // Updates from the GitHub releases (release builds only).
@@ -227,13 +231,13 @@ class AppContainer(private val app: Application) {
             gjallar.prune()
             // Anything held past its time (the phone was off, or Doze ran late).
             hermodr.flushHeld()
-            vedrfolnir.check()
+            loops.run(Parts.VEDRFOLNIR_CHECK.first, Parts.VEDRFOLNIR_CHECK.second) { vedrfolnir.check() }
             // Runs what came due while the app wasn't running, and sets the next alarm.
-            dellingr.tick()
+            loops.run(Parts.DELLINGR_TICK.first, Parts.DELLINGR_TICK.second) { dellingr.tick() }
             huginn.prune()
-            huginnRuntime.checkCalendar()
+            loops.run(Parts.HUGINN_CALENDAR.first, Parts.HUGINN_CALENDAR.second) { huginnRuntime.checkCalendar() }
             backfillHistory()
-            you.round()
+            loops.run(Parts.RATATOSKR_YOU.first, Parts.RATATOSKR_YOU.second) { you.round() }
             saga.prune()
         }
         // Sync a moment after any alert changes here (and once now, on start).

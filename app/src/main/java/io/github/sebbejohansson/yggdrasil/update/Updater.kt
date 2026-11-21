@@ -1,5 +1,6 @@
 package io.github.sebbejohansson.yggdrasil.update
 
+import io.github.sebbejohansson.yggdrasil.parts.Parts
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -372,7 +373,11 @@ private const val BINARY = "application/octet-stream"
 /** Looks for a release every few hours, on any network. */
 class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        (applicationContext as YggApp).container.updater.round()
+        val c = (applicationContext as YggApp).container
+        c.loops.run(Parts.UPDATES_CHECK.first, Parts.UPDATES_CHECK.second) {
+            c.updater.round()
+            (c.updater.state.value as? UpdateState.Failed)?.let { error(it.message) }
+        }
         return Result.success()
     }
 

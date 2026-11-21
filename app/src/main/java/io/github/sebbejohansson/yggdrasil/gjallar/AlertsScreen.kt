@@ -213,7 +213,7 @@ fun AlertTests(vm: AlertsViewModel) {
 }
 
 @Composable
-private fun AlertItem(row: AlertRow, vm: AlertsViewModel) {
+internal fun AlertItem(row: AlertRow, vm: AlertsViewModel) {
     val a = row.alert
     val quiet = a.state == AlertState.ACKNOWLEDGED || row.muted || a.snoozedUntil?.isAfter(Instant.now()) == true
     Column(
