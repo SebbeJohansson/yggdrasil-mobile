@@ -344,7 +344,7 @@ class Updater(
             hermodr.send(
                 MessageRequest(
                     "updates", "Ygg ${release.version} is ready",
-                    "Install it under Parts → Settings." + release.summary(3).let { if (it.isBlank()) "" else "\n$it" },
+                    "Install it under Settings → Updates." + release.summary(3).let { if (it.isBlank()) "" else "\n$it" },
                     priority = Priority.LOW, tag = "update",
                 ),
             )

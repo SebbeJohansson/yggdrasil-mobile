@@ -6,8 +6,6 @@ import io.github.sebbejohansson.yggdrasil.home.HomeScreenPanel
 import io.github.sebbejohansson.yggdrasil.home.HomeRole
 import io.github.sebbejohansson.yggdrasil.home.AppsScreen
 import io.github.sebbejohansson.yggdrasil.home.AppsViewModel
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.horizontalScroll
 import io.github.sebbejohansson.yggdrasil.history.RunesScreen
 import io.github.sebbejohansson.yggdrasil.history.TreeScreen
 import io.github.sebbejohansson.yggdrasil.history.HistoryViewModel
@@ -21,8 +19,8 @@ import io.github.sebbejohansson.yggdrasil.boot.BootKind
 import io.github.sebbejohansson.yggdrasil.boot.BootLogic
 import io.github.sebbejohansson.yggdrasil.boot.BootOverlay
 import io.github.sebbejohansson.yggdrasil.boot.BootPhone
-import io.github.sebbejohansson.yggdrasil.boot.BootSettings
-import io.github.sebbejohansson.yggdrasil.boot.BootSettingsScreen
+import io.github.sebbejohansson.yggdrasil.settings.SettingsScreen
+import io.github.sebbejohansson.yggdrasil.ui.PageTabs
 import io.github.sebbejohansson.yggdrasil.boot.Health
 import java.time.LocalDate
 import android.os.Build
@@ -151,11 +149,18 @@ open class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_TAB = "tab"
+        // Kept as they were: notifications ask for these numbers. Alerts and
+        // Messages are both the Inbox tab, each opening its own page of it.
         const val TAB_CHAT = 0
         const val TAB_ALERTS = 1
         const val TAB_MESSAGES = 2
-        const val TAB_PHONE = 3
+        const val TAB_SYSTEM = 3
         const val TAB_APPS = 4
+        const val TAB_CODE = 5
+        /** Not in the tab bar: the gear in the top bar opens it. */
+        const val TAB_SETTINGS = 6
+
+        fun isInbox(tab: Int) = tab == TAB_ALERTS || tab == TAB_MESSAGES
     }
 }
 
@@ -169,6 +174,15 @@ private fun Root(
     homePresses: MutableStateFlow<Int> = MutableStateFlow(0),
 ) {
     var tab by rememberSaveable { mutableIntStateOf(if (home) MainActivity.TAB_APPS else MainActivity.TAB_CHAT) }
+    // The Inbox opens on whichever page you left it on; Settings goes back to where you came from.
+    var lastInbox by rememberSaveable { mutableIntStateOf(MainActivity.TAB_ALERTS) }
+    var beforeSettings by rememberSaveable { mutableIntStateOf(MainActivity.TAB_CHAT) }
+    var systemPage by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(tab) { if (MainActivity.isInbox(tab)) lastInbox = tab }
+    fun openSettings() {
+        if (tab != MainActivity.TAB_SETTINGS) beforeSettings = tab
+        tab = MainActivity.TAB_SETTINGS
+    }
     val context = LocalContext.current
 
     // The boot sequence: the full one once a day, the quick one on other opens. Opened from a
@@ -210,8 +224,10 @@ private fun Root(
     val presses by homePresses.collectAsStateWithLifecycle()
     // Home goes to the apps, whatever page you were on.
     LaunchedEffect(presses) { if (home && presses > 0) tab = MainActivity.TAB_APPS }
+    // Back from Settings goes to where you were.
+    BackHandler(enabled = tab == MainActivity.TAB_SETTINGS) { tab = beforeSettings }
     // Back never leaves the home screen: it goes back to the apps.
-    BackHandler(enabled = home && tab != MainActivity.TAB_APPS) { tab = MainActivity.TAB_APPS }
+    BackHandler(enabled = home && tab != MainActivity.TAB_APPS && tab != MainActivity.TAB_SETTINGS) { tab = MainActivity.TAB_APPS }
     var homeHeld by remember { mutableStateOf(HomeRole.held(context)) }
     val askHome = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { homeHeld = HomeRole.held(context) }
     val huginnState by huginnVm.state.collectAsStateWithLifecycle()
@@ -301,12 +317,34 @@ private fun Root(
         Backdrop(needs = openAlerts + unseen, modifier = Modifier.fillMaxSize())
         AuroraSky(storm, shown = auroraAlpha > 0f, alpha = auroraAlpha, modifier = Modifier.fillMaxSize())
         Column(Modifier.fillMaxSize().imePadding()) {
-            TopBar(reactor, busy = chatState.busy, onReactor = { tab = MainActivity.TAB_ALERTS })
+            TopBar(
+                reactor,
+                busy = chatState.busy,
+                // The ring is the parts' health: it opens System → Phone, as the dashboard's Health.
+                onReactor = { systemPage = 0; tab = MainActivity.TAB_SYSTEM },
+                settingsOpen = tab == MainActivity.TAB_SETTINGS,
+                onSettings = { if (tab == MainActivity.TAB_SETTINGS) tab = beforeSettings else openSettings() },
+            )
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
-                    MainActivity.TAB_ALERTS -> AlertsScreen(alerts)
-                    MainActivity.TAB_MESSAGES -> MessagesScreen(messages)
-                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs, huginnVm, historyVm, codeVm, container.bootSettings, onRunBoot = { boot = BootKind.FULL }) {
+                    MainActivity.TAB_ALERTS, MainActivity.TAB_MESSAGES -> InboxScreen(
+                        page = tab,
+                        alerts = alerts,
+                        messages = messages,
+                        openAlerts = openAlerts,
+                        unseen = unseen,
+                        onPage = { tab = it },
+                    )
+                    MainActivity.TAB_CODE -> CodeScreen(codeVm)
+                    MainActivity.TAB_SYSTEM -> SystemScreen(systemPage, { systemPage = it }, phone, jobs, huginnVm, historyVm)
+                    MainActivity.TAB_SETTINGS -> SettingsScreen(
+                        chat = chat,
+                        alerts = alerts,
+                        messages = messages,
+                        bootSettings = container.bootSettings,
+                        onRunBoot = { boot = BootKind.FULL },
+                        onBack = { tab = beforeSettings },
+                    ) {
                         HomeScreenPanel(
                             held = homeHeld,
                             onUse = {
@@ -317,18 +355,18 @@ private fun Root(
                         )
                         UpdatesPanel(container.updater, container.appScope)
                     }
-                    MainActivity.TAB_APPS -> if (appsVm != null) AppsScreen(appsVm, presses) else ChatScreen(chat)
-                    else -> ChatScreen(chat)
+                    MainActivity.TAB_APPS -> if (appsVm != null) AppsScreen(appsVm, presses) else ChatScreen(chat, onSettings = ::openSettings)
+                    else -> ChatScreen(chat, onSettings = ::openSettings)
                 }
             }
             // Out of the way while typing; the keyboard takes that space.
             if (!WindowInsets.isImeVisible) {
                 TabBar {
                     if (home) Tab(tab == MainActivity.TAB_APPS, "Apps", 0, tight = true) { tab = MainActivity.TAB_APPS }
-                    Tab(tab == MainActivity.TAB_CHAT, "Norn", 0, tight = home) { tab = MainActivity.TAB_CHAT }
-                    Tab(tab == MainActivity.TAB_ALERTS, "Alerts", openAlerts, tight = home) { tab = MainActivity.TAB_ALERTS }
-                    Tab(tab == MainActivity.TAB_MESSAGES, "Messages", unseen, tight = home) { tab = MainActivity.TAB_MESSAGES }
-                    Tab(tab == MainActivity.TAB_PHONE, "Parts", phoneFailing.size + failingJobs, tight = home) { tab = MainActivity.TAB_PHONE }
+                    Tab(tab == MainActivity.TAB_CHAT, "Ask", 0, tight = home) { tab = MainActivity.TAB_CHAT }
+                    Tab(MainActivity.isInbox(tab), "Inbox", openAlerts + unseen, tight = home) { tab = lastInbox }
+                    Tab(tab == MainActivity.TAB_CODE, "Code", 0, tight = home) { tab = MainActivity.TAB_CODE }
+                    Tab(tab == MainActivity.TAB_SYSTEM, "System", phoneFailing.size + failingJobs, tight = home) { tab = MainActivity.TAB_SYSTEM }
                 }
             }
         }
@@ -376,7 +414,7 @@ private fun ProviderStatus?.toPart() = when (this) {
 private val clockFmt = DateTimeFormatter.ofPattern("HH:mm")
 
 @Composable
-private fun TopBar(parts: List<ReactorPart>, busy: Boolean, onReactor: () -> Unit) {
+private fun TopBar(parts: List<ReactorPart>, busy: Boolean, onReactor: () -> Unit, settingsOpen: Boolean, onSettings: () -> Unit) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -400,7 +438,14 @@ private fun TopBar(parts: List<ReactorPart>, busy: Boolean, onReactor: () -> Uni
         Spacer(Modifier.weight(1f))
         @Suppress("UNUSED_EXPRESSION") now
         HudLabel(LocalTime.now().format(clockFmt), color = Hud.subtext0, style = HudText.label.copy(fontSize = 13.sp))
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(4.dp))
+        Box(
+            Modifier.size(40.dp).clickable(onClick = onSettings),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("⚙", style = HudText.title.copy(fontSize = 20.sp, color = if (settingsOpen) Hud.cyan else Hud.subtext0))
+        }
+        Spacer(Modifier.width(4.dp))
         ArcReactor(parts, busy = busy, size = 36.dp, modifier = Modifier.clickable(onClick = onReactor))
     }
 }
@@ -436,7 +481,7 @@ private fun RowScope.Tab(selected: Boolean, label: String, count: Int, tight: Bo
             style = HudText.label.copy(
                 fontFamily = HudFonts.mono,
                 // Four tabs share a phone's width: a little tighter than the dashboard's labels.
-                // Five (as the home screen) tighter still.
+                // Five (as the home screen) tighter still; the labels are short enough for it.
                 fontSize = if (tight) 10.sp else 11.sp,
                 letterSpacing = if (tight) 0.03.em else 0.08.em,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
@@ -461,45 +506,48 @@ private fun Modifier.topLine(c: Color) = drawBehind {
     drawLine(c, Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx())
 }
 
-/** The parts with no tab of their own, under page tabs as on the dashboard (`PageTabs.vue`). */
+/** Gjallar's alerts and Hermóðr's messages: everything that wants you, under one tab. */
 @Composable
-private fun PartsScreen(
+private fun InboxScreen(
+    page: Int,
+    alerts: AlertsViewModel,
+    messages: MessagesViewModel,
+    openAlerts: Int,
+    unseen: Int,
+    onPage: (Int) -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        PageTabs(
+            listOf("Alerts", "Messages"),
+            selected = if (page == MainActivity.TAB_MESSAGES) 1 else 0,
+            onSelect = { onPage(if (it == 1) MainActivity.TAB_MESSAGES else MainActivity.TAB_ALERTS) },
+            counts = listOf(openAlerts, unseen),
+        )
+        Box(Modifier.weight(1f)) {
+            if (page == MainActivity.TAB_MESSAGES) MessagesScreen(messages) else AlertsScreen(alerts)
+        }
+    }
+}
+
+/** The parts with no tab of their own, under page tabs as on the dashboard's System (`PageTabs.vue`). */
+@Composable
+private fun SystemScreen(
+    page: Int,
+    onPage: (Int) -> Unit,
     phone: PhoneViewModel,
     jobs: JobsViewModel,
     huginn: HuginnViewModel,
     history: HistoryViewModel,
-    code: CodeViewModel,
-    bootSettings: BootSettings,
-    onRunBoot: () -> Unit,
-    settingsMore: @Composable () -> Unit = {},
 ) {
-    var page by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().padding(top = 8.dp).bottomLine(Color(0xFF17323F)).horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            listOf("Phone", "Code", "Jobs", "Huginn", "Tree", "Runes", "Settings").forEachIndexed { i, label ->
-                val on = page == i
-                Text(
-                    label,
-                    style = HudText.small.copy(fontSize = 13.sp, color = if (on) Hud.bright else Hud.overlay2),
-                    modifier = Modifier
-                        .clickable { page = i }
-                        .then(if (on) Modifier.bottomLine(Hud.cyan, 2.dp) else Modifier)
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                )
-            }
-        }
+        PageTabs(listOf("Phone", "Jobs", "Huginn", "Tree", "Runes"), selected = page, onSelect = onPage)
         Box(Modifier.weight(1f)) {
             when (page) {
                 0 -> PhoneScreen(phone)
-                1 -> CodeScreen(code)
-                2 -> JobsScreen(jobs)
-                3 -> HuginnScreen(huginn)
-                4 -> TreeScreen(history)
-                5 -> RunesScreen(history)
-                else -> BootSettingsScreen(bootSettings, onRunBoot, settingsMore)
+                1 -> JobsScreen(jobs)
+                2 -> HuginnScreen(huginn)
+                3 -> TreeScreen(history)
+                else -> RunesScreen(history)
             }
         }
     }

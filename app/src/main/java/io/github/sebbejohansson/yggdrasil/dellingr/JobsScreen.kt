@@ -175,7 +175,7 @@ private fun JobCard(j: Job, vm: JobsViewModel) {
             HudToggle(j.enabled, { vm.setEnabled(j, it) })
         }
         Text(
-            (if (j.kind == ActionKind.ASK) "Ask Norn: " else "Tell me: ") + j.text,
+            (if (j.kind == ActionKind.ASK) "Ask Yggdrasil: " else "Tell me: ") + j.text,
             style = HudText.meta.copy(color = Hud.subtext0), maxLines = 2, overflow = TextOverflow.Ellipsis,
         )
         Text(
@@ -226,10 +226,10 @@ private fun NewJob(vm: JobsViewModel, error: String?) {
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            HudButton("Ask Norn", { ask = true }, kind = if (ask) HudButtonKind.PRIMARY else HudButtonKind.GHOST)
+            HudButton("Ask Yggdrasil", { ask = true }, kind = if (ask) HudButtonKind.PRIMARY else HudButtonKind.GHOST)
             HudButton("Tell me", { ask = false }, kind = if (!ask) HudButtonKind.PRIMARY else HudButtonKind.GHOST)
         }
-        HudTextField(text, { text = it }, placeholder = if (ask) "What to ask Norn" else "What to tell you", maxLines = 4)
+        HudTextField(text, { text = it }, placeholder = if (ask) "What to ask Yggdrasil" else "What to tell you", maxLines = 4)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Notify me (otherwise only in Messages)", style = HudText.meta, modifier = Modifier.weight(1f))
             HudToggle(push, { push = it })

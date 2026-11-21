@@ -197,7 +197,7 @@ private fun AppRow(vm: AppsViewModel, app: AppEntry, pinned: Boolean, first: Boo
 }
 
 /**
- * Parts → Settings: make Ygg the home screen, or go back to another. Android
+ * Settings → Home screen: make Ygg the home screen, or go back to another. Android
  * asks you to confirm either way, and you can always change it in Settings →
  * Apps → Default apps → Home app.
  */

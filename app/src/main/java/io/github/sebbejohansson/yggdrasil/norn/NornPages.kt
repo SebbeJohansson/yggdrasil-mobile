@@ -23,18 +23,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.github.sebbejohansson.yggdrasil.model.DownloadState
-import io.github.sebbejohansson.yggdrasil.model.ModelCatalog
 import io.github.sebbejohansson.yggdrasil.ui.Hud
 import io.github.sebbejohansson.yggdrasil.ui.HudButton
 import io.github.sebbejohansson.yggdrasil.ui.HudButtonKind
 import io.github.sebbejohansson.yggdrasil.ui.HudLabel
-import io.github.sebbejohansson.yggdrasil.ui.HudProgress
 import io.github.sebbejohansson.yggdrasil.ui.HudSection
 import io.github.sebbejohansson.yggdrasil.ui.HudText
 import io.github.sebbejohansson.yggdrasil.ui.HudTextField
-import io.github.sebbejohansson.yggdrasil.ui.HudToggle
-import io.github.sebbejohansson.yggdrasil.ui.hudPanel
 import io.github.sebbejohansson.yggdrasil.ui.leftStripe
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -96,34 +91,6 @@ fun MemoryPage(s: ChatUiState, vm: ChatViewModel, onBack: () -> Unit) {
         )
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item {
-                Column(Modifier.fillMaxWidth().hudPanel(warn = !s.embedderReady).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f).padding(end = 8.dp)) {
-                            HudLabel("Learn from what I say", color = Hud.group)
-                            Text("After each answer, Norn picks lasting facts out of your message. Never out of its own answers.", style = HudText.meta)
-                        }
-                        HudToggle(s.learning, vm::setLearning)
-                    }
-                    HudLabel("Recall by meaning", color = if (s.embedderReady) Hud.green else Hud.amber)
-                    when (val d = s.embedderDownload) {
-                        is DownloadState.Downloading -> {
-                            HudProgress(d.fraction, Modifier.fillMaxWidth())
-                            HudLabel("%.0f of %.0f MB".format(d.bytes / 1e6, d.total / 1e6))
-                        }
-                        DownloadState.Verifying -> HudLabel("Checking the file…", color = Hud.cyan)
-                        DownloadState.Done, null -> if (s.embedderReady) {
-                            Text("EmbeddingGemma finds the memories that bear on each question, on this phone.", style = HudText.meta)
-                        } else {
-                            Text(
-                                "Without it, Norn gets your newest memories. EmbeddingGemma 2 (%.0f MB) finds the ones that matter.".format(ModelCatalog.EMBEDDING_GEMMA_2.sizeBytes / 1e6),
-                                style = HudText.meta,
-                            )
-                            HudButton("Download", vm::downloadEmbedder, kind = HudButtonKind.PRIMARY)
-                        }
-                    }
-                }
-            }
-            item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     HudTextField(fact, { fact = it }, placeholder = "Remember that…", modifier = Modifier.weight(1f), maxLines = 3)
                     Spacer(Modifier.width(8.dp))
@@ -131,7 +98,7 @@ fun MemoryPage(s: ChatUiState, vm: ChatViewModel, onBack: () -> Unit) {
                 }
             }
             item { HudSection("Remembered", Modifier.padding(top = 4.dp)) }
-            if (s.memories.isEmpty()) item { Text("Nothing yet. Tell Norn about yourself, or save a fact above.", style = HudText.small.copy(color = Hud.overlay0)) }
+            if (s.memories.isEmpty()) item { Text("Nothing yet. Tell Yggdrasil about yourself, or save a fact above.", style = HudText.small.copy(color = Hud.overlay0)) }
             items(s.memories, key = { it.id }) { m ->
                 Row(Modifier.fillMaxWidth().leftStripe(if (m.source == "manual") Hud.cyan else Hud.green).padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {

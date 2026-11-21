@@ -89,7 +89,7 @@ class HomeScreenshotTest {
         assertEquals(pkg("Google Maps"), started?.component?.packageName)
 
         // Home from another page comes back to the apps.
-        compose.onNodeWithText("NORN").performClick()
+        compose.onNodeWithText("ASK").performClick()
         compose.activity.runOnUiThread {
             compose.activity.onNewIntent(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
         }

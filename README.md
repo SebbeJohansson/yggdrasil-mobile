@@ -21,20 +21,28 @@ the desktop Yggdrasil's dashboard (`ui/`):
 - **Fonts:** Rajdhani for headings and numbers, JetBrains Mono for labels,
   Inter for reading. All are bundled; their licences are in `docs/licenses`.
 - **Top bar:** the arc reactor (`ArcReactor`), one segment per part. Tap it
-  for the alerts.
-- **Chat:** Norn's chat reads like the dashboard's ask panel. Your lines are
-  cyan after `›`. Norn's lines sit under its name, with a line down the left.
+  for System → Phone. The ⚙ beside it opens Settings.
+- **Tabs:** Ask · Inbox (Alerts and Messages) · Code · System (Phone, Jobs,
+  Huginn, Tree, Runes), with Apps first when Ygg is the home screen.
+- **Settings:** one page, as the dashboard's: Assistant (model, Claude,
+  memory), Connection (Mímir), Notifications (permission, quiet hours,
+  meetings), Boot sequence, Home screen, Updates, and Developer (test buttons).
+
+  ![Settings](docs/screenshots/12-settings.png)
+- **Chat:** the Ask tab reads like the dashboard's ask panel, and the
+  assistant speaks as Yggdrasil (Norn is the part behind it). Your lines are
+  cyan after `›`. Its lines sit under its name, with a line down the left.
 - **Alerts:** the alert list keeps its severity line and its Seen, Snooze 1h,
   1d and Mute buttons.
 
-| Norn | Alerts | Messages | Phone | Jobs | Huginn |
+| Ask | Alerts | Messages | Phone | Jobs | Huginn |
 | --- | --- | --- | --- | --- | --- |
-| ![Norn](docs/screenshots/1-norn.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) | ![Phone](docs/screenshots/4-phone.png) | ![Jobs](docs/screenshots/5-jobs.png) | ![Huginn](docs/screenshots/6-huginn.png) |
+| ![Ask](docs/screenshots/1-ask.png) | ![Alerts](docs/screenshots/2-alerts.png) | ![Messages](docs/screenshots/3-messages.png) | ![Phone](docs/screenshots/4-phone.png) | ![Jobs](docs/screenshots/5-jobs.png) | ![Huginn](docs/screenshots/6-huginn.png) |
 
 **Bifröst at night**, as on the desktop: after the working day (09:00–17:00,
 Monday to Friday), when the app has gone 20 s untouched (5 min during
 work hours), the ground fades into a slow aurora. It doesn't come while
-you're typing or Norn is writing, and any touch sends it away. Today's
+you're typing or Yggdrasil is writing, and any touch sends it away. Today's
 alerts and the troubled parts make it stormier: a calm day is slow and
 green, a stormy one restless and violet. It's never red and shows no
 numbers. When Android's animations are off it stands still.
@@ -54,8 +62,8 @@ numbers. When Android's animations are off it stands still.
 - **Other opens:** the quick check, the same in about a second. It's
   see-through and lets every touch through.
 - **From a notification:** you get at most the quick one.
-- **Settings:** under Parts → Settings (daily boot, voice, quick check, Run it
-  now).
+- **Settings:** under Settings → Boot sequence (daily boot, voice, quick
+  check, Run it now).
 
 | Waiting for a tap | Systems check |
 | --- | --- |
@@ -106,23 +114,23 @@ Hermóðr. Both keep their state in `ygg.db` (SQLite).
 - Quiet hours (default 22:00–07:00) hold everything but urgent messages.
   WorkManager sends what was held when they end.
 - `hold` also waits while you're in a meeting. Meetings come from the
-  phone's own calendars (`READ_CALENDAR`, asked for from the Messages tab,
+  phone's own calendars (`READ_CALENDAR`, asked for under Settings → Notifications,
   and read on the phone only). A meeting is timed, shown as busy, and not
   declined. Meetings less than 5 minutes apart count as one. Without
   calendar access nothing is ever held for a meeting.
 - `push = false` lists a message in the app only.
 - When notifications are off, the message is kept with the reason, and the
-  Messages tab says why.
+  Inbox → Messages says why.
 - Messages are kept for 7 days.
-- **Do Not Disturb:** Android silences Yggdrasil too. The Messages tab says
+- **Do Not Disturb:** Android silences Yggdrasil too. Inbox → Messages says
   whether the Urgent channel gets through, and *Let urgent through* opens
   Android's settings for that channel, where only you can switch on
   "Override Do Not Disturb". Critical alerts and urgent messages then still
   reach you, and the rest stay quiet.
 
 Notification buttons: **Seen** on messages, **Acknowledge** and **Snooze 1 h**
-on alerts. The Alerts and Messages tabs have test buttons that run the
-whole path on the phone.
+on alerts. Settings → Developer has test buttons that run the whole path on
+the phone.
 
 ## Syncing with the desktop: `saga/`
 
@@ -136,7 +144,7 @@ What each event means is in Mímir's `docs/events.md`.
   (opened, seen, snoozed, muted, resolved), not each time it is raised again.
   On the desktop they show in Gjallar as source `phone`, and are never pushed
   there: the phone already told you.
-- **The desktop's alerts** are listed in the Alerts tab under *Desktop*, and
+- **The desktop's alerts** are listed in Inbox → Alerts under *Desktop*, and
   never pushed here. **Seen**, **Snooze** and **Mute** on one ask the desktop
   to do the same. The alert shows it at once; the desktop's answer settles it.
 - **What the desktop asks of the phone's alerts**, Sága does here, and takes
@@ -146,12 +154,12 @@ What each event means is in Mímir's `docs/events.md`.
 It syncs a couple of seconds after an alert changes, when the app comes to
 the front, and every 15 minutes with Veðrfölnir's check while it is closed.
 
-Set up in the Alerts tab, under *Mímir*: the URL (`https://<vps>.<tailnet>.ts.net`,
+Set up under Settings → Connection: the URL (`https://<vps>.<tailnet>.ts.net`,
 HTTPS only: Android refuses plain HTTP) and this phone's token, both printed
 by Mímir's `deploy/install.sh`. Keep the name `phone` unless you gave the token
 another one. The phone needs Tailscale on.
 
-**Coding sessions (Parts → Code).** Each machine that runs Sindri and Sága
+**Coding sessions (the Code tab).** Each machine that runs Sindri and Sága
 (the desktop, another laptop) sends its coding sessions through Mímir
 (`sindri.sessions`). The Code page lists them per machine with when each
 was last heard from, Claude's last words and any permission prompt or
@@ -183,7 +191,7 @@ resolves by itself when its check passes again. It fixes nothing.
 | `heat` | Android's thermal status is severe, or the battery is 45 °C or more | Android's thermal status is critical |
 
 It checks when the app starts, and every 15 minutes through WorkManager,
-which is Android's shortest period. The Phone tab shows the readouts live,
+which is Android's shortest period. System → Phone shows the readouts live,
 every 5 s while it's open, and has a segment on the arc reactor. A reading
 the phone doesn't give, such as a battery level, raises nothing.
 
@@ -216,19 +224,19 @@ included.
 
 | Memory | Chats | A reopened chat |
 | --- | --- | --- |
-| ![Memory](docs/screenshots/7-memory.png) | ![Chats](docs/screenshots/8-chats.png) | ![Chat](docs/screenshots/9-norn-chat.png) |
+| ![Memory](docs/screenshots/7-memory.png) | ![Chats](docs/screenshots/8-chats.png) | ![Chat](docs/screenshots/9-ask-chat.png) |
 
 ## Jobs: `dellingr/`
 
-Dellingr runs the jobs you put on a clock (Parts → Jobs), under the desktop
+Dellingr runs the jobs you put on a clock (System → Jobs), under the desktop
 part's rules:
 
 - **When:** said in words, turned into cron once when you save, and shown
   back before you save. It understands "every weekday at 8", "every monday
   and friday at 9:30", "the 1st of each month at 10", "every 15 minutes", or
   cron itself (`Cron.kt`, ported from `cron.go` with its tests).
-- **What:** *Tell me* sends your text. *Ask Norn* sends Norn's answer.
-  Norn answers on the phone, and it knows the date and today's meetings
+- **What:** *Tell me* sends your text. *Ask Yggdrasil* sends its answer.
+  It answers on the phone, and it knows the date and today's meetings
   when it may read the calendar. The desktop's *goal* jobs need Sindri,
   so there are none.
 - **Delivery:** through Hermóðr with hold, so a job's message waits out
@@ -246,9 +254,9 @@ part's rules:
 
 ## Reactions: `huginn/`
 
-Huginn reacts to what just happened (Parts → Huginn), under the desktop
+Huginn reacts to what just happened (System → Huginn), under the desktop
 part's rules. A rule is a trigger (an event and its filters) and an
-action: *Tell me* (a text with `{fields}` filled in) or *Ask Norn*. It's
+action: *Tell me* (a text with `{fields}` filled in) or *Ask Yggdrasil*. It's
 delivered through Hermóðr, with hold when it should wait out a meeting.
 
 | Event | From | Fields |
@@ -282,7 +290,7 @@ looked at on start and with Veðrfölnir's 15-minute check, so a brief comes
 ## World tree and runestones: `history/`
 
 Ported from the desktop's Tree and Runes pages (`tree.ts`, `futhark.ts`,
-`runestones.ts`). Both live under Parts → Tree and Parts → Runes.
+`runestones.ts`). Both live under System → Tree and System → Runes.
 
 **The tree** grows from what happened:
 
@@ -318,7 +326,7 @@ the memories, healed alerts and reactions you already have.
 Ygg can be the phone's home screen, so pressing Home brings you to Ygg. It's
 optional: nothing changes until you choose it.
 
-- **Turning it on:** Parts → Settings → *Use Ygg as home screen*, or
+- **Turning it on:** Settings → Home screen → *Use Ygg as home screen*, or
   Android's Settings → Apps → Default apps → Home app. Switch back the same
   way.
 - **Apps tab:** your pinned apps on top, then every app A-Z under its
@@ -354,8 +362,8 @@ Release builds keep themselves up to date from this repo's GitHub releases.
   - **When:** only when the screen is off or the phone is idle, and never
     while a model downloads.
   - **Turned off:** Hermóðr tells you once that the update is ready, and
-    you install it under Parts → Settings.
-- **Settings:** Parts → Settings → Updates shows your version and the
+    you install it under Settings → Updates.
+- **Settings:** Settings → Updates shows your version and the
   newest one. It has *Check now*, *Download*, *Install now* and the
   automatic switch.
 - **After an update:** Messages says what you came from, and Dellingr's
@@ -366,7 +374,7 @@ Release builds keep themselves up to date from this repo's GitHub releases.
   - **Repository access:** only `yggdrasil-mobile`
   - **Permissions:** Contents, read-only
 
-  Paste it under Parts → Settings → Updates → GitHub token. It's encrypted
+  Paste it under Settings → Updates → GitHub token. It's encrypted
   with a key in the phone's Android Keystore, and only sent to
   `api.github.com`, never to the storage host downloads redirect to.
   When it expires, Updates says so; make a new one.

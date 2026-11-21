@@ -87,10 +87,10 @@ class ScreenshotTest {
         compose.mainClock.advanceTimeBy(3_000)
         capture("0-boot-check")
         repeat(10) { compose.mainClock.advanceTimeBy(1_000) }
-        shot("1-norn")
-        compose.onNodeWithText("ALERTS").performClick()
+        shot("1-ask")
+        compose.onNodeWithText("INBOX").performClick()
         shot("2-alerts")
-        compose.onNodeWithText("MESSAGES").performClick()
+        compose.onNodeWithText("Messages").performClick()
         shot("3-messages")
         // Robolectric's phone has no battery or disk: give it a believable one.
         val app = ApplicationProvider.getApplicationContext<YggApp>()
@@ -105,7 +105,7 @@ class ScreenshotTest {
             ActivityManager.MemoryInfo().apply { totalMem = 16_000_000_000; availMem = 6_400_000_000 },
         )
         runBlocking { c.vedrfolnir.check() }
-        compose.onNodeWithText("PARTS").performClick()
+        compose.onNodeWithText("SYSTEM").performClick()
         shot("4-phone")
         runBlocking {
             c.dellingr.create("Morning brief", "every weekday at 8", io.github.sebbejohansson.yggdrasil.dellingr.ActionKind.ASK,
@@ -138,7 +138,7 @@ class ScreenshotTest {
             c.nornChat.ask("What should I bring to the release review?", io.github.sebbejohansson.yggdrasil.llm.Privacy.ON_DEVICE_ONLY)
             c.nornChat.answered("The release notes, the crash numbers since the last build, and anything Ada asked to see.")
         }
-        compose.onNodeWithText("NORN").performClick()
+        compose.onNodeWithText("ASK").performClick()
         settle()
         compose.onNodeWithText("Memory").performClick()
         shot("7-memory")
@@ -147,7 +147,11 @@ class ScreenshotTest {
         compose.onNodeWithText("Chats").performClick()
         shot("8-chats")
         compose.onNodeWithText("What should I bring to the release review?").performClick()
-        shot("9-norn-chat")
+        shot("9-ask-chat")
+        compose.onNodeWithText("⚙").performClick()
+        shot("12-settings")
+        compose.onNodeWithText("⚙").performClick()
+        settle()
 
         // A season of history, so the tree has grown and stones are carved.
         runBlocking {
@@ -172,7 +176,7 @@ class ScreenshotTest {
                     io.github.sebbejohansson.yggdrasil.history.HistoryKind.RAVEN, "raven:$i", start + (45 + i * 18) * day, "Kim Svensson asked for a minute"))
             }
         }
-        compose.onNodeWithText("PARTS").performClick()
+        compose.onNodeWithText("SYSTEM").performClick()
         settle()
         compose.onNodeWithText("Tree").performClick()
         shot("10-tree")

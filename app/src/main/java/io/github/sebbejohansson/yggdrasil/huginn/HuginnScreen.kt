@@ -235,7 +235,7 @@ private fun RuleCard(r: Rule, vm: HuginnViewModel) {
         }
         Text(r.on.said(), style = HudText.meta.copy(color = Hud.subtext0))
         Text(
-            (if (r.kind == ActionKind.ASK) "Ask Norn: " else "Tell me: ") + r.text,
+            (if (r.kind == ActionKind.ASK) "Ask Yggdrasil: " else "Tell me: ") + r.text,
             style = HudText.meta, maxLines = 2, overflow = TextOverflow.Ellipsis,
         )
         Text(
@@ -296,9 +296,9 @@ private fun NewRule(vm: HuginnViewModel, error: String?) {
         HudLabel("Then")
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             HudButton("Tell me", { ask = false }, kind = if (!ask) HudButtonKind.PRIMARY else HudButtonKind.GHOST)
-            HudButton("Ask Norn", { ask = true }, kind = if (ask) HudButtonKind.PRIMARY else HudButtonKind.GHOST)
+            HudButton("Ask Yggdrasil", { ask = true }, kind = if (ask) HudButtonKind.PRIMARY else HudButtonKind.GHOST)
         }
-        HudTextField(text, { text = it }, placeholder = if (ask) "What to ask Norn" else "What to tell you", maxLines = 4)
+        HudTextField(text, { text = it }, placeholder = if (ask) "What to ask Yggdrasil" else "What to tell you", maxLines = 4)
         Text("You can use $fields", style = HudText.meta)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Notify me (otherwise only in Messages)", style = HudText.meta, modifier = Modifier.weight(1f))

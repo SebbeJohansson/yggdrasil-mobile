@@ -195,7 +195,7 @@ class DellingrService(
     private suspend fun work(job: Job): String {
         val text = when (job.kind) {
             ActionKind.NOTIFY -> job.text
-            ActionKind.ASK -> asker.ask(job.text).trim().ifEmpty { throw IllegalStateException("Norn gave no answer") }
+            ActionKind.ASK -> asker.ask(job.text).trim().ifEmpty { throw IllegalStateException("Yggdrasil gave no answer") }
         }
         hermodr.send(
             MessageRequest(sender = SOURCE, title = job.name, text = text, priority = Priority.NORMAL, hold = true, push = job.push),

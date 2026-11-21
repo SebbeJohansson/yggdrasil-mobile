@@ -37,7 +37,7 @@ import java.text.DateFormat
 import java.util.Date
 
 /**
- * Parts → Settings: the version you have, the newest release, and the
+ * Settings → Updates: the version you have, the newest release, and the
  * buttons to get it. The work runs in [scope] (the app's), so it carries on
  * when you leave the page.
  */

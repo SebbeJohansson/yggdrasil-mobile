@@ -191,7 +191,7 @@ class AppContainer(private val app: Application) {
             .forEach { r -> history.record(HistoryEvent(HistoryKind.RAVEN, "raven:${r.id}", r.at.toEpochMilli(), r.title)) }
     }
 
-    /** Mímir on the VPS, set up from the Alerts tab. */
+    /** Mímir on the VPS, set up under Settings → Connection. */
     val sagaSettings = SagaSettings(app)
 
     /** Keeps the phone's alerts and the desktop's in step through Mímir. */

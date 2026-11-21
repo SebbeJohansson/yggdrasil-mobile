@@ -42,19 +42,17 @@ import io.github.sebbejohansson.yggdrasil.ui.HudButton
 import io.github.sebbejohansson.yggdrasil.ui.HudButtonKind
 import io.github.sebbejohansson.yggdrasil.ui.HudFonts
 import io.github.sebbejohansson.yggdrasil.ui.HudLabel
-import io.github.sebbejohansson.yggdrasil.ui.HudProgress
 import io.github.sebbejohansson.yggdrasil.ui.HudText
 import io.github.sebbejohansson.yggdrasil.ui.HudTextField
-import io.github.sebbejohansson.yggdrasil.ui.HudToggle
 import io.github.sebbejohansson.yggdrasil.ui.hudPanel
 import io.github.sebbejohansson.yggdrasil.ui.leftStripe
 
 /**
- * Norn, written like my-widget's ask panel: your lines in cyan behind a
- * `›`, Norn's under its name in sand with a line down the left.
+ * The chat, written like my-widget's ask panel: your lines in cyan behind a
+ * `›`, Yggdrasil's under its name in sand with a line down the left.
  */
 @Composable
-fun ChatScreen(vm: ChatViewModel) {
+fun ChatScreen(vm: ChatViewModel, onSettings: () -> Unit = {}) {
     val s by vm.state.collectAsStateWithLifecycle()
     var page by rememberSaveable { mutableStateOf(NornPage.CHAT) }
     when (page) {
@@ -63,7 +61,7 @@ fun ChatScreen(vm: ChatViewModel) {
         NornPage.MEMORY -> MemoryPage(s, vm, onBack = { page = NornPage.CHAT })
         NornPage.CHAT -> Column(Modifier.fillMaxSize()) {
             Header(s, onChats = { vm.refreshChats(); page = NornPage.CHATS }, onMemory = { page = NornPage.MEMORY }, onNew = vm::newChat)
-            SetupPanel(s, onDownload = vm::downloadModel, onRefresh = { vm.refreshProviders() }, onAllowClaude = vm::setAllowClaude, onSendNames = vm::sendNamesFor)
+            SetupNotice(s, onSettings)
             Transcript(s, Modifier.weight(1f))
             s.error?.let {
                 Text(
@@ -86,7 +84,7 @@ private fun Header(s: ChatUiState, onChats: () -> Unit, onMemory: () -> Unit, on
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text("Norn", style = HudText.title)
+            Text("Yggdrasil", style = HudText.title)
             HudLabel(statusLine(s), color = if (s.providers.any { it.status == ProviderStatus.Ready }) Hud.overlay2 else Hud.amber)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -105,66 +103,25 @@ private fun statusLine(s: ChatUiState): String {
         .joinToString(" · ")
 }
 
+/**
+ * Only when the chat can't answer yet, or the model is still coming: one line,
+ * and the way to Settings → Assistant, where the switches live.
+ */
 @Composable
-private fun SetupPanel(
-    s: ChatUiState,
-    onDownload: () -> Unit,
-    onRefresh: () -> Unit,
-    onAllowClaude: (Boolean) -> Unit,
-    onSendNames: (Int) -> Unit,
-) {
+private fun SetupNotice(s: ChatUiState, onSettings: () -> Unit) {
     val local = s.providers.firstOrNull { !it.leavesDevice }
-    val claude = s.providers.firstOrNull { it.leavesDevice }
     val localReady = local?.status == ProviderStatus.Ready
-    // Once the model is in, the panel only holds the Claude switch, so it stays out of the way.
-    if (localReady && s.download == null && claude == null) return
-
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).hudPanel(warn = !localReady).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+    val line = when (val d = s.download) {
+        is DownloadState.Downloading -> if (s.downloadWaiting) "Model download waiting for a network" else "Model downloading · %.0f%%".format(d.fraction * 100)
+        DownloadState.Verifying -> "Checking the model file…"
+        DownloadState.Done, null -> if (localReady || local == null) return else "No model on this phone yet"
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).hudPanel(warn = !localReady).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (!localReady && local != null) {
-            HudLabel("Model", color = Hud.amber)
-            val why = when (val st = local.status) {
-                is ProviderStatus.NeedsSetup -> st.reason
-                is ProviderStatus.Unavailable -> st.reason
-                ProviderStatus.Ready -> ""
-            }
-            Text(why.replaceFirstChar { it.uppercase() }, style = HudText.small)
-        }
-        when (val d = s.download) {
-            is DownloadState.Downloading -> {
-                HudProgress(d.fraction, Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("%.0f%%".format(d.fraction * 100), style = HudText.number.copy(color = Hud.cyan))
-                    Spacer(Modifier.width(8.dp))
-                    HudLabel(
-                        if (s.downloadWaiting) "waiting for a network" else "%.2f / %.2f GB · goes on in the background".format(d.bytes / 1e9, d.total / 1e9),
-                    )
-                }
-            }
-            DownloadState.Verifying -> HudLabel("Checking the file…", color = Hud.cyan)
-            DownloadState.Done, null -> if (!localReady && local?.status is ProviderStatus.NeedsSetup) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HudButton("Download model", onDownload, kind = HudButtonKind.PRIMARY)
-                    HudButton("Check again", onRefresh, kind = HudButtonKind.GHOST)
-                }
-            }
-        }
-        if (claude != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    HudLabel("Claude", color = if (claude.status == ProviderStatus.Ready) Hud.green else Hud.overlay0)
-                    Text(
-                        if (claude.status == ProviderStatus.Ready) "Allowed to answer. Text leaves the phone."
-                        else "Bridge not running. Text would leave the phone.",
-                        style = HudText.meta,
-                    )
-                }
-                HudToggle(s.allowClaude, onAllowClaude)
-            }
-            if (s.allowClaude) NamesLine(s.namesOffUntil, onSendNames)
-        }
+        Text(line, style = HudText.small, modifier = Modifier.weight(1f).padding(end = 8.dp))
+        HudButton("Settings", onSettings, kind = HudButtonKind.SMALL)
     }
 }
 
@@ -177,7 +134,7 @@ private fun Transcript(s: ChatUiState, modifier: Modifier) {
     }
     if (count == 0) {
         Column(modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-            HudLabel("Norn is listening", color = Hud.overlay0)
+            HudLabel("Yggdrasil is listening", color = Hud.overlay0)
             Spacer(Modifier.padding(4.dp))
             Text("Ask about anything. It runs on this phone.", style = HudText.small.copy(color = Hud.overlay0))
         }
@@ -190,9 +147,9 @@ private fun Transcript(s: ChatUiState, modifier: Modifier) {
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
     ) {
         items(s.messages) { m ->
-            if (m.role == LlmRole.USER) YouLine(m.text) else NornLine(m.text, writing = false)
+            if (m.role == LlmRole.USER) YouLine(m.text) else AnswerLine(m.text, writing = false)
         }
-        s.pending?.let { item { NornLine(it, writing = true) } }
+        s.pending?.let { item { AnswerLine(it, writing = true) } }
         if (s.learned.isNotEmpty()) {
             item {
                 HudLabel(
@@ -216,9 +173,9 @@ private fun YouLine(text: String) {
 }
 
 @Composable
-private fun NornLine(text: String, writing: Boolean) {
+private fun AnswerLine(text: String, writing: Boolean) {
     Column(Modifier.fillMaxWidth()) {
-        HudLabel("Norn", color = Hud.yellow, style = HudText.label.copy(fontSize = 10.sp))
+        HudLabel("Yggdrasil", color = Hud.yellow, style = HudText.label.copy(fontSize = 10.sp))
         Spacer(Modifier.padding(top = 3.dp))
         Row(Modifier.leftStripe(Hud.surface1).padding(start = 10.dp)) {
             if (text.isEmpty() && writing) {
@@ -250,29 +207,11 @@ private fun Composer(busy: Boolean, onSend: (String) -> Unit, onStop: () -> Unit
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        HudTextField(text, { text = it }, placeholder = "Ask Norn", modifier = Modifier.weight(1f), leading = "›")
+        HudTextField(text, { text = it }, placeholder = "Ask Yggdrasil", modifier = Modifier.weight(1f), leading = "›")
         if (busy) {
             HudButton("Stop", onStop, kind = HudButtonKind.GHOST, accent = Hud.amber)
         } else {
             HudButton("Send", { onSend(text); text = "" }, kind = HudButtonKind.PRIMARY, enabled = text.isNotBlank())
         }
-    }
-}
-
-private val untilFmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm").withZone(java.time.ZoneId.systemDefault())
-
-/** Whether names are swapped before Claude sees them, and the desktop's way round it for a while. */
-@Composable
-private fun NamesLine(offUntil: Long, onSendNames: (Int) -> Unit) {
-    val off = offUntil > System.currentTimeMillis()
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            if (off) "Names go to Claude as they are until ${untilFmt.format(java.time.Instant.ofEpochMilli(offUntil))}."
-            else "Names are swapped for placeholders on this phone first. No local model, nothing sent.",
-            style = HudText.meta.copy(color = if (off) Hud.amber else Hud.overlay0),
-            modifier = Modifier.weight(1f).padding(end = 8.dp),
-        )
-        if (off) HudButton("Swap again", { onSendNames(0) }, kind = HudButtonKind.SMALL)
-        else HudButton("Send names 2 h", { onSendNames(2) }, kind = HudButtonKind.SMALL)
     }
 }

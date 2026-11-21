@@ -120,7 +120,7 @@ fun CodeScreen(vm: CodeViewModel, modifier: Modifier = Modifier) {
                     Text("Sindri", style = HudText.title)
                     HudLabel(
                         when {
-                            !s.sync.configured -> "Mímir is not set up (Alerts tab)"
+                            !s.sync.configured -> "Mímir is not set up (Settings → Connection)"
                             s.devices.isEmpty() -> "no machine has sent its sessions"
                             else -> "${s.devices.sumOf { it.sessions.size }} sessions on ${s.devices.size} machines"
                         },

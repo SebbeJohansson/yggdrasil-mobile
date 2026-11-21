@@ -60,7 +60,7 @@ class NornAsker(
     }
 
     private companion object {
-        const val SYSTEM = """You are Norn, a personal assistant on the user's phone. You are answering on a schedule, so
+        const val SYSTEM = """You are Yggdrasil, a personal assistant on the user's phone. You are answering on a schedule, so
 the user isn't there to ask back: answer in a few short lines, plainly, and say so when you don't know."""
         val DAY: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm")
         val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")

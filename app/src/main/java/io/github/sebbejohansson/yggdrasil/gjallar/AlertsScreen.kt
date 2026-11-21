@@ -105,7 +105,7 @@ class AlertsViewModel(
 
     // To see the whole path on the phone: Gjallar → Hermóðr → notification.
     fun raiseTest(severity: Severity) = viewModelScope.launch {
-        gjallar.raise("test", "test-${severity.name.lowercase()}", severity, "Test ${severity.name.lowercase()} alert", "Raised from the Alerts tab")
+        gjallar.raise("test", "test-${severity.name.lowercase()}", severity, "Test ${severity.name.lowercase()} alert", "Raised from Settings")
     }
     fun resolveTests() = viewModelScope.launch { Severity.entries.forEach { gjallar.resolve("test", "test-${it.name.lowercase()}") } }
 
@@ -190,16 +190,25 @@ fun AlertsScreen(vm: AlertsViewModel, modifier: Modifier = Modifier) {
                 }
             }
         }
-        item { HudSection("Mímir", Modifier.padding(top = 12.dp)) }
-        item { MimirPanel(s.sync, vm) }
-        item { HudSection("Test", Modifier.padding(top = 12.dp)) }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                HudButton("Warning", { vm.raiseTest(Severity.WARNING) }, kind = HudButtonKind.SMALL)
-                HudButton("Critical", { vm.raiseTest(Severity.CRITICAL) }, kind = HudButtonKind.SMALL)
-                HudButton("Resolve", vm::resolveTests, kind = HudButtonKind.SMALL)
+        if (s.sync.lastError != null) {
+            item {
+                Text(
+                    "Mímir sync failing: ${s.sync.lastError}. Fix it in Settings → Connection.",
+                    style = HudText.meta.copy(color = Hud.amber),
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
         }
+    }
+}
+
+/** Settings → Developer: raise and clear test alerts. */
+@Composable
+fun AlertTests(vm: AlertsViewModel) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        HudButton("Warning", { vm.raiseTest(Severity.WARNING) }, kind = HudButtonKind.SMALL)
+        HudButton("Critical", { vm.raiseTest(Severity.CRITICAL) }, kind = HudButtonKind.SMALL)
+        HudButton("Resolve", vm::resolveTests, kind = HudButtonKind.SMALL)
     }
 }
 
@@ -266,9 +275,11 @@ private fun MirrorItem(m: Mirror, vm: AlertsViewModel) {
     }
 }
 
-/** Where Mímir is, and how syncing goes. */
+/** Settings → Connection: where Mímir is, and how syncing goes. */
 @Composable
-private fun MimirPanel(sync: SyncStatus, vm: AlertsViewModel) {
+fun MimirSettings(vm: AlertsViewModel) {
+    val s by vm.state.collectAsStateWithLifecycle()
+    val sync = s.sync
     val saved = remember { vm.form() }
     var url by remember { mutableStateOf(saved.url) }
     var token by remember { mutableStateOf(saved.token) }

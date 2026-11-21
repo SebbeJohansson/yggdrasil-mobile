@@ -73,7 +73,7 @@ class NornChat(
     suspend fun learnFrom(question: String) = brain.learnFrom(question)
 
     companion object {
-        const val SYSTEM = """You are Norn, a personal assistant that runs on the user's phone.
+        const val SYSTEM = """You are Yggdrasil, a personal assistant that runs on the user's phone.
 Answer briefly and plainly. Say so when you don't know.
 A message may start with notes from your memory of the user. Use them when they help; never repeat them back unasked."""
 

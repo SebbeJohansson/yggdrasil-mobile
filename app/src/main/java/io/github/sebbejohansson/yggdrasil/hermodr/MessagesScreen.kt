@@ -132,7 +132,7 @@ class MessagesViewModel(
             MessageRequest(
                 sender = "test",
                 title = "Test ${priority.name.lowercase()} message" + if (hold) " (hold)" else "",
-                text = if (hold) "Waits while you're in a meeting" else "Sent from the Messages tab",
+                text = if (hold) "Waits while you're in a meeting" else "Sent from Settings",
                 priority = priority,
                 hold = hold,
             ),
@@ -155,7 +155,7 @@ private fun Priority.color(): Color = when (this) {
     Priority.URGENT -> Hud.red
 }
 
-/** Hermóðr: every message for you, newest first, with quiet hours on top. */
+/** Hermóðr: every message for you, newest first. Its switches are in Settings → Notifications. */
 @Composable
 fun MessagesScreen(vm: MessagesViewModel, modifier: Modifier = Modifier) {
     val s by vm.state.collectAsStateWithLifecycle()
@@ -173,6 +173,7 @@ fun MessagesScreen(vm: MessagesViewModel, modifier: Modifier = Modifier) {
                     listOfNotNull(
                         if (unseen > 0) "$unseen unread" else "all read",
                         if (held > 0) "$held held" else null,
+                        s.busyUntil?.let { "in a meeting until ${clockFmt.format(it)}" },
                         "last 7 days",
                     ).joinToString(" · "),
                     color = if (unseen > 0) Hud.amber else Hud.overlay2,
@@ -187,22 +188,6 @@ fun MessagesScreen(vm: MessagesViewModel, modifier: Modifier = Modifier) {
                 }
             }
         }
-        item {
-            Row(
-                Modifier.fillMaxWidth().hudPanel().padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    HudLabel("Quiet hours", color = Hud.group)
-                    Text(
-                        "${s.quietHours.start}–${s.quietHours.end} · only urgent goes out",
-                        style = HudText.meta,
-                    )
-                }
-                HudToggle(s.quietHours.enabled, vm::setQuietHours)
-            }
-        }
-        item { MeetingsPanel(s, onAllowed = vm::recheckPermission) }
         s.dnd?.let { d -> item { DndPanel(d) } }
         item { HudSection("Messages", Modifier.padding(top = 8.dp)) }
         if (s.messages.isEmpty()) {
@@ -215,14 +200,38 @@ fun MessagesScreen(vm: MessagesViewModel, modifier: Modifier = Modifier) {
             }
         }
         items(s.messages, key = { it.id }) { m -> MessageItem(m, onSeen = { vm.markSeen(m) }) }
-        item { HudSection("Test", Modifier.padding(top = 12.dp)) }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                HudButton("Normal", { vm.sendTest(Priority.NORMAL) }, kind = HudButtonKind.SMALL)
-                HudButton("Urgent", { vm.sendTest(Priority.URGENT) }, kind = HudButtonKind.SMALL)
-                HudButton("Hold", { vm.sendTest(Priority.NORMAL, hold = true) }, kind = HudButtonKind.SMALL)
+    }
+}
+
+/** Settings → Notifications: quiet hours, and holding messages through meetings. */
+@Composable
+fun MessageSettings(vm: MessagesViewModel) {
+    val s by vm.state.collectAsStateWithLifecycle()
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            Modifier.fillMaxWidth().hudPanel().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                HudLabel("Quiet hours", color = Hud.group)
+                Text(
+                    "${s.quietHours.start}–${s.quietHours.end} · only urgent goes out",
+                    style = HudText.meta,
+                )
             }
+            HudToggle(s.quietHours.enabled, vm::setQuietHours)
         }
+        MeetingsPanel(s, onAllowed = vm::recheckPermission)
+    }
+}
+
+/** Settings → Developer: send test messages. */
+@Composable
+fun MessageTests(vm: MessagesViewModel) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        HudButton("Normal", { vm.sendTest(Priority.NORMAL) }, kind = HudButtonKind.SMALL)
+        HudButton("Urgent", { vm.sendTest(Priority.URGENT) }, kind = HudButtonKind.SMALL)
+        HudButton("Hold", { vm.sendTest(Priority.NORMAL, hold = true) }, kind = HudButtonKind.SMALL)
     }
 }
 
