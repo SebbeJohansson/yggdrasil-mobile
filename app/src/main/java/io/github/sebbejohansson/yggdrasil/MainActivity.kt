@@ -110,6 +110,8 @@ import io.github.sebbejohansson.yggdrasil.ui.YggTheme
 import io.github.sebbejohansson.yggdrasil.dellingr.DellingrService
 import io.github.sebbejohansson.yggdrasil.huginn.HuginnScreen
 import io.github.sebbejohansson.yggdrasil.huginn.HuginnViewModel
+import io.github.sebbejohansson.yggdrasil.saga.CodeScreen
+import io.github.sebbejohansson.yggdrasil.saga.CodeViewModel
 import io.github.sebbejohansson.yggdrasil.dellingr.JobsScreen
 import io.github.sebbejohansson.yggdrasil.dellingr.JobsViewModel
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.PhoneScreen
@@ -203,6 +205,7 @@ private fun Root(
     val jobs: JobsViewModel = viewModel(factory = JobsViewModel.factory(container))
     val huginnVm: HuginnViewModel = viewModel(factory = HuginnViewModel.factory(container, LocalContext.current))
     val historyVm: HistoryViewModel = viewModel(factory = HistoryViewModel.factory(container))
+    val codeVm: CodeViewModel = viewModel(factory = CodeViewModel.factory(container))
     val appsVm: AppsViewModel? = if (home) viewModel(factory = AppsViewModel.factory(container)) else null
     val presses by homePresses.collectAsStateWithLifecycle()
     // Home goes to the apps, whatever page you were on.
@@ -303,7 +306,7 @@ private fun Root(
                 when (tab) {
                     MainActivity.TAB_ALERTS -> AlertsScreen(alerts)
                     MainActivity.TAB_MESSAGES -> MessagesScreen(messages)
-                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs, huginnVm, historyVm, container.bootSettings, onRunBoot = { boot = BootKind.FULL }) {
+                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs, huginnVm, historyVm, codeVm, container.bootSettings, onRunBoot = { boot = BootKind.FULL }) {
                         HomeScreenPanel(
                             held = homeHeld,
                             onUse = {
@@ -465,6 +468,7 @@ private fun PartsScreen(
     jobs: JobsViewModel,
     huginn: HuginnViewModel,
     history: HistoryViewModel,
+    code: CodeViewModel,
     bootSettings: BootSettings,
     onRunBoot: () -> Unit,
     settingsMore: @Composable () -> Unit = {},
@@ -475,7 +479,7 @@ private fun PartsScreen(
             Modifier.fillMaxWidth().padding(top = 8.dp).bottomLine(Color(0xFF17323F)).horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            listOf("Phone", "Jobs", "Huginn", "Tree", "Runes", "Settings").forEachIndexed { i, label ->
+            listOf("Phone", "Code", "Jobs", "Huginn", "Tree", "Runes", "Settings").forEachIndexed { i, label ->
                 val on = page == i
                 Text(
                     label,
@@ -490,10 +494,11 @@ private fun PartsScreen(
         Box(Modifier.weight(1f)) {
             when (page) {
                 0 -> PhoneScreen(phone)
-                1 -> JobsScreen(jobs)
-                2 -> HuginnScreen(huginn)
-                3 -> TreeScreen(history)
-                4 -> RunesScreen(history)
+                1 -> CodeScreen(code)
+                2 -> JobsScreen(jobs)
+                3 -> HuginnScreen(huginn)
+                4 -> TreeScreen(history)
+                5 -> RunesScreen(history)
                 else -> BootSettingsScreen(bootSettings, onRunBoot, settingsMore)
             }
         }

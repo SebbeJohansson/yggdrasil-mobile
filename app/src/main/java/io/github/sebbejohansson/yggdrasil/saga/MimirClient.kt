@@ -7,8 +7,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/** One event read back from Mímir. [body] is JSON text. */
-data class MimirEvent(val pos: Long, val device: String, val seq: Long, val kind: String, val body: String)
+/** One event read back from Mímir. [body] is JSON text; [at] is when the sending device made it, epoch millis. */
+data class MimirEvent(val pos: Long, val device: String, val seq: Long, val kind: String, val body: String, val at: Long = 0)
 
 /** One event waiting to go to Mímir. [body] is JSON text. */
 data class Outgoing(val seq: Long, val at: Long, val kind: String, val body: String)
@@ -96,6 +96,7 @@ class HttpMimirClient(baseUrl: String, private val token: String) : MimirClient 
                 seq = e.getLong("seq"),
                 kind = e.getString("kind"),
                 body = if (body is String) JSONObject.quote(body) else body.toString(),
+                at = e.optLong("at"),
             )
         }
         return Page.Events(events, o.getLong("last"), o.getBoolean("more"))

@@ -151,6 +151,25 @@ HTTPS only: Android refuses plain HTTP) and this phone's token, both printed
 by Mímir's `deploy/install.sh`. Keep the name `phone` unless you gave the token
 another one. The phone needs Tailscale on.
 
+**Coding sessions (Parts → Code).** Each machine that runs Sindri and Sága
+(the desktop, another laptop) sends its coding sessions through Mímir
+(`sindri.sessions`). The Code page lists them per machine with when each
+was last heard from, Claude's last words and any permission prompt or
+dialog waiting. From there:
+
+- **Send** types a prompt into a session in a herdr pane on that machine,
+  and a dialog's choices answer it.
+- **Resume there** starts a session outside herdr again in a herdr pane.
+- **Open in Claude** opens a session with Remote Control on, or a cloud
+  session, in the Claude app.
+- **Cloud sessions** the machine's Sindri started can be followed up and
+  brought home there, and a new one started in one of its projects.
+
+Each of these is a request (`sindri.session.*`, `sindri.cloud.*`) that only
+that machine carries out, when it is on, within 30 minutes, and only if its
+`SAGA_DRIVE_FROM` names this phone; the page says "Look only" otherwise.
+Its answer shows under the session.
+
 ## The phone: `vedrfolnir/`
 
 Veðrfölnir watches the phone as the desktop part watches the machine. One

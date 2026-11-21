@@ -34,6 +34,15 @@ interface SagaStore {
     fun putMirror(m: Mirror)
     fun deleteMirrorsResolvedBefore(t: Instant)
 
+    /** Keeps a machine's sessions, unless what is kept is newer. [body] is the event as it came. */
+    fun putDeviceSessions(d: DeviceSessions, body: String)
+    fun deviceSessions(): List<DeviceSessions>
+
+    /** What you asked of other machines' sessions, newest first, and how each went. */
+    fun putAsked(a: Asked)
+    fun asked(since: Instant): List<Asked>
+    fun answerAsked(id: String, state: AskState, error: String?, url: String?)
+
     /** Runs [block] all or nothing. */
     fun <T> transaction(block: () -> T): T
 }
@@ -70,6 +79,20 @@ class InMemorySagaStore : SagaStore {
     override fun putMirror(m: Mirror) { mirrorRows[Triple(m.device, m.alert.source, m.alert.key)] = m }
     override fun deleteMirrorsResolvedBefore(t: Instant) {
         mirrorRows.values.removeAll { it.alert.state == AlertState.RESOLVED && it.receivedAt.isBefore(t) }
+    }
+
+    private val devices = linkedMapOf<String, DeviceSessions>()
+    override fun putDeviceSessions(d: DeviceSessions, body: String) {
+        val kept = devices[d.device]
+        if (kept == null || !kept.heardAt.isAfter(d.heardAt)) devices[d.device] = d
+    }
+    override fun deviceSessions() = devices.values.sortedBy { it.device }
+
+    private val askedRows = linkedMapOf<String, Asked>()
+    override fun putAsked(a: Asked) { askedRows[a.ask.id] = a }
+    override fun asked(since: Instant) = askedRows.values.filter { !it.at.isBefore(since) }.sortedByDescending { it.at }
+    override fun answerAsked(id: String, state: AskState, error: String?, url: String?) {
+        askedRows[id]?.let { askedRows[id] = it.copy(state = state, error = error, url = url) }
     }
 
     override fun <T> transaction(block: () -> T): T = block()

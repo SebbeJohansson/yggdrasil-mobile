@@ -37,13 +37,17 @@ import io.github.sebbejohansson.yggdrasil.hermodr.MessageState
 import io.github.sebbejohansson.yggdrasil.hermodr.MessageStore
 import io.github.sebbejohansson.yggdrasil.hermodr.Priority
 import io.github.sebbejohansson.yggdrasil.saga.AlertSnapshot
+import io.github.sebbejohansson.yggdrasil.saga.AskState
+import io.github.sebbejohansson.yggdrasil.saga.Asked
+import io.github.sebbejohansson.yggdrasil.saga.DeviceSessions
 import io.github.sebbejohansson.yggdrasil.saga.Mirror
 import io.github.sebbejohansson.yggdrasil.saga.Outgoing
 import io.github.sebbejohansson.yggdrasil.saga.SagaStore
+import io.github.sebbejohansson.yggdrasil.saga.SessionAsk
 import java.time.Instant
 
 /** One SQLite file for every part's state: `ygg.db`. Times are epoch millis. */
-class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 6) {
+class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 7) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -72,6 +76,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         createNorn(db)
         createHistory(db)
         createSaga(db)
+        createSagaSessions(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -80,6 +85,17 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         if (oldVersion < 3) createHuginn(db)
         if (oldVersion < 4) createNorn(db)
         if (oldVersion < 6) createSaga(db)
+        if (oldVersion < 7) createSagaSessions(db)
+    }
+
+    // Version 7: other machines' coding sessions, and what you asked of them.
+    private fun createSagaSessions(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS saga_device_sessions (device TEXT PRIMARY KEY, at INTEGER NOT NULL, body TEXT NOT NULL)")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS saga_asked (
+                id TEXT PRIMARY KEY, kind TEXT NOT NULL, body TEXT NOT NULL, at INTEGER NOT NULL,
+                state TEXT NOT NULL, error TEXT, url TEXT)""",
+        )
     }
 
     // Version 6: Sága's outbox, marks, what it sent, and the other devices' alerts.
@@ -555,6 +571,51 @@ private class SqliteSagaStore(private val h: YggDatabase) : SagaStore {
 
     override fun deleteMirrorsResolvedBefore(t: Instant) {
         db.delete("saga_mirrors", "state = ? AND received_at < ?", arrayOf(AlertState.RESOLVED.name, "${t.toEpochMilli()}"))
+    }
+
+    override fun putDeviceSessions(d: DeviceSessions, body: String) {
+        val kept = db.query("saga_device_sessions", arrayOf("at"), "device = ?", arrayOf(d.device), null, null, null)
+            .use { if (it.moveToFirst()) it.getLong(0) else null }
+        if (kept != null && kept > d.heardAt.toEpochMilli()) return
+        db.insertWithOnConflict(
+            "saga_device_sessions", null,
+            ContentValues().apply { put("device", d.device); putInstant("at", d.heardAt); put("body", body) },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
+    override fun deviceSessions() = db.query("saga_device_sessions", null, null, null, null, null, "device ASC").all {
+        DeviceSessions.parse(str("device"), str("body"), long("at"))
+    }.filterNotNull()
+
+    override fun putAsked(a: Asked) {
+        db.insertWithOnConflict(
+            "saga_asked", null,
+            ContentValues().apply {
+                put("id", a.ask.id); put("kind", a.ask.kind); put("body", a.ask.toJson().toString())
+                putInstant("at", a.at); put("state", a.state.name); put("error", a.error); put("url", a.url)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
+    override fun asked(since: Instant) =
+        db.query("saga_asked", null, "at >= ?", arrayOf("${since.toEpochMilli()}"), null, null, "at DESC", "100").all {
+            SessionAsk.parse(str("kind"), str("body"))?.let { ask ->
+                Asked(
+                    ask, instant("at"),
+                    AskState.entries.firstOrNull { it.name == str("state") } ?: AskState.WAITING,
+                    strOrNull("error"), strOrNull("url"),
+                )
+            }
+        }.filterNotNull()
+
+    override fun answerAsked(id: String, state: AskState, error: String?, url: String?) {
+        db.update(
+            "saga_asked",
+            ContentValues().apply { put("state", state.name); put("error", error); put("url", url) },
+            "id = ?", arrayOf(id),
+        )
     }
 
     override fun <T> transaction(block: () -> T): T {

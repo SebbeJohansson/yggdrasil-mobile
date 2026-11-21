@@ -228,4 +228,53 @@ class SagaServiceTest {
         assertNull(AlertSnapshot.parse("""{"key":"no source"}"""))
         assertEquals("seen again only", a.fingerprint, a.copy(lastSeenAt = Instant.ofEpochMilli(9000)).fingerprint)
     }
+
+    private fun laptopSessions(at: Long = clock.instant().toEpochMilli()) = JSONObject("""
+        {"at": $at, "herdr": true, "driveFrom": ["phone"],
+         "sessions": [
+           {"id": "s1", "kind": "claude", "name": "fix login", "directory": "/home/me/projects/app", "lastActivity": $at,
+            "phase": "turn-ended", "lastText": "Done.", "pane": "w1:p1", "bridgeSessionId": "session_RC"},
+           {"id": "s2", "kind": "claude", "name": "api", "lastActivity": $at, "phase": "busy", "permission": "Bash"}
+         ],
+         "cloud": [{"id": "session_C", "at": 1, "cwd": "/home/me/projects/app", "task": "Docs", "url": "https://claude.ai/code/session_C"}],
+         "projects": [{"name": "app", "path": "/home/me/projects/app"}]}
+    """.trimIndent())
+
+    @Test fun listsAnotherMachinesSessions() = runTest {
+        mimir.fromDesktop(SessionKinds.SESSIONS, laptopSessions())
+        syncOk()
+        val d = saga.devices().single()
+        assertEquals("desktop", d.device)
+        assertTrue(d.drivableBy("phone"))
+        assertEquals(listOf("s1", "s2"), d.sessions.map { it.id })
+        assertEquals("https://claude.ai/code/session_RC", d.sessions[0].claudeLink)
+        assertTrue(d.sessions[1].waiting)
+        assertEquals("Docs", d.cloud.single().task)
+
+        // An older list never replaces a newer one.
+        mimir.fromDesktop(SessionKinds.SESSIONS, laptopSessions(at = 1).put("sessions", org.json.JSONArray()))
+        syncOk()
+        assertEquals(2, saga.devices().single().sessions.size)
+    }
+
+    @Test fun whatYouAskGoesToTheMachineAndItsAnswerComesBack() = runTest {
+        mimir.fromDesktop(SessionKinds.SESSIONS, laptopSessions())
+        syncOk()
+        saga.askSession(SessionAsk(id = "a1", kind = SessionKinds.PROMPT, origin = "desktop", session = "s1", text = "add a test"))
+        syncOk()
+        val sent = mimir.sent(SessionKinds.PROMPT).single()
+        assertEquals("desktop", sent.getString("origin"))
+        assertEquals("add a test", sent.getString("text"))
+        assertEquals(AskState.WAITING, saga.asked().single().state)
+
+        mimir.fromDesktop(SessionKinds.DONE, JSONObject().put("id", "a1").put("to", "laptop").put("ok", true))
+        syncOk()
+        assertEquals("an answer to another device is not ours", AskState.WAITING, saga.asked().single().state)
+
+        mimir.fromDesktop(SessionKinds.DONE, JSONObject().put("id", "a1").put("to", "phone").put("ok", false).put("error", "gone"))
+        syncOk()
+        val asked = saga.asked().single()
+        assertEquals(AskState.FAILED, asked.state)
+        assertEquals("Sent \"add a test\" · not done: gone", asked.line)
+    }
 }

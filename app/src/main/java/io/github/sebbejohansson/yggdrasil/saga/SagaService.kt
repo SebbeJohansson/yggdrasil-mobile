@@ -49,6 +49,9 @@ class SagaService(
 ) {
     /** Bumped when the mirrors change, so the Alerts tab reloads. */
     val changes = Changes()
+
+    /** Bumped when another machine's sessions, or an answer to what you asked, come in. */
+    val sessionChanges = Changes()
     private val lock = Mutex()
     private val _status = MutableStateFlow(SyncStatus())
     val status: StateFlow<SyncStatus> = _status.asStateFlow()
@@ -114,6 +117,7 @@ class SagaService(
         val me = device()
         val newest = linkedMapOf<Triple<String, String, String>, Mirror>()
         val now = clock.instant()
+        var sessionsChanged = false
         for (e in events) {
             when (e.kind) {
                 Kinds.ALERT -> {
@@ -125,8 +129,21 @@ class SagaService(
                     val r = AlertRequest.parse(e.kind, e.body) ?: continue
                     if (r.origin == me) handle(r)
                 }
+                SessionKinds.SESSIONS -> {
+                    if (e.device == me) continue
+                    val d = DeviceSessions.parse(e.device, e.body, e.at) ?: continue
+                    store.putDeviceSessions(d, e.body)
+                    sessionsChanged = true
+                }
+                SessionKinds.DONE -> {
+                    val done = RequestDone.parse(e.body) ?: continue
+                    if (done.to != me) continue
+                    store.answerAsked(done.id, if (done.ok) AskState.DONE else AskState.FAILED, done.error, done.url)
+                    sessionsChanged = true
+                }
             }
         }
+        if (sessionsChanged) sessionChanges.bump()
         if (newest.isNotEmpty()) {
             store.transaction { newest.values.forEach(store::putMirror) }
             changes.bump()
@@ -203,6 +220,26 @@ class SagaService(
             }
         }
         changes.bump()
+    }
+
+    /** Every other machine's sessions as each last sent them. */
+    suspend fun devices(): List<DeviceSessions> = withContext(io) { store.deviceSessions() }
+
+    /** What you asked from this phone in the last day, newest first. */
+    suspend fun asked(): List<Asked> = withContext(io) { store.asked(clock.instant().minus(Duration.ofDays(1))) }
+
+    /**
+     * Asks a thing of another machine's session: it goes with the next sync,
+     * and [ask]'s origin carries it out when it is on and trusts this phone.
+     */
+    suspend fun askSession(ask: SessionAsk) = withContext(io) {
+        lock.withLock {
+            store.transaction {
+                store.enqueue(clock.instant(), ask.kind, ask.toJson().toString())
+                store.putAsked(Asked(ask, clock.instant()))
+            }
+        }
+        sessionChanges.bump()
     }
 
     /** Forgets resolved mirrors after [keep]. */
