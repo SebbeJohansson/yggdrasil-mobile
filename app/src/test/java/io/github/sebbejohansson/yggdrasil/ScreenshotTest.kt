@@ -148,5 +148,35 @@ class ScreenshotTest {
         shot("8-chats")
         compose.onNodeWithText("What should I bring to the release review?").performClick()
         shot("9-norn-chat")
+
+        // A season of history, so the tree has grown and stones are carved.
+        runBlocking {
+            val day = 86_400_000L
+            val start = System.currentTimeMillis() - 120 * day
+            val facts = listOf("Works on the mobile app", "Manager is Ada Lind", "Likes short answers", "Runs on Sundays",
+                "Team ships every second Thursday", "Takes the 8:12 train", "Prefers Swedish fika at 3", "Reviews PRs mornings")
+            for (i in 0 until 40) {
+                c.history.record(io.github.sebbejohansson.yggdrasil.history.HistoryEvent(
+                    io.github.sebbejohansson.yggdrasil.history.HistoryKind.BRANCH, "seed:$i", start + (i * 2.9 * day).toLong(), facts[i % facts.size]))
+            }
+            for (i in 0 until 5) {
+                c.history.record(io.github.sebbejohansson.yggdrasil.history.HistoryEvent(
+                    io.github.sebbejohansson.yggdrasil.history.HistoryKind.BRANCH, "busy:$i", start + 30 * day + i * 3_600_000L, facts[i]))
+            }
+            c.history.record(io.github.sebbejohansson.yggdrasil.history.HistoryEvent(
+                io.github.sebbejohansson.yggdrasil.history.HistoryKind.SCAR, "healed:storm", start + 60 * day, "Battery below 15% healed", start + 59 * day))
+            c.history.record(io.github.sebbejohansson.yggdrasil.history.HistoryEvent(
+                io.github.sebbejohansson.yggdrasil.history.HistoryKind.SCAR, "healed:disk", start + 90 * day, "Storage almost full healed", start + 90 * day - 3_600_000L))
+            for (i in 0 until 4) {
+                c.history.record(io.github.sebbejohansson.yggdrasil.history.HistoryEvent(
+                    io.github.sebbejohansson.yggdrasil.history.HistoryKind.RAVEN, "raven:$i", start + (45 + i * 18) * day, "Kim Svensson asked for a minute"))
+            }
+        }
+        compose.onNodeWithText("PARTS").performClick()
+        settle()
+        compose.onNodeWithText("Tree").performClick()
+        shot("10-tree")
+        compose.onNodeWithText("Runes").performClick()
+        shot("11-runes")
     }
 }

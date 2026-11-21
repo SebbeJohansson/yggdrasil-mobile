@@ -232,6 +232,40 @@ is kept, and the app's own notifications are never read. The calendar is
 looked at on start and with Veðrfölnir's 15-minute check, so a brief comes
 15 to 30 minutes before the meeting.
 
+## World tree and runestones: `history/`
+
+Ported from the desktop's Tree and Runes pages (`tree.ts`, `futhark.ts`,
+`runestones.ts`). Both live under Parts → Tree and Parts → Runes.
+
+**The tree** grows from what happened:
+
+- **Branch:** a fact Norn came to remember.
+- **Scar:** an alert that healed.
+- **Raven:** a time Huginn told you something.
+- **Leaves:** follow the seasons of your weeks. A busy week is summer, a
+  quiet one turns to autumn.
+- **Time:** drag the slider back through it, or tap *Grow* to watch it
+  grow from the first day. Tap a branch, scar or raven to see what it was.
+
+**Runestones** are carved for moments worth keeping:
+
+- the first memory, then 100 and 1000
+- a busy day
+- the first raven, then 100
+- a long storm that passed
+- a quiet week
+
+Each stone says it in English, written in Elder Futhark and drawn stroke
+by stroke. Tap a stone for the plain words and the day.
+
+The history is an append-only `history` table, so a forgotten memory or
+a pruned alert stays in the tree. On first start the app fills it from
+the memories, healed alerts and reactions you already have.
+
+| Tree | Runes |
+| --- | --- |
+| ![Tree](docs/screenshots/10-tree.png) | ![Runes](docs/screenshots/11-runes.png) |
+
 ## Models: `llm/`
 
 Parts never pick a model. They make an `LlmRequest` with:

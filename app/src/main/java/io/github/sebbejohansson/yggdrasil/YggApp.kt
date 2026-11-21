@@ -6,7 +6,12 @@ import io.github.sebbejohansson.yggdrasil.boot.BootSettings
 import io.github.sebbejohansson.yggdrasil.core.YggDatabase
 import io.github.sebbejohansson.yggdrasil.dellingr.AndroidJobAlarm
 import io.github.sebbejohansson.yggdrasil.dellingr.DellingrService
+import io.github.sebbejohansson.yggdrasil.gjallar.Alert
+import io.github.sebbejohansson.yggdrasil.gjallar.AlertChange
 import io.github.sebbejohansson.yggdrasil.gjallar.GjallarService
+import io.github.sebbejohansson.yggdrasil.history.HistoryEvent
+import io.github.sebbejohansson.yggdrasil.history.HistoryKind
+import io.github.sebbejohansson.yggdrasil.history.HistoryLog
 import io.github.sebbejohansson.yggdrasil.huginn.HuginnRuntime
 import io.github.sebbejohansson.yggdrasil.huginn.HuginnService
 import io.github.sebbejohansson.yggdrasil.huginn.PeopleSettings
@@ -119,7 +124,11 @@ class AppContainer(private val app: Application) {
     // Norn's memory: facts are picked out on the side, at temperature 0, on the phone only.
     val embedder = LiteRtEmbedder(ModelCatalog.EMBEDDING_GEMMA_2, modelStore, app.cacheDir)
     val nornSettings = NornSettings(app)
-    val brain = Brain(db.memories, embedder, FactModel { messages ->
+    /** The world tree's history, kept for good. */
+    val history = HistoryLog(db.history)
+    val brain = Brain(db.memories, embedder, onRemembered = { m ->
+        history.record(HistoryEvent(HistoryKind.BRANCH, "memory:${m.id}", m.createdAt.toEpochMilli(), m.text))
+    }, facts = FactModel { messages ->
         llm.complete(
             LlmRequest(
                 messages = messages, system = Facts.system, tier = LlmTier.SMALL, privacy = Privacy.ON_DEVICE_ONLY,
@@ -131,12 +140,33 @@ class AppContainer(private val app: Application) {
     private val nornAsker = NornAsker(llm, calendar, brain)
     val dellingr = DellingrService(db.jobs, nornAsker, hermodr, gjallar, jobAlarm)
     val people = PeopleSettings(app)
-    val huginn = HuginnService(db.huginn, nornAsker, hermodr)
+    val huginn = HuginnService(db.huginn, nornAsker, hermodr, onDelivered = { r ->
+        history.record(HistoryEvent(HistoryKind.RAVEN, "raven:${r.id}", r.at.toEpochMilli(), r.title))
+    })
     val huginnRuntime = HuginnRuntime(huginn, calendar)
+
+    private fun healed(a: Alert): HistoryEvent {
+        val at = (a.resolvedAt ?: a.lastSeenAt).toEpochMilli()
+        return HistoryEvent(HistoryKind.SCAR, "healed:${a.id}:$at", at, "${a.title} healed", a.openedAt.toEpochMilli())
+    }
+
+    /** What happened before the tree kept history: what's still kept elsewhere grows in too, once. */
+    private suspend fun backfillHistory() {
+        brain.memories().forEach { m -> history.record(HistoryEvent(HistoryKind.BRANCH, "memory:${m.id}", m.createdAt.toEpochMilli(), m.text)) }
+        gjallar.resolved(500).forEach { history.record(healed(it)) }
+        huginn.reactions(500).filter { it.state == io.github.sebbejohansson.yggdrasil.huginn.ReactionState.DELIVERED }
+            .forEach { r -> history.record(HistoryEvent(HistoryKind.RAVEN, "raven:${r.id}", r.at.toEpochMilli(), r.title)) }
+    }
 
     fun start() {
         notifier.createChannels()
         huginnRuntime.follow(gjallar, appScope)
+        // A scar in the tree for every alert that heals.
+        appScope.launch {
+            gjallar.events.collect { (change, a) ->
+                if (change == AlertChange.RESOLVED) history.record(healed(a))
+            }
+        }
         VedrfolnirWorker.schedule(app)
         appScope.launch {
             hermodr.prune()
@@ -148,6 +178,7 @@ class AppContainer(private val app: Application) {
             dellingr.tick()
             huginn.prune()
             huginnRuntime.checkCalendar()
+            backfillHistory()
         }
     }
 }

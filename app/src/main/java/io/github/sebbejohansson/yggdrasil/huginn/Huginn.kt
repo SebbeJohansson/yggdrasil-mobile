@@ -190,6 +190,8 @@ class HuginnService(
     private val hermodr: Hermodr,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** Told of every reaction delivered: a raven comes to the world tree. */
+    private val onDelivered: suspend (Reaction) -> Unit = {},
 ) {
     val changes = Changes()
     private val lock = Mutex()
@@ -258,7 +260,9 @@ class HuginnService(
                 Triple(ReactionState.FAILED, null, e.message ?: e.javaClass.simpleName)
             }
         }
-        write { store.putReaction(Reaction(newId(), rule.id, rule.name, f.kind, f.at, f.title, text, state, reason, now)) }
+        val reaction = Reaction(newId(), rule.id, rule.name, f.kind, f.at, f.title, text, state, reason, now)
+        write { store.putReaction(reaction) }
+        if (state == ReactionState.DELIVERED) onDelivered(reaction)
     }
 
     /** Null when this rule is the first to tell the event this way; else the rule that did. */

@@ -24,6 +24,9 @@ import io.github.sebbejohansson.yggdrasil.norn.Memory
 import io.github.sebbejohansson.yggdrasil.norn.MemoryStore
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import io.github.sebbejohansson.yggdrasil.history.HistoryEvent
+import io.github.sebbejohansson.yggdrasil.history.HistoryKind
+import io.github.sebbejohansson.yggdrasil.history.HistoryStore
 import org.json.JSONArray
 import org.json.JSONObject
 import io.github.sebbejohansson.yggdrasil.gjallar.AlertState
@@ -36,7 +39,7 @@ import io.github.sebbejohansson.yggdrasil.hermodr.Priority
 import java.time.Instant
 
 /** One SQLite file for every part's state: `ygg.db`. Times are epoch millis. */
-class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 4) {
+class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 5) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -63,12 +66,22 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         createDellingr(db)
         createHuginn(db)
         createNorn(db)
+        createHistory(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 5) createHistory(db)
         if (oldVersion < 2) createDellingr(db)
         if (oldVersion < 3) createHuginn(db)
         if (oldVersion < 4) createNorn(db)
+    }
+
+    // Version 5: the world tree's history, kept for good.
+    private fun createHistory(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS history (
+                id TEXT PRIMARY KEY, kind TEXT NOT NULL, at INTEGER NOT NULL, words TEXT NOT NULL, started_at INTEGER)""",
+        )
     }
 
     // Version 4: Norn's memories and saved chats.
@@ -127,6 +140,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
     val huginn: HuginnStore by lazy { SqliteHuginnStore(this) }
     val memories: MemoryStore by lazy { SqliteMemoryStore(this) }
     val chats: ChatStore by lazy { SqliteChatStore(this) }
+    val history: HistoryStore by lazy { SqliteHistoryStore(this) }
 }
 
 private fun Cursor.str(c: String): String = getString(getColumnIndexOrThrow(c))
@@ -424,5 +438,20 @@ private class SqliteChatStore(private val h: YggDatabase) : ChatStore {
     override fun delete(conversationId: Long) {
         h.writableDatabase.delete("chat_lines", "conversation_id = ?", arrayOf("$conversationId"))
         h.writableDatabase.delete("conversations", "id = ?", arrayOf("$conversationId"))
+    }
+}
+
+private class SqliteHistoryStore(private val h: YggDatabase) : HistoryStore {
+    override fun record(e: HistoryEvent) {
+        val v = ContentValues().apply {
+            put("id", e.id); put("kind", e.kind.name); put("at", e.at); put("words", e.words)
+            if (e.startedAt != null) put("started_at", e.startedAt) else putNull("started_at")
+        }
+        h.writableDatabase.insertWithOnConflict("history", null, v, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+
+    override fun all() = h.readableDatabase.query("history", null, null, null, null, null, "at ASC").all {
+        HistoryEvent(HistoryKind.valueOf(str("kind")), str("id"), long("at"), str("words"),
+            getColumnIndexOrThrow("started_at").let { if (isNull(it)) null else getLong(it) })
     }
 }

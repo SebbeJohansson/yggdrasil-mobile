@@ -1,5 +1,10 @@
 package io.github.sebbejohansson.yggdrasil
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import io.github.sebbejohansson.yggdrasil.history.RunesScreen
+import io.github.sebbejohansson.yggdrasil.history.TreeScreen
+import io.github.sebbejohansson.yggdrasil.history.HistoryViewModel
 import android.Manifest
 import android.content.Intent
 import android.content.Context
@@ -173,6 +178,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, 
     val phone: PhoneViewModel = viewModel(factory = PhoneViewModel.factory(container))
     val jobs: JobsViewModel = viewModel(factory = JobsViewModel.factory(container))
     val huginnVm: HuginnViewModel = viewModel(factory = HuginnViewModel.factory(container, LocalContext.current))
+    val historyVm: HistoryViewModel = viewModel(factory = HistoryViewModel.factory(container))
     val huginnState by huginnVm.state.collectAsStateWithLifecycle()
     val jobsState by jobs.state.collectAsStateWithLifecycle()
     val failingJobs = jobsState.jobs.count { it.failures >= DellingrService.FAILING_AFTER }
@@ -263,7 +269,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>, 
                 when (tab) {
                     MainActivity.TAB_ALERTS -> AlertsScreen(alerts)
                     MainActivity.TAB_MESSAGES -> MessagesScreen(messages)
-                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs, huginnVm, container.bootSettings, onRunBoot = { boot = BootKind.FULL })
+                    MainActivity.TAB_PHONE -> PartsScreen(phone, jobs, huginnVm, historyVm, container.bootSettings, onRunBoot = { boot = BootKind.FULL })
                     else -> ChatScreen(chat)
                 }
             }
@@ -405,14 +411,14 @@ private fun Modifier.topLine(c: Color) = drawBehind {
 
 /** The parts with no tab of their own, under page tabs as on the dashboard (`PageTabs.vue`). */
 @Composable
-private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel, huginn: HuginnViewModel, bootSettings: BootSettings, onRunBoot: () -> Unit) {
+private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel, huginn: HuginnViewModel, history: HistoryViewModel, bootSettings: BootSettings, onRunBoot: () -> Unit) {
     var page by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 8.dp).bottomLine(Color(0xFF17323F)),
+            Modifier.fillMaxWidth().padding(top = 8.dp).bottomLine(Color(0xFF17323F)).horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            listOf("Phone", "Jobs", "Huginn", "Boot").forEachIndexed { i, label ->
+            listOf("Phone", "Jobs", "Huginn", "Tree", "Runes", "Boot").forEachIndexed { i, label ->
                 val on = page == i
                 Text(
                     label,
@@ -429,6 +435,8 @@ private fun PartsScreen(phone: PhoneViewModel, jobs: JobsViewModel, huginn: Hugi
                 0 -> PhoneScreen(phone)
                 1 -> JobsScreen(jobs)
                 2 -> HuginnScreen(huginn)
+                3 -> TreeScreen(history)
+                4 -> RunesScreen(history)
                 else -> BootSettingsScreen(bootSettings, onRunBoot)
             }
         }

@@ -188,6 +188,8 @@ class Brain(
     private val facts: FactModel,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val now: () -> Instant = Instant::now,
+    /** Told of every new memory: the world tree grows a branch for it. */
+    private val onRemembered: suspend (Memory) -> Unit = {},
 ) {
     val changes = Changes()
 
@@ -216,7 +218,10 @@ class Brain(
         val vector = vectorFor(clean)
         val all = memories()
         if (MemoryMath.isKnown(all, clean, vector, model)) return null
-        return withContext(io) { store.add(clean, source, now(), vector, if (vector != null) model else null) }.also { changes.bump() }
+        return withContext(io) { store.add(clean, source, now(), vector, if (vector != null) model else null) }.also {
+            changes.bump()
+            onRemembered(it)
+        }
     }
 
     suspend fun forget(id: Long) {
