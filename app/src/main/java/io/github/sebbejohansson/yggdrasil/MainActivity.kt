@@ -154,6 +154,7 @@ private fun Root(container: AppContainer, requestedTab: MutableStateFlow<Int?>) 
         messages.recheckPermission()
         chat.refreshProviders()
         jobs.recheck()
+        alerts.syncNow()
         onPauseOrDispose { }
     }
 

@@ -19,12 +19,16 @@ import io.github.sebbejohansson.yggdrasil.model.ModelStore
 import io.github.sebbejohansson.yggdrasil.norn.AndroidCalendarReader
 import io.github.sebbejohansson.yggdrasil.norn.CalendarBusySignal
 import io.github.sebbejohansson.yggdrasil.norn.NornAsker
+import io.github.sebbejohansson.yggdrasil.saga.SagaService
+import io.github.sebbejohansson.yggdrasil.saga.SagaSettings
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.AndroidPhoneReader
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.VedrfolnirService
 import io.github.sebbejohansson.yggdrasil.vedrfolnir.VedrfolnirWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 
 class YggApp : Application(), Configuration.Provider {
@@ -77,6 +81,13 @@ class AppContainer(private val app: Application) {
     val jobAlarm = AndroidJobAlarm(app)
     val dellingr = DellingrService(db.jobs, NornAsker(llm, calendar), hermodr, gjallar, jobAlarm)
 
+    /** Mímir on the VPS, set up from the Alerts tab. */
+    val sagaSettings = SagaSettings(app)
+
+    /** Keeps the phone's alerts and the desktop's in step through Mímir. */
+    val saga = SagaService(db.saga, gjallar, mimir = { sagaSettings.client() }, device = { sagaSettings.device })
+
+    @OptIn(FlowPreview::class)
     fun start() {
         notifier.createChannels()
         VedrfolnirWorker.schedule(app)
@@ -88,6 +99,11 @@ class AppContainer(private val app: Application) {
             vedrfolnir.check()
             // Runs what came due while the app wasn't running, and sets the next alarm.
             dellingr.tick()
+            saga.prune()
+        }
+        // Sync a moment after any alert changes here (and once now, on start).
+        appScope.launch {
+            gjallar.changes.flow.debounce(2_000).collect { saga.sync() }
         }
     }
 }

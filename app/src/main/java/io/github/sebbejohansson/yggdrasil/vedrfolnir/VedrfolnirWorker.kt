@@ -16,6 +16,8 @@ class VedrfolnirWorker(context: Context, params: WorkerParameters) : CoroutineWo
         c.vedrfolnir.check()
         // A safety net for Dellingr: anything an alarm missed runs within 15 minutes.
         c.dellingr.tick()
+        // Sága catches up with Mímir at least this often while the app is closed.
+        c.saga.sync()
         return Result.success()
     }
 
