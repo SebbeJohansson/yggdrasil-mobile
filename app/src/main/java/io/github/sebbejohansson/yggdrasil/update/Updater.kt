@@ -8,12 +8,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import androidx.core.content.IntentCompat
 import androidx.core.content.edit
+import androidx.core.net.toUri
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -112,7 +113,7 @@ class Updater(
 
     /** Android's page to allow it. */
     fun allowIntent(): Intent =
-        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:${context.packageName}".toUri())
 
     private fun open(url: String, accept: String? = null) = (URL(url).openConnection() as HttpURLConnection).apply {
         instanceFollowRedirects = true
@@ -378,7 +379,7 @@ class UpdateReceiver : BroadcastReceiver() {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
         app.container.updater.installerSaid(status, intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE))
         if (status != PackageInstaller.STATUS_PENDING_USER_ACTION) return
-        val confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java) ?: return
+        val confirm = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java) ?: return
         confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (app.onScreen) {
             runCatching { context.startActivity(confirm) }
