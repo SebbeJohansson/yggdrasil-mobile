@@ -1,5 +1,9 @@
 package io.github.sebbejohansson.yggdrasil.core
 
+import java.time.LocalDate
+import io.github.sebbejohansson.yggdrasil.norn.PromiseStore
+import io.github.sebbejohansson.yggdrasil.norn.PromiseState
+import io.github.sebbejohansson.yggdrasil.norn.Promise
 import io.github.sebbejohansson.yggdrasil.hermodr.Focus
 import io.github.sebbejohansson.yggdrasil.hermodr.FocusSession
 import io.github.sebbejohansson.yggdrasil.hermodr.FocusStore
@@ -50,7 +54,7 @@ import io.github.sebbejohansson.yggdrasil.saga.SessionAsk
 import java.time.Instant
 
 /** One SQLite file for every part's state: `ygg.db`. Times are epoch millis. */
-class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 8) {
+class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 9) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -81,6 +85,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         createSaga(db)
         createSagaSessions(db)
         createFocus(db)
+        createPromises(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -91,6 +96,20 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         if (oldVersion < 6) createSaga(db)
         if (oldVersion < 7) createSagaSessions(db)
         if (oldVersion < 8) createFocus(db)
+        if (oldVersion < 9) createPromises(db)
+    }
+
+    // Version 9: the promise ledger.
+    private fun createPromises(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS promises (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_key TEXT NOT NULL, norm TEXT NOT NULL,
+                what TEXT NOT NULL, to_name TEXT NOT NULL DEFAULT '', due TEXT,
+                state TEXT NOT NULL, source TEXT NOT NULL, said TEXT,
+                created_at INTEGER NOT NULL, changed_at INTEGER NOT NULL, reminded_at INTEGER,
+                UNIQUE (source_key, norm))""",
+        )
     }
 
     // Version 8: the focus going on (one row), and the log of every focus.
@@ -194,6 +213,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
     val history: HistoryStore by lazy { SqliteHistoryStore(this) }
     val saga: SagaStore by lazy { SqliteSagaStore(this) }
     val focus: FocusStore by lazy { SqliteFocusStore(this) }
+    val promises: PromiseStore by lazy { SqlitePromiseStore(this) }
 }
 
 private fun Cursor.str(c: String): String = getString(getColumnIndexOrThrow(c))
@@ -491,6 +511,38 @@ private class SqliteChatStore(private val h: YggDatabase) : ChatStore {
     override fun delete(conversationId: Long) {
         h.writableDatabase.delete("chat_lines", "conversation_id = ?", arrayOf("$conversationId"))
         h.writableDatabase.delete("conversations", "id = ?", arrayOf("$conversationId"))
+    }
+}
+
+private class SqlitePromiseStore(private val h: YggDatabase) : PromiseStore {
+    private val db get() = h.writableDatabase
+
+    private fun Cursor.promise() = Promise(
+        long("id"), str("what"), str("to_name"), strOrNull("due")?.let(LocalDate::parse), PromiseState.valueOf(str("state")),
+        str("source"), strOrNull("said"), instant("created_at"), instant("changed_at"), instantOrNull("reminded_at"),
+    )
+
+    private fun values(p: Promise) = ContentValues().apply {
+        put("what", p.what); put("to_name", p.to); put("due", p.due?.toString()); put("state", p.state.name); put("source", p.source)
+        put("said", p.said); put("created_at", p.createdAt.toEpochMilli()); put("changed_at", p.changedAt.toEpochMilli())
+        if (p.remindedAt != null) put("reminded_at", p.remindedAt.toEpochMilli()) else putNull("reminded_at")
+    }
+
+    override fun all() = db.query("promises", null, null, null, null, null, "id DESC").all { promise() }
+
+    override fun get(id: Long) = db.query("promises", null, "id = ?", arrayOf(id.toString()), null, null, null).all { promise() }.firstOrNull()
+
+    override fun add(p: Promise, sourceKey: String, norm: String): Long? {
+        val v = values(p).apply { put("source_key", sourceKey); put("norm", norm) }
+        return db.insertWithOnConflict("promises", null, v, SQLiteDatabase.CONFLICT_IGNORE).takeIf { it > 0 }
+    }
+
+    override fun update(p: Promise) {
+        db.update("promises", values(p), "id = ?", arrayOf(p.id.toString()))
+    }
+
+    override fun deleteClosedBefore(t: Instant) {
+        db.delete("promises", "state != 'OPEN' AND changed_at < ?", arrayOf(t.toEpochMilli().toString()))
     }
 }
 

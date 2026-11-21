@@ -1,5 +1,9 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.today.TodayTarget
+import io.github.sebbejohansson.yggdrasil.today.TodayCard
+import io.github.sebbejohansson.yggdrasil.norn.PromisesScreen
+import io.github.sebbejohansson.yggdrasil.norn.PromisesViewModel
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import io.github.sebbejohansson.yggdrasil.parts.partReports
@@ -8,7 +12,6 @@ import io.github.sebbejohansson.yggdrasil.parts.HealthScreen
 import io.github.sebbejohansson.yggdrasil.ui.HudSection
 import io.github.sebbejohansson.yggdrasil.ratatoskr.YouPanel
 import io.github.sebbejohansson.yggdrasil.hermodr.FocusPanel
-import io.github.sebbejohansson.yggdrasil.hermodr.FocusOfferCard
 import io.github.sebbejohansson.yggdrasil.hermodr.FocusStrip
 import io.github.sebbejohansson.yggdrasil.hermodr.FocusButton
 import io.github.sebbejohansson.yggdrasil.update.UpdatesPanel
@@ -172,8 +175,10 @@ open class MainActivity : ComponentActivity() {
         const val TAB_SETTINGS = 6
         /** Not in the tab bar: the arc reactor opens it. */
         const val TAB_HEALTH = 7
+        /** Inbox → Promises. */
+        const val TAB_PROMISES = 8
 
-        fun isInbox(tab: Int) = tab == TAB_ALERTS || tab == TAB_MESSAGES
+        fun isInbox(tab: Int) = tab == TAB_ALERTS || tab == TAB_MESSAGES || tab == TAB_PROMISES
     }
 }
 
@@ -242,6 +247,9 @@ private fun Root(
     val jobs: JobsViewModel = viewModel(factory = JobsViewModel.factory(container))
     val huginnVm: HuginnViewModel = viewModel(factory = HuginnViewModel.factory(container, LocalContext.current))
     val historyVm: HistoryViewModel = viewModel(factory = HistoryViewModel.factory(container))
+    val promisesVm: PromisesViewModel = viewModel(factory = PromisesViewModel.factory(container))
+    val promiseList by promisesVm.state.collectAsStateWithLifecycle()
+    val promisesDue = PromisesViewModel.dueSoon(promiseList)
     val codeVm: CodeViewModel = viewModel(factory = CodeViewModel.factory(container))
     val appsVm: AppsViewModel? = if (home) viewModel(factory = AppsViewModel.factory(container)) else null
     val presses by homePresses.collectAsStateWithLifecycle()
@@ -352,15 +360,26 @@ private fun Root(
                 focus = { FocusButton(container.hermodr, container.calendar) },
             )
             FocusStrip(container.hermodr)
-            if (tab == MainActivity.TAB_CHAT) FocusOfferCard(container.hermodr, container.calendar)
+            val todayCard: @Composable () -> Unit = {
+                TodayCard(container, promiseList, alertState.active, jobsState.jobs, unseen, onOpen = { target ->
+                    when (target) {
+                        TodayTarget.PROMISES -> tab = MainActivity.TAB_PROMISES
+                        TodayTarget.ALERTS -> tab = MainActivity.TAB_ALERTS
+                        TodayTarget.JOBS -> { systemPage = 1; tab = MainActivity.TAB_SYSTEM }
+                    }
+                })
+            }
+            if (tab == MainActivity.TAB_CHAT) todayCard()
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
-                    MainActivity.TAB_ALERTS, MainActivity.TAB_MESSAGES -> InboxScreen(
+                    MainActivity.TAB_ALERTS, MainActivity.TAB_MESSAGES, MainActivity.TAB_PROMISES -> InboxScreen(
                         page = tab,
                         alerts = alerts,
                         messages = messages,
+                        promises = promisesVm,
                         openAlerts = openAlerts,
                         unseen = unseen,
+                        promisesDue = promisesDue,
                         onPage = { tab = it },
                     )
                     MainActivity.TAB_CODE -> CodeScreen(codeVm)
@@ -404,7 +423,7 @@ private fun Root(
                         HudSection("Watching you", Modifier.padding(top = 8.dp))
                         YouPanel(container.you)
                     }
-                    MainActivity.TAB_APPS -> if (appsVm != null) AppsScreen(appsVm, presses) else ChatScreen(chat, onSettings = ::openSettings)
+                    MainActivity.TAB_APPS -> if (appsVm != null) AppsScreen(appsVm, presses, header = todayCard) else ChatScreen(chat, onSettings = ::openSettings)
                     else -> ChatScreen(chat, onSettings = ::openSettings)
                 }
             }
@@ -413,7 +432,7 @@ private fun Root(
                 TabBar {
                     if (home) Tab(tab == MainActivity.TAB_APPS, "Apps", 0, tight = true) { tab = MainActivity.TAB_APPS }
                     Tab(tab == MainActivity.TAB_CHAT, "Ask", 0, tight = home) { tab = MainActivity.TAB_CHAT }
-                    Tab(MainActivity.isInbox(tab), "Inbox", openAlerts + unseen, tight = home) { tab = lastInbox }
+                    Tab(MainActivity.isInbox(tab), "Inbox", openAlerts + unseen + promisesDue, tight = home) { tab = lastInbox }
                     Tab(tab == MainActivity.TAB_CODE, "Code", 0, tight = home) { tab = MainActivity.TAB_CODE }
                     Tab(tab == MainActivity.TAB_SYSTEM, "System", phoneFailing.size + failingJobs, tight = home) { tab = MainActivity.TAB_SYSTEM }
                 }
@@ -571,19 +590,26 @@ private fun InboxScreen(
     page: Int,
     alerts: AlertsViewModel,
     messages: MessagesViewModel,
+    promises: PromisesViewModel,
     openAlerts: Int,
     unseen: Int,
+    promisesDue: Int,
     onPage: (Int) -> Unit,
 ) {
+    val pages = listOf(MainActivity.TAB_ALERTS, MainActivity.TAB_MESSAGES, MainActivity.TAB_PROMISES)
     Column(Modifier.fillMaxSize()) {
         PageTabs(
-            listOf("Alerts", "Messages"),
-            selected = if (page == MainActivity.TAB_MESSAGES) 1 else 0,
-            onSelect = { onPage(if (it == 1) MainActivity.TAB_MESSAGES else MainActivity.TAB_ALERTS) },
-            counts = listOf(openAlerts, unseen),
+            listOf("Alerts", "Messages", "Promises"),
+            selected = pages.indexOf(page).coerceAtLeast(0),
+            onSelect = { onPage(pages[it]) },
+            counts = listOf(openAlerts, unseen, promisesDue),
         )
         Box(Modifier.weight(1f)) {
-            if (page == MainActivity.TAB_MESSAGES) MessagesScreen(messages) else AlertsScreen(alerts)
+            when (page) {
+                MainActivity.TAB_MESSAGES -> MessagesScreen(messages)
+                MainActivity.TAB_PROMISES -> PromisesScreen(promises)
+                else -> AlertsScreen(alerts)
+            }
         }
     }
 }

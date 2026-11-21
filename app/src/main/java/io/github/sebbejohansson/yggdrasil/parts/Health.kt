@@ -103,4 +103,5 @@ object Parts {
     val RATATOSKR_YOU = "ratatoskr.you" to Duration.ofMinutes(15)
     val SAGA_SYNC = "saga.sync" to Duration.ofMinutes(15)
     val UPDATES_CHECK = "updates.check" to Duration.ofHours(6)
+    val NORN_PROMISES = "norn.promises" to Duration.ofMinutes(15)
 }

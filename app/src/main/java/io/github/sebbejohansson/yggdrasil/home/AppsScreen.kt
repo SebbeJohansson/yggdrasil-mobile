@@ -107,7 +107,13 @@ class AppsViewModel(private val apps: InstalledApps, private val settings: HomeS
  * goes back to the top.
  */
 @Composable
-fun AppsScreen(vm: AppsViewModel, homePresses: Int, modifier: Modifier = Modifier) {
+fun AppsScreen(
+    vm: AppsViewModel,
+    homePresses: Int,
+    modifier: Modifier = Modifier,
+    /** Over the apps while not searching: the Today card. */
+    header: @Composable () -> Unit = {},
+) {
     val s by vm.state.collectAsStateWithLifecycle()
     val query by vm.query.collectAsStateWithLifecycle()
     val list = rememberLazyListState()
@@ -133,6 +139,7 @@ fun AppsScreen(vm: AppsViewModel, homePresses: Int, modifier: Modifier = Modifie
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 4.dp).focusRequester(searchFocus),
         )
         LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (query.isBlank()) item("today") { header() }
             if (s.pinned.isNotEmpty()) {
                 item("pinned-head") { HudSection("Pinned", Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)) }
                 items(s.pinned, key = { "pin:" + it.key }) { app ->

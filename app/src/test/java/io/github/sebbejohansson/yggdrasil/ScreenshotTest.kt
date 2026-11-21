@@ -201,5 +201,21 @@ class ScreenshotTest {
         // The arc reactor opens Health: every part, its loops and its alerts.
         compose.onNodeWithContentDescription("Health of the parts").performClick()
         shot("15-health")
+
+        // Promises: kept by hand here (the model reads chat and shared text on the phone).
+        runBlocking {
+            val d = java.time.LocalDate.now()
+            c.promises.add("Send Kim the Q3 deck", "Kim", d.plusDays(1).toString())
+            c.promises.add("Check the contract with legal", "Ada", d.plusDays(4).toString())
+            c.promises.add("Book the team offsite", "", "")
+        }
+        compose.onNodeWithContentDescription("Health of the parts").performClick()
+        settle()
+        compose.onNodeWithText("INBOX").performClick()
+        settle()
+        compose.onNodeWithText("Promises", substring = false).performClick()
+        shot("16-promises")
+        compose.onNodeWithText("ASK").performClick()
+        shot("17-today")
     }
 }

@@ -21,6 +21,8 @@ class NornChat(
     private val brain: Brain,
     private val now: () -> Instant = Instant::now,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** Promises you mention to Yggdrasil go to the ledger. */
+    private val promises: PromiseService? = null,
 ) {
     var conversationId: Long? = null
         private set
@@ -70,7 +72,7 @@ class NornChat(
     }
 
     /** Learns from your question: your words only, never the answer. */
-    suspend fun learnFrom(question: String) = brain.learnFrom(question)
+    suspend fun learnFrom(question: String) = brain.learnFrom(question).also { promises?.read(question, chat = true) }
 
     companion object {
         const val SYSTEM = """You are Yggdrasil, a personal assistant that runs on the user's phone.

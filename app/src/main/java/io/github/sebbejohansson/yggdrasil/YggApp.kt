@@ -1,5 +1,9 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.llm.LlmRole
+import io.github.sebbejohansson.yggdrasil.llm.LlmMessage
+import io.github.sebbejohansson.yggdrasil.norn.PromiseModel
+import io.github.sebbejohansson.yggdrasil.norn.PromiseService
 import io.github.sebbejohansson.yggdrasil.parts.Parts
 import io.github.sebbejohansson.yggdrasil.core.Loops
 import io.github.sebbejohansson.yggdrasil.hermodr.FocusTileService
@@ -180,7 +184,16 @@ class AppContainer(private val app: Application) {
             ),
         )
     })
-    val nornChat = NornChat(db.chats, brain)
+    // The promise ledger: read by the local model only, never Claude.
+    val promises = PromiseService(db.promises, PromiseModel { system, user ->
+        llm.complete(
+            LlmRequest(
+                messages = listOf(LlmMessage(LlmRole.USER, user)), system = system, tier = LlmTier.SMALL,
+                privacy = Privacy.ON_DEVICE_ONLY, maxOutputTokens = 400, temperature = 0.0, side = true,
+            ),
+        )
+    }, hermodr)
+    val nornChat = NornChat(db.chats, brain, promises = promises)
     private val nornAsker = NornAsker(llm, calendar, brain)
     val dellingr = DellingrService(db.jobs, nornAsker, hermodr, gjallar, jobAlarm)
     val people = PeopleSettings(app)
@@ -238,6 +251,7 @@ class AppContainer(private val app: Application) {
             loops.run(Parts.HUGINN_CALENDAR.first, Parts.HUGINN_CALENDAR.second) { huginnRuntime.checkCalendar() }
             backfillHistory()
             loops.run(Parts.RATATOSKR_YOU.first, Parts.RATATOSKR_YOU.second) { you.round() }
+            loops.run(Parts.NORN_PROMISES.first, Parts.NORN_PROMISES.second) { promises.remind() }
             saga.prune()
         }
         // Sync a moment after any alert changes here (and once now, on start).

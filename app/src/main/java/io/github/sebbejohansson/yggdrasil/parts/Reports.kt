@@ -65,6 +65,7 @@ fun partReports(
                 if (chat.embedderReady) "recall by meaning" else "recall by recency",
                 "${chat.conversations.size} chats",
             ),
+            loops = listOf(loop(Parts.NORN_PROMISES)),
         ),
         PartReport(
             "huginn",

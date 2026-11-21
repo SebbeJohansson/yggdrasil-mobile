@@ -19,6 +19,8 @@ class VedrfolnirWorker(context: Context, params: WorkerParameters) : CoroutineWo
         c.loops.run(Parts.DELLINGR_TICK.first, Parts.DELLINGR_TICK.second) { c.dellingr.tick() }
         // Huginn's look at the calendar: meetings starting soon, meetings just ended.
         c.loops.run(Parts.HUGINN_CALENDAR.first, Parts.HUGINN_CALENDAR.second) { c.huginnRuntime.checkCalendar() }
+        // Promises due tomorrow (or today): reminded once.
+        c.loops.run(Parts.NORN_PROMISES.first, Parts.NORN_PROMISES.second) { c.promises.remind() }
         // Ratatoskr's look at your rhythm.
         c.loops.run(Parts.RATATOSKR_YOU.first, Parts.RATATOSKR_YOU.second) { c.you.round() }
         // Sága catches up with Mímir at least this often while the app is closed.

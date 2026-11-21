@@ -119,6 +119,20 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <!-- Share text you sent to Ygg: the local model keeps the promises in it. -->
+        <activity
+            android:name=".norn.ShareActivity"
+            android:exported="true"
+            android:label="Ygg: keep promises"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
         <!-- Focus as a Quick Settings tile. -->
         <service
             android:name=".hermodr.FocusTileService"

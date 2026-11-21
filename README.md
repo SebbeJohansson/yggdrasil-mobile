@@ -391,8 +391,8 @@ button, offer and recap.
   - **Top bar:** tap the ring and pick 25 min, 50 min, 90 min or *until
     before your next meeting*. Each length ends 5 minutes before your next
     meeting if that comes first.
-  - **Ask page:** when a free stretch is worth it (30 min or more), Ygg
-    offers it: "1 h 55 min free until Sprint review at 14:00".
+  - **Today card:** when a free stretch is worth it (30 min or more),
+    Today offers *Focus until* the next meeting.
   - **Quick Settings:** add the *Focus* tile. It focuses for 50 min, and
     tapping it again ends the focus.
 - **While it runs:**
@@ -463,6 +463,58 @@ Tap the **arc reactor** for Health, as on the dashboard
   - **Other alerts:** alerts no part claims are listed at the end.
 
 ![Health](docs/screenshots/15-health.png)
+
+## Today: `today/`
+
+Ported from the desktop's `norn/gap.go` and the dashboard's Today and day
+ring. A card at the top of Ask, and over the apps on the home screen.
+
+- **Day ring:**
+  - **Outside:** today's meetings, one segment each, lit once they're over.
+  - **Middle:** promises due by tomorrow.
+  - **Inside:** what needs you (open alerts, unread messages, due promises).
+    Its count is in the middle.
+- **Meetings:** the one you're in (until when), or the next one and how
+  soon.
+- **The gap:**
+  - **Free time:** when nothing holds you during the working day
+    (09–17, Mon–Fri), it says how long you're free.
+  - **What holds you:** meetings, *Break* and *Focus* events.
+  - **One thing that fits**, with 5 minutes to spare:
+    - a critical alert first (about 3 min),
+    - then the oldest of a promise due by tomorrow (about 10 min) or a job
+      that keeps failing (about 5 min).
+  - **Buttons:** Done, the page for it, or *Focus until* the next meeting.
+
+## Promises: `norn/Promises.kt`
+
+Ported from the desktop's `norn/promises.go` and `promises_due.go`: what
+you said you'd do for someone.
+
+- **Where they're found:**
+  - **Chat:** in what you write to Yggdrasil ("I told Kim I'll send the
+    deck Friday").
+  - **Shared text:** use Share → *Ygg: keep promises* on a mail or chat
+    message you sent.
+  - **By hand:** on the Promises page.
+- **How they're read:** a quick word check skips most messages. The rest go
+  to the on-device model; your words never leave the phone. With *Learn
+  from what you say* off, chat isn't read for promises either.
+- **The day:**
+  - **From your words:** "Friday", "i morgon", "end of week", "24/11",
+    "den 3 december", as on the desktop, with the desktop's tests.
+  - **No day:** vague words ("soon", "next week") give none, and such a
+    promise is never reminded.
+- **Reminders:** once, from 08:00, on the working day before its day. A
+  promise made too late for that is reminded on the day itself.
+- **Inbox → Promises:**
+  - **Open:** listed first, soonest day first, with Done, Drop, Day and No
+    day.
+  - **Closed:** listed with Reopen for 60 days.
+
+| Promises | Today |
+| --- | --- |
+| ![Promises](docs/screenshots/16-promises.png) | ![Today](docs/screenshots/17-today.png) |
 
 ## Models: `llm/`
 

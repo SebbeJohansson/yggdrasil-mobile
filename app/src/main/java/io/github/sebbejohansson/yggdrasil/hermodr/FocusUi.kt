@@ -22,7 +22,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -146,37 +145,6 @@ fun FocusStrip(hermodr: HermodrService) {
             maxLines = 1,
         )
         HudButton("End", { scope.launch { hermodr.endFocus() } }, kind = HudButtonKind.SMALL, accent = FOCUS)
-    }
-}
-
-/**
- * On the Ask page: "1 h 40 min free until Sprint review at 14:00. Focus?"
- * when a free stretch is worth it and you're not focusing. "Not now" puts
- * that stretch's offer away.
- */
-@Composable
-fun FocusOfferCard(hermodr: HermodrService, calendar: CalendarReader) {
-    val (focus, now) = rememberFocus(hermodr)
-    val events = rememberCalendar(calendar)
-    val scope = rememberCoroutineScope()
-    var dismissed by rememberSaveable { mutableLongStateOf(0L) }
-    if (focus != null || !calendar.allowed()) return
-    val offer = FocusPlan.offer(events, now, ZoneId.systemDefault()) ?: return
-    if (offer.until.toEpochMilli() == dismissed) return
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-            .border(1.dp, FOCUS.copy(alpha = 0.35f)).background(FOCUS.copy(alpha = 0.06f)).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            "${FocusPlan.words(Duration.ofMinutes(offer.minutes))} free" +
-                (offer.meeting?.let { " until ${it.title} at ${clock(it.begin)}." } ?: " for the rest of the afternoon."),
-            style = HudText.small,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            HudButton("Focus until ${clock(offer.until)}", { scope.launch { runCatching { hermodr.startFocus(offer.until) } } }, kind = HudButtonKind.PRIMARY, accent = FOCUS)
-            HudButton("Not now", { dismissed = offer.until.toEpochMilli() }, kind = HudButtonKind.GHOST)
-        }
     }
 }
 
