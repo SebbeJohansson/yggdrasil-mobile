@@ -91,13 +91,17 @@ class BridgeContractTest {
         assertTrue((ClaudeBridgeProvider(client).status() as ProviderStatus.NeedsSetup).reason.contains("ygg-bridge start"))
     }
 
-    @Test fun theInstallCommandWritesTheBridgeAsItIs() {
-        val command = BridgeClient.installCommand(RuntimeEnvironment.getApplication()).replace("bash install.sh\n", "")
-        val home = Files.createTempDirectory("termux").toFile()
-        val run = ProcessBuilder("bash", "-c", command).apply { environment()["HOME"] = home.path }.start()
-        assertEquals(0, run.waitFor())
-        for (name in listOf("ygg_bridge.py", "install.sh")) {
-            assertEquals(File("src/main/assets/bridge/$name").readText(), File(home, "ygg-bridge/$name").readText())
+    @Test fun theInstallCommandWritesTheBridgeAsItIsForEachPlace() {
+        for (place in BridgePlace.entries.filter { it.installer != null }) {
+            val installer = place.installer!!
+            val command = BridgeClient.installCommand(RuntimeEnvironment.getApplication(), place).replace("bash $installer\n", "")
+            val home = Files.createTempDirectory("terminal").toFile()
+            val run = ProcessBuilder("bash", "-c", command).apply { environment()["HOME"] = home.path }.start()
+            assertEquals(0, run.waitFor())
+            for ((asset, name) in listOf("bridge/ygg_bridge.py" to "ygg_bridge.py", "linux/setup.sh" to "setup.sh", "bridge/$installer" to installer)) {
+                assertEquals(File("src/main/assets/$asset").readText(), File(home, "ygg-bridge-setup/$name").readText())
+                if (name.endsWith(".sh")) assertEquals(0, ProcessBuilder("bash", "-n", File(home, "ygg-bridge-setup/$name").path).start().waitFor())
+            }
         }
     }
 }

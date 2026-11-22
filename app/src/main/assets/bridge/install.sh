@@ -5,7 +5,7 @@
 # `claude` CLI live in an Ubuntu inside Termux (proot-distro). It shares the
 # phone's network, so the Ygg app reaches it on 127.0.0.1:8765.
 #
-# Run from the folder holding ygg_bridge.py. Safe to run again: it updates.
+# Run from the folder holding ygg_bridge.py and setup.sh. Safe to run again: it updates.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -23,20 +23,11 @@ if [ ! -d "$rootfs" ]; then
   proot-distro install "$distro"
 fi
 
-say "Inside Ubuntu: python, git, script, and Claude Code"
-proot-distro login "$distro" -- bash -lc '
-  set -e
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y
-  apt-get install -y python3 git curl ca-certificates util-linux
-  if ! command -v claude >/dev/null && [ ! -x /root/.local/bin/claude ]; then
-    curl -fsSL https://claude.ai/install.sh | bash
-  fi
-'
-
-say "The bridge"
+say "The bridge and Claude Code, inside Ubuntu"
 mkdir -p "$rootfs/root/ygg-bridge"
 cp "$here/ygg_bridge.py" "$rootfs/root/ygg-bridge/ygg_bridge.py"
+cp "$here/setup.sh" "$rootfs/root/ygg-setup.sh"
+proot-distro login "$distro" -- env HOME=/root PATH="/root/.local/bin:/usr/local/bin:/usr/bin:/bin" bash /root/ygg-setup.sh
 
 mkdir -p "$HOME/bin"
 cat > "$HOME/bin/ygg-bridge" <<'LAUNCHER'
@@ -44,14 +35,14 @@ cat > "$HOME/bin/ygg-bridge" <<'LAUNCHER'
 # ygg-bridge start | stop | status | login | key | github <token> | log
 distro=ubuntu
 log="$HOME/.ygg-bridge.log"
-inside() { proot-distro login "$distro" -- env PATH="/root/.local/bin:/usr/local/bin:/usr/bin:/bin" "$@"; }
+inside() { proot-distro login "$distro" -- env DISABLE_AUTOUPDATER=1 PATH="/root/.local/bin:/usr/local/bin:/usr/bin:/bin" "$@"; }
 running() { pgrep -f "ygg_bridge.py serve" >/dev/null; }
 case "${1:-status}" in
   start)
     if running; then echo "Already running."; exit 0; fi
     # Keeps Android from pausing Termux while the bridge works.
     command -v termux-wake-lock >/dev/null && termux-wake-lock
-    nohup proot-distro login "$distro" -- env PATH="/root/.local/bin:/usr/local/bin:/usr/bin:/bin" \
+    nohup proot-distro login "$distro" -- env DISABLE_AUTOUPDATER=1 PATH="/root/.local/bin:/usr/local/bin:/usr/bin:/bin" \
       python3 /root/ygg-bridge/ygg_bridge.py serve >"$log" 2>&1 &
     sleep 2
     running && echo "Started on 127.0.0.1:8765." || { echo "It didn't start:"; tail -5 "$log"; exit 1; }
@@ -64,7 +55,7 @@ case "${1:-status}" in
     running && echo "Running." || echo "Not running: ygg-bridge start"
     curl -s http://127.0.0.1:8765/health || true; echo
     ;;
-  login) inside claude auth login ;;
+  login) inside script -qfec "claude auth login" /dev/null ;;
   key) inside python3 /root/ygg-bridge/ygg_bridge.py key ;;
   github) inside python3 /root/ygg-bridge/ygg_bridge.py github "${2:?ygg-bridge github <token>}" ;;
   log) tail -n 40 "$log" ;;

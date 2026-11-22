@@ -1,5 +1,6 @@
 package io.github.sebbejohansson.yggdrasil.llm.claude
 
+import androidx.core.content.edit
 import android.content.Context
 import android.util.Base64
 import io.github.sebbejohansson.yggdrasil.core.Changes
@@ -130,18 +131,40 @@ class BridgeClient(
 
     companion object {
         /**
-         * The one command to paste into Termux: it writes the bridge and its
-         * installer from the app (the repo is private, so nothing is fetched
-         * from GitHub) and runs the installer.
+         * The one command to paste into the terminal: it writes the bridge and
+         * its installer from the app (the repo is private, so nothing is
+         * fetched from GitHub) and runs the installer for [place].
          */
-        fun installCommand(context: Context): String {
-            fun b64(name: String) = Base64.encodeToString(context.assets.open("bridge/$name").use { it.readBytes() }, Base64.DEFAULT).trim()
+        fun installCommand(context: Context, place: BridgePlace): String {
+            val installer = requireNotNull(place.installer) { "${place.label} needs no install command" }
+            fun b64(asset: String) = Base64.encodeToString(context.assets.open(asset).use { it.readBytes() }, Base64.DEFAULT).trim()
             return buildString {
-                append("mkdir -p ~/ygg-bridge && cd ~/ygg-bridge && ")
-                append("base64 -d > ygg_bridge.py <<'YGG_EOF'\n").append(b64("ygg_bridge.py")).append("\nYGG_EOF\n")
-                append("base64 -d > install.sh <<'YGG_EOF'\n").append(b64("install.sh")).append("\nYGG_EOF\n")
-                append("bash install.sh\n")
+                append("mkdir -p ~/ygg-bridge-setup && cd ~/ygg-bridge-setup && ")
+                for ((asset, name) in listOf("bridge/ygg_bridge.py" to "ygg_bridge.py", "linux/setup.sh" to "setup.sh", "bridge/$installer" to installer)) {
+                    append("base64 -d > $name <<'YGG_EOF'\n").append(b64(asset)).append("\nYGG_EOF\n")
+                }
+                append("bash $installer\n")
             }
         }
     }
+}
+
+/** Where the bridge runs, and how it's installed there. */
+enum class BridgePlace(val label: String, val installer: String?, val app: String?) {
+    /** Ygg's own Linux: Ubuntu under proot inside Ygg, always on with Ygg's service. The default. */
+    OWN_LINUX("Ygg's own Linux", null, null),
+
+    /** UserLAnd's Ubuntu (Play Store, free): runs while its session does. */
+    USERLAND("UserLAnd", "install-userland.sh", "tech.ula"),
+
+    /** Termux, with an Ubuntu inside it (proot-distro). */
+    TERMUX("Termux", "install.sh", "com.termux"),
+}
+
+/** Which place you set the bridge up in, for the steps and the install command. */
+class BridgeSettings(context: Context) {
+    private val prefs = context.getSharedPreferences("bridge", Context.MODE_PRIVATE)
+    var place: BridgePlace
+        get() = runCatching { BridgePlace.valueOf(prefs.getString("place", null) ?: "") }.getOrDefault(BridgePlace.OWN_LINUX)
+        set(v) = prefs.edit { putString("place", v.name) }
 }
