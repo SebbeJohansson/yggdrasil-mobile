@@ -78,6 +78,16 @@ class BridgeContractTest {
         assertTrue(client.setKey(key()))
         assertEquals(ProviderStatus.Ready, provider.status())
         assertEquals(emptyList<BridgeSession>(), client.sessions())
+        // Accounts: the first is claude's own; more get their own folder, and sessions say whose they are.
+        assertEquals("default", client.accounts().first().id)
+        val work = client.addAccount("Work")
+        assertEquals("work", work.id)
+        assertTrue(work.configDir.endsWith("accounts/work"))
+        assertEquals(listOf("default", "work"), client.accounts().map { it.id })
+        client.renameAccount("work", "Job")
+        assertEquals("Job", client.accounts().last().name)
+        client.removeAccount("work")
+        assertEquals(listOf("default"), client.accounts().map { it.id })
         client.message("session_abc", "Also add tests")
         val gone = runCatching { client.message("session_gone", "hi") }.exceptionOrNull() as BridgeException
         assertTrue(gone.message!!.contains("not found"))

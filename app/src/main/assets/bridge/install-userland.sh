@@ -18,7 +18,7 @@ bash "$here/setup.sh"
 mkdir -p "$HOME/.local/bin"
 cat > "$HOME/.local/bin/ygg-bridge" <<'LAUNCHER'
 #!/usr/bin/env bash
-# ygg-bridge start | stop | status | login | key | github <token> | log
+# ygg-bridge start | stop | status | login [account] | accounts | key | github <token> | log
 export PATH="$HOME/.local/bin:$PATH" DISABLE_AUTOUPDATER=1
 log="$HOME/.ygg-bridge.log"
 running() { pgrep -f "ygg_bridge.py serve" >/dev/null; }
@@ -34,11 +34,12 @@ case "${1:-status}" in
     running && echo "Running." || echo "Not running: ygg-bridge start"
     curl -s http://127.0.0.1:8765/health || true; echo
     ;;
-  login) script -qfec "claude auth login" /dev/null ;;
+  login) script -qfec "python3 $HOME/ygg-bridge/ygg_bridge.py login ${2:-default}" /dev/null ;;
+  accounts) python3 "$HOME/ygg-bridge/ygg_bridge.py" accounts ;;
   key) python3 "$HOME/ygg-bridge/ygg_bridge.py" key ;;
   github) python3 "$HOME/ygg-bridge/ygg_bridge.py" github "${2:?ygg-bridge github <token>}" ;;
   log) tail -n 40 "$log" ;;
-  *) echo "ygg-bridge start | stop | status | login | key | github <token> | log"; exit 2 ;;
+  *) echo "ygg-bridge start | stop | status | login [account] | accounts | key | github <token> | log"; exit 2 ;;
 esac
 LAUNCHER
 chmod +x "$HOME/.local/bin/ygg-bridge"

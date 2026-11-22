@@ -77,7 +77,8 @@ class OwnLinux(private val context: Context) {
      * Whether Claude Code in the guest has a sign-in kept: `claude auth login`
      * leaves it in root's ~/.claude/.credentials.json, which outlives app updates.
      */
-    fun signedIn(): Boolean = File(rootfs, "root/.claude/.credentials.json").let { it.isFile && it.length() > 2 }
+    fun signedIn(configDir: String = ""): Boolean =
+        File(rootfs, configDir.ifEmpty { "/root/.claude" }.trimStart('/') + "/.credentials.json").let { it.isFile && it.length() > 2 }
 
     /**
      * Puts this app's bridge in the guest. An app update brings a new bridge,
@@ -216,7 +217,16 @@ class OwnLinux(private val context: Context) {
  * back the code the browser shows. It runs under `script`, which wants a terminal.
  */
 class LinuxLogin(private val linux: OwnLinux) {
-    data class State(val running: Boolean = false, val url: String? = null, val lines: List<String> = emptyList(), val done: Boolean = false, val code: Int? = null)
+    data class State(
+        val running: Boolean = false,
+        val url: String? = null,
+        val lines: List<String> = emptyList(),
+        /** The first account (claude's own) has a sign-in kept. */
+        val done: Boolean = false,
+        val code: Int? = null,
+        /** The account being signed in, or last signed in. */
+        val account: String = "default",
+    )
 
     // Signed in is what's on disk, not what this run of the app saw: it survives updates and restarts.
     private val _state = MutableStateFlow(State(done = runCatching { linux.signedIn() }.getOrDefault(false)))
@@ -232,10 +242,11 @@ class LinuxLogin(private val linux: OwnLinux) {
     private val link = Regex("""https://\S+""")
     private val ansi = Regex("\u001B\\[[0-9;?]*[A-Za-z]|\u001B\\][^\u0007]*\u0007")
 
-    suspend fun start() = withContext(Dispatchers.IO) {
+    /** Signs [account] in; its sign-in goes in [configDir] (CLAUDE_CONFIG_DIR), or claude's own for the first. */
+    suspend fun start(account: String = "default", configDir: String = "") = withContext(Dispatchers.IO) {
         process?.destroy()
-        _state.value = State(running = true)
-        val p = linux.start(GuestSetup.LOGIN)
+        _state.update { State(running = true, account = account, done = it.done) }
+        val p = linux.start(GuestSetup.LOGIN, if (configDir.isEmpty()) emptyMap() else mapOf("CLAUDE_CONFIG_DIR" to configDir))
         process = p
         val buf = StringBuilder()
         val reader = p.inputStream.reader()
@@ -249,7 +260,7 @@ class LinuxLogin(private val linux: OwnLinux) {
             _state.update { s -> s.copy(lines = lines, url = s.url ?: lines.firstNotNullOfOrNull { l -> link.find(l)?.value }) }
         }
         val code = p.waitFor()
-        _state.update { it.copy(running = false, done = code == 0 || linux.signedIn(), code = code) }
+        _state.update { it.copy(running = false, done = linux.signedIn(), code = code) }
     }
 
     /** The code the browser shows, typed into the login. */

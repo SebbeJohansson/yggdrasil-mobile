@@ -17,6 +17,17 @@ import java.time.Instant
 /** What GET /health says. */
 data class BridgeHealth(val claude: String, val github: Boolean)
 
+/** A Claude account the bridge signs in as: its own sign-in and settings. */
+data class BridgeAccount(
+    val id: String,
+    val name: String,
+    val signedIn: Boolean,
+    /** Who it's signed in as; empty when claude didn't say or it isn't. */
+    val email: String,
+    /** Its claude config folder in the bridge's Linux; empty for the first, which is claude's own. */
+    val configDir: String,
+)
+
 /** A cloud session the bridge started. */
 data class BridgeSession(
     val id: String,
@@ -24,6 +35,8 @@ data class BridgeSession(
     val repo: String,
     val task: String,
     val at: Instant,
+    /** The account it was started in. */
+    val account: String = "default",
     val lastSentAt: Instant? = null,
     val lastError: String? = null,
 )
@@ -106,6 +119,27 @@ class BridgeClient(
         (0 until list.length()).map { list.getJSONObject(it).optString("repo") }.filter { it.isNotEmpty() }
     }
 
+    suspend fun accounts(): List<BridgeAccount> = withContext(Dispatchers.IO) {
+        val list = call("GET", "/v1/accounts").optJSONArray("accounts") ?: JSONArray()
+        (0 until list.length()).map { account(list.getJSONObject(it)) }
+    }
+
+    /** A new account, named like Work; sign it in afterwards. */
+    suspend fun addAccount(name: String): BridgeAccount = withContext(Dispatchers.IO) {
+        account(call("POST", "/v1/accounts", JSONObject().put("name", name.trim()))).also { changes.bump() }
+    }
+
+    suspend fun renameAccount(id: String, name: String) = withContext(Dispatchers.IO) {
+        call("POST", "/v1/accounts/$id", JSONObject().put("name", name.trim()))
+        changes.bump()
+    }
+
+    /** Forgets the account and its sign-in on this phone. */
+    suspend fun removeAccount(id: String) = withContext(Dispatchers.IO) {
+        call("POST", "/v1/accounts/$id/remove", JSONObject())
+        changes.bump()
+    }
+
     /** Keeps [token] in the bridge for cloning private repos; blank forgets it. */
     suspend fun setGitHub(token: String) = withContext(Dispatchers.IO) {
         call("POST", "/v1/github", JSONObject().put("token", token.trim()))
@@ -116,8 +150,8 @@ class BridgeClient(
      * Starts a cloud session for [repo] (owner/name). Takes a minute or two: it readies the repo, then waits for the link.
      * When GitHub refuses the clone and the bridge has no token, Ygg's own is handed over and it tries once more.
      */
-    suspend fun start(repo: String, task: String, branch: String? = null): BridgeSession = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("repo", repo).put("task", task).put("branch", branch ?: "")
+    suspend fun start(repo: String, task: String, branch: String? = null, account: String = "default"): BridgeSession = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("repo", repo).put("task", task).put("branch", branch ?: "").put("account", account)
         val s = try {
             call("POST", "/v1/cloud", body, timeoutMs = 420_000)
         } catch (e: BridgeException) {
@@ -146,6 +180,15 @@ class BridgeClient(
         at = Instant.ofEpochMilli(o.optLong("at")),
         lastSentAt = o.optLong("lastSentAt").takeIf { it > 0 }?.let(Instant::ofEpochMilli),
         lastError = o.optString("lastError").ifEmpty { null },
+        account = o.optString("account").ifEmpty { "default" },
+    )
+
+    private fun account(o: JSONObject) = BridgeAccount(
+        id = o.getString("id"),
+        name = o.optString("name").ifEmpty { o.getString("id") },
+        signedIn = o.optBoolean("signedIn"),
+        email = o.optString("email"),
+        configDir = o.optString("configDir"),
     )
 
     companion object {

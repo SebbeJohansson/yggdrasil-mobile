@@ -18,6 +18,7 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -82,6 +83,8 @@ data class BridgeUiState(
     val hasKey: Boolean = false,
     val sessions: List<BridgeSession> = emptyList(),
     val repos: List<String> = emptyList(),
+    /** The Claude accounts the bridge signs in as; the first is claude's own. */
+    val accounts: List<BridgeAccount> = emptyList(),
     /** The repo a start is under way for. */
     val starting: String? = null,
     /** Sessions a follow-up is on its way to. */
@@ -106,7 +109,9 @@ class BridgeViewModel(private val bridge: BridgeClient) : ViewModel() {
             runCatching {
                 val sessions = bridge.sessions()
                 val repos = bridge.repos()
-                _state.update { it.copy(sessions = sessions, repos = repos) }
+                // An older bridge has no accounts: one, unnamed.
+                val accounts = runCatching { bridge.accounts() }.getOrDefault(emptyList())
+                _state.update { it.copy(sessions = sessions, repos = repos, accounts = accounts) }
             }.onFailure { e -> _state.update { it.copy(error = e.message) } }
         }
     }
@@ -121,12 +126,27 @@ class BridgeViewModel(private val bridge: BridgeClient) : ViewModel() {
         refresh()
     }
 
-    fun start(repo: String, task: String) = viewModelScope.launch {
+    fun start(repo: String, task: String, account: String = "default") = viewModelScope.launch {
         _state.update { it.copy(starting = repo, error = null) }
-        runCatching { bridge.start(repo, task) }
+        runCatching { bridge.start(repo, task, account = account) }
             .onSuccess { s -> _state.update { st -> st.copy(sessions = listOf(s) + st.sessions.filter { it.id != s.id }) } }
             .onFailure { e -> _state.update { it.copy(error = "Couldn't start: ${e.message}") } }
         _state.update { it.copy(starting = null) }
+        refresh()
+    }
+
+    fun addAccount(name: String) = viewModelScope.launch {
+        runCatching { bridge.addAccount(name) }.onFailure { e -> _state.update { it.copy(error = "Account not added: ${e.message}") } }
+        refresh()
+    }
+
+    fun renameAccount(id: String, name: String) = viewModelScope.launch {
+        runCatching { bridge.renameAccount(id, name) }.onFailure { e -> _state.update { it.copy(error = "Not renamed: ${e.message}") } }
+        refresh()
+    }
+
+    fun removeAccount(id: String) = viewModelScope.launch {
+        runCatching { bridge.removeAccount(id) }.onFailure { e -> _state.update { it.copy(error = "Not removed: ${e.message}") } }
         refresh()
     }
 
@@ -196,7 +216,19 @@ fun PhoneCloudPanel(vm: BridgeViewModel, onSetUp: () -> Unit) {
                 HudButton("Set it up", onSetUp, kind = HudButtonKind.SMALL)
             }
             else -> {
+                val usable = s.accounts.filter { it.signedIn }
+                var account by remember { mutableStateOf("") }
+                if (usable.none { it.id == account }) account = usable.firstOrNull()?.id ?: "default"
                 HudLabel("New cloud session")
+                if (s.accounts.size > 1) {
+                    // Which account the session is made in: only signed-in ones can.
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        s.accounts.forEach { a ->
+                            HudButton(a.name, { account = a.id },
+                                kind = if (a.id == account) HudButtonKind.PRIMARY else HudButtonKind.SMALL, enabled = a.signedIn)
+                        }
+                    }
+                }
                 if (s.repos.isNotEmpty()) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         s.repos.forEach { r -> HudButton(r.substringAfter('/'), { repo = r }, kind = if (r == repo) HudButtonKind.GHOST else HudButtonKind.SMALL) }
@@ -207,27 +239,47 @@ fun PhoneCloudPanel(vm: BridgeViewModel, onSetUp: () -> Unit) {
                     HudTextField(task, { task = it }, placeholder = "What the cloud session should do", maxLines = 4, modifier = Modifier.weight(1f))
                     HudButton(
                         if (s.starting != null) "Starting…" else "Start",
-                        { vm.start(repo, task.trim()); task = "" },
+                        { vm.start(repo, task.trim(), account); task = "" },
                         kind = HudButtonKind.PRIMARY,
                         enabled = s.starting == null && task.isNotBlank() && repo.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")),
                     )
                 }
                 if (s.starting != null) Text("Getting ${s.starting} ready and waiting for the session's link: a minute or two.", style = HudText.meta)
-                s.sessions.forEach { c ->
-                    var draft by remember(c.id) { mutableStateOf("") }
-                    Column(Modifier.fillMaxWidth().leftStripe(Hud.cyan).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(c.task, style = HudText.small.copy(color = Hud.text), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                            Text("${c.repo.substringAfter('/')} · ${ago(c.at, now)}", style = HudText.meta)
-                        }
-                        c.lastError?.let { Text("Last message didn't go: $it", style = HudText.meta.copy(color = Hud.amber)) }
-                        FollowUp(c.id, s, vm, draft) { draft = it }
-                        HudButton("Open in Claude", { uri.openUri(c.url) }, kind = HudButtonKind.SMALL)
+                if (s.sessions.isNotEmpty()) {
+                    Text("A session's work and results are in Claude: tap one to open it there.", style = HudText.meta)
+                }
+                // By account, in the order the accounts are listed; one account needs no headings.
+                val byAccount = s.sessions.groupBy { it.account }
+                val order = s.accounts.map { it.id } + byAccount.keys.filter { k -> s.accounts.none { it.id == k } }
+                order.filter { it in byAccount }.forEach { id ->
+                    val a = s.accounts.firstOrNull { it.id == id }
+                    if (s.accounts.size > 1 || a == null) {
+                        HudLabel(listOfNotNull(a?.name ?: id, a?.email?.ifEmpty { null }).joinToString(" · "), modifier = Modifier.padding(top = 6.dp))
                     }
+                    byAccount.getValue(id).forEach { c -> PhoneSession(c, s, vm, now) { uri.openUri(c.url) } }
                 }
             }
         }
         s.error?.let { Text(it, style = HudText.meta.copy(color = Hud.amber)) }
+    }
+}
+
+/** One cloud session started from the phone: tap to see it in Claude, or follow it up. */
+@Composable
+private fun PhoneSession(c: BridgeSession, s: BridgeUiState, vm: BridgeViewModel, now: Instant, open: () -> Unit) {
+    var draft by remember(c.id) { mutableStateOf("") }
+    var following by remember(c.id) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().leftStripe(Hud.cyan).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.fillMaxWidth().clickable(onClick = open), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(c.task, style = HudText.small.copy(color = Hud.text), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text("${c.repo.substringAfter('/')} · ${ago(c.at, now)}", style = HudText.meta)
+        }
+        c.lastError?.let { Text("Last message didn't go: $it", style = HudText.meta.copy(color = Hud.amber)) }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudButton("See results in Claude", open, kind = HudButtonKind.GHOST)
+            HudButton(if (following) "Close" else "Follow up", { following = !following }, kind = HudButtonKind.SMALL)
+        }
+        if (following || c.id in s.sending) FollowUp(c.id, s, vm, draft) { draft = it }
     }
 }
 
@@ -308,12 +360,9 @@ private fun OwnLinuxSetup(vm: BridgeViewModel, linux: OwnLinux, login: LinuxLogi
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state = linux.state.collectAsStateWithLifecycle().value
-    val signIn = login.state.collectAsStateWithLifecycle().value
     val on = LinuxBridgeService.runningState.collectAsStateWithLifecycle().value
     val status = LinuxBridgeService.status.collectAsStateWithLifecycle().value
     val lastExit = LinuxBridgeService.lastExit.collectAsStateWithLifecycle().value
-    var code by remember { mutableStateOf("") }
-    val uri = LocalUriHandler.current
 
     // The bridge's key is in Ygg's own storage: Ygg takes it, no pasting.
     LaunchedEffect(state) {
@@ -346,31 +395,9 @@ private fun OwnLinuxSetup(vm: BridgeViewModel, linux: OwnLinux, login: LinuxLogi
     }
     val ready = state == LinuxState.Ready
 
-    HudLabel("2 · Sign in to Claude", modifier = Modifier.padding(top = 4.dp))
-    when {
-        !ready -> Text("After the Linux is set up.", style = HudText.meta)
-        signIn.done -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Signed in.", style = HudText.small.copy(color = Hud.green), modifier = Modifier.weight(1f))
-            HudButton("Sign in again", { scope.launch { login.start() } }, kind = HudButtonKind.SMALL)
-        }
-        !signIn.running -> {
-            Text("Once: open the link it gives, sign in with your Claude account, and paste the code back here.", style = HudText.meta)
-            HudButton("Sign in", { scope.launch { login.start() } }, kind = HudButtonKind.GHOST)
-            if (signIn.code != null && signIn.code != 0) {
-                Text("Sign-in ended (${signIn.code}): ${signIn.lines.lastOrNull().orEmpty()}", style = HudText.meta.copy(color = Hud.amber))
-            }
-        }
-        else -> {
-            signIn.url?.let { link -> HudButton("Open the sign-in link", { uri.openUri(link) }, kind = HudButtonKind.PRIMARY) }
-                ?: Text("Starting…", style = HudText.meta)
-            signIn.lines.takeLast(3).forEach { Text(it, style = HudText.meta, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                HudTextField(code, { code = it }, placeholder = "The code the browser shows", maxLines = 1, modifier = Modifier.weight(1f))
-                HudButton("Send", { login.send(code); code = "" }, kind = HudButtonKind.SMALL, enabled = code.isNotBlank())
-            }
-            HudButton("Cancel", { login.cancel() }, kind = HudButtonKind.SMALL)
-        }
-    }
+    HudLabel("2 · Claude accounts", modifier = Modifier.padding(top = 4.dp))
+    if (!ready) Text("After the Linux is set up.", style = HudText.meta)
+    else ClaudeAccounts(vm, linux, login)
 
     HudLabel("3 · Always on", modifier = Modifier.padding(top = 4.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -396,6 +423,81 @@ private fun OwnLinuxSetup(vm: BridgeViewModel, linux: OwnLinux, login: LinuxLogi
 
     HudLabel("4 · Shell", modifier = Modifier.padding(top = 4.dp))
     if (ready) LinuxShellPanel(shell) else Text("After the Linux is set up.", style = HudText.meta)
+}
+
+/**
+ * The Claude accounts the bridge signs in as (a personal and a work one, say):
+ * each its own sign-in, made here. Sessions start in the one picked on the Code tab.
+ */
+@Composable
+private fun ClaudeAccounts(vm: BridgeViewModel, linux: OwnLinux, login: LinuxLogin) {
+    val s = vm.state.collectAsStateWithLifecycle().value
+    val signIn = login.state.collectAsStateWithLifecycle().value
+    val scope = rememberCoroutineScope()
+    val uri = LocalUriHandler.current
+    var code by remember { mutableStateOf("") }
+    var newName by remember { mutableStateOf("") }
+    var renaming by remember { mutableStateOf<String?>(null) }
+    var rename by remember { mutableStateOf("") }
+    // Without the bridge (or an older one) there's the first account only, claude's own.
+    val accounts = s.accounts.ifEmpty { listOf(BridgeAccount("default", "Personal", signIn.done, "", "")) }
+    // A sign-in that just ended changes who's signed in.
+    LaunchedEffect(signIn.running) { if (!signIn.running) vm.refresh() }
+
+    Text("One sign-in each, kept on this phone. Pick the account when you start a session.", style = HudText.meta)
+    accounts.forEach { a ->
+        // The bridge says, and the files say so too while the bridge is off.
+        val kept = remember(a.configDir, signIn.running) { linux.signedIn(a.configDir) }
+        val signed = a.signedIn || kept
+        Column(Modifier.fillMaxWidth().leftStripe(if (signed) Hud.green else Hud.overlay0).padding(start = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text(a.name, style = HudText.small.copy(color = Hud.text))
+                    Text(if (signed) a.email.ifEmpty { "Signed in" } else "Not signed in",
+                        style = HudText.meta.copy(color = if (signed) Hud.green else Hud.amber))
+                }
+                if (!(signIn.running && signIn.account == a.id)) {
+                    HudButton(if (signed) "Sign in again" else "Sign in", { scope.launch { login.start(a.id, a.configDir) } },
+                        kind = if (signed) HudButtonKind.SMALL else HudButtonKind.GHOST, enabled = !signIn.running)
+                }
+            }
+            if (signIn.running && signIn.account == a.id) {
+                Text("Open the link, sign in with this account, and paste the code back here.", style = HudText.meta)
+                signIn.url?.let { link -> HudButton("Open the sign-in link", { uri.openUri(link) }, kind = HudButtonKind.PRIMARY) }
+                    ?: Text("Starting…", style = HudText.meta)
+                signIn.lines.takeLast(3).forEach { Text(it, style = HudText.meta, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    HudTextField(code, { code = it }, placeholder = "The code the browser shows", maxLines = 1, modifier = Modifier.weight(1f))
+                    HudButton("Send", { login.send(code); code = "" }, kind = HudButtonKind.SMALL, enabled = code.isNotBlank())
+                }
+                HudButton("Cancel", { login.cancel() }, kind = HudButtonKind.SMALL)
+            } else if (!signIn.running && signIn.account == a.id && signIn.code != null && signIn.code != 0 && !signed) {
+                Text("Sign-in ended (${signIn.code}): ${signIn.lines.lastOrNull().orEmpty()}", style = HudText.meta.copy(color = Hud.amber))
+            }
+            if (s.accounts.isNotEmpty()) {
+                if (renaming == a.id) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        HudTextField(rename, { rename = it }, placeholder = "Name", maxLines = 1, modifier = Modifier.weight(1f))
+                        HudButton("Save", { vm.renameAccount(a.id, rename); renaming = null }, kind = HudButtonKind.SMALL, enabled = rename.isNotBlank())
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        HudButton("Rename", { renaming = a.id; rename = a.name }, kind = HudButtonKind.SMALL)
+                        if (a.id != "default") HudButton("Remove", { vm.removeAccount(a.id) }, kind = HudButtonKind.SMALL)
+                    }
+                }
+            }
+        }
+    }
+    if (s.ready) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudTextField(newName, { newName = it }, placeholder = "Another account, like Work", maxLines = 1, modifier = Modifier.weight(1f))
+            HudButton("Add", { vm.addAccount(newName); newName = "" }, kind = HudButtonKind.SMALL, enabled = newName.isNotBlank())
+        }
+    } else {
+        Text("To add another account, turn on Always on (3) first: the bridge keeps the accounts.", style = HudText.meta)
+    }
 }
 
 /** A terminal into Ygg's own Linux: root's bash, one line at a time. */
@@ -479,6 +581,28 @@ private fun PastedSetup(vm: BridgeViewModel, s: BridgeUiState, place: BridgePlac
         }, enabled = key.isNotBlank(), kind = HudButtonKind.GHOST)
     }
     note?.let { Text(it, style = HudText.meta.copy(color = Hud.cyan)) }
+    if (s.ready) PastedAccounts(vm, s)
+}
+
+/** Accounts where the bridge runs in another app: signed in from its terminal. */
+@Composable
+private fun PastedAccounts(vm: BridgeViewModel, s: BridgeUiState) {
+    var newName by remember { mutableStateOf("") }
+    HudLabel("Claude accounts", modifier = Modifier.padding(top = 4.dp))
+    s.accounts.forEach { a ->
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(a.name, style = HudText.small.copy(color = Hud.text))
+                Text(if (a.signedIn) a.email.ifEmpty { "Signed in" } else "Not signed in: ygg-bridge login ${a.id}",
+                    style = HudText.meta.copy(color = if (a.signedIn) Hud.green else Hud.amber))
+            }
+            if (a.id != "default") HudButton("Remove", { vm.removeAccount(a.id) }, kind = HudButtonKind.SMALL)
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        HudTextField(newName, { newName = it }, placeholder = "Another account, like Work", maxLines = 1, modifier = Modifier.weight(1f))
+        HudButton("Add", { vm.addAccount(newName); newName = "" }, kind = HudButtonKind.SMALL, enabled = newName.isNotBlank())
+    }
 }
 
 private fun copy(context: Context, text: String) {

@@ -13,8 +13,11 @@ import urllib.request
 from pathlib import Path
 
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
-import json, sys, time
+import json, os, sys, time
 a = sys.argv[1:]
+if os.environ.get("FAKE_LOG"):
+    with open(os.environ["FAKE_LOG"], "a") as log:
+        log.write(json.dumps({"argv": a, "config": os.environ.get("CLAUDE_CONFIG_DIR", "")}) + "\n")
 if a == ["--version"]:
     print("2.9.0 (Claude Code)"); sys.exit(0)
 if a[:1] == ["--cloud"]:
@@ -186,6 +189,38 @@ class BridgeTest(unittest.TestCase):
     def test_reason_finds_the_error_line(self):
         out = "\x1b7\x1b[?25l\x1b(B\x1b[>4m\x1b]0;claude\x1b\\Working\x1b8\r\nNot\x1b[1Cuploading this working tree: its index is a link.\r\nUse a fresh clone.\r\n\x1b[<u"
         self.assertTrue(self.b.reason(out).startswith("Not uploading this working tree: its index is a link. Use a fresh clone."), self.b.reason(out))
+
+    def test_accounts_keep_their_own_claude(self):
+        status, accts = self.call("GET", "/v1/accounts")
+        self.assertEqual(200, status)
+        self.assertEqual("default", accts["accounts"][0]["id"])
+        status, work = self.call("POST", "/v1/accounts", {"name": "Work"})
+        self.assertEqual((200, "work"), (status, work["id"]))
+        self.assertEqual(400, self.call("POST", "/v1/accounts", {"name": "work"})[0])
+        # Signed in is the account's own credentials, and who from its own config.
+        cfg = Path(work["configDir"])
+        (cfg / ".credentials.json").write_text('{"claudeAiOauth": {}}')
+        (cfg / ".claude.json").write_text(json.dumps({"oauthAccount": {"emailAddress": "me@work.example"}}))
+        _, accts = self.call("GET", "/v1/accounts")
+        w = next(a for a in accts["accounts"] if a["id"] == "work")
+        self.assertEqual((True, "me@work.example"), (w["signedIn"], w["email"]))
+        log = Path(self.tmp) / "fake.log"
+        os.environ["FAKE_LOG"] = str(log)
+        try:
+            status, s = self.call("POST", "/v1/cloud", {"repo": "me/app", "task": "At work", "account": "work"})
+            self.assertEqual((200, "work"), (status, s["account"]))
+            # A follow-up goes in as the account that started the session.
+            self.assertEqual(200, self.call("POST", f"/v1/cloud/{s['id']}/message", {"text": "More"})[0])
+        finally:
+            del os.environ["FAKE_LOG"]
+        runs = [json.loads(l) for l in log.read_text().splitlines()]
+        self.assertTrue(runs and all(r["config"] == str(cfg) for r in runs), runs)
+        self.assertTrue(json.loads((cfg / ".claude.json").read_text())["hasCompletedOnboarding"])
+        self.assertEqual(404, self.call("POST", "/v1/cloud", {"repo": "me/app", "task": "x", "account": "nope"})[0])
+        self.assertEqual(200, self.call("POST", "/v1/accounts/work", {"name": "Job"})[0])
+        self.assertEqual(200, self.call("POST", "/v1/accounts/work/remove")[0])
+        self.assertFalse(cfg.exists())
+        self.assertEqual(400, self.call("POST", "/v1/accounts/default/remove")[0])
 
     def test_message_queues_in_any_session(self):
         status, body = self.call("POST", "/v1/cloud/session_abc/message", {"text": "Also add tests"})

@@ -14,6 +14,8 @@ so other apps on the phone can't use your Claude account through it.
     python3 ygg_bridge.py serve        run it (Termux keeps it going)
     python3 ygg_bridge.py key          print the key to paste into Ygg
     python3 ygg_bridge.py github TOKEN keep a GitHub token for cloning private repos
+    python3 ygg_bridge.py accounts     list the Claude accounts and who is signed in
+    python3 ygg_bridge.py login [ID]   sign in to Claude for an account (default: the first)
 
 Standard library only. Kept in ~/.ygg-bridge: the key, the GitHub token, the
 sessions it started, and shallow checkouts of the repos you start sessions for.
@@ -311,16 +313,132 @@ def repos() -> list:
 
 # Cloud sessions --------------------------------------------------------------
 
-def claude_config() -> Path:
-    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home()) / ".claude.json"
+# Accounts --------------------------------------------------------------------
+#
+# Each Claude account has its own claude config folder (CLAUDE_CONFIG_DIR): its
+# sign-in, settings and trust. "default" is claude's own (~/.claude), so the
+# sign-in made before accounts existed stays; more live in ~/.ygg-bridge/accounts.
+
+ACCOUNT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 
 
-def prepare_claude(cwd: Path) -> None:
+def accounts() -> list:
+    try:
+        data = json.loads((home() / "accounts.json").read_text())
+    except (OSError, ValueError):
+        data = {}
+    items = [{"id": a["id"], "name": str(a.get("name") or a["id"])[:40]}
+             for a in data.get("accounts", []) if isinstance(a, dict) and ACCOUNT_ID.match(str(a.get("id", "")))]
+    if not any(a["id"] == "default" for a in items):
+        items.insert(0, {"id": "default", "name": "Personal"})
+    return items
+
+
+def save_accounts(items: list) -> None:
+    path = home() / "accounts.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"accounts": items}, indent=1))
+    tmp.replace(path)
+
+
+def account(aid: str) -> dict:
+    aid = aid or "default"
+    for a in accounts():
+        if a["id"] == aid:
+            return a
+    raise Refused(404, f"no account '{aid}'")
+
+
+def account_dir(aid: str):
+    """The account's claude config folder; None for default (claude's own)."""
+    aid = account(aid)["id"]
+    if aid == "default":
+        return None
+    d = home() / "accounts" / aid
+    d.mkdir(parents=True, exist_ok=True)
+    os.chmod(d, 0o700)
+    return d
+
+
+def claude_env(aid: str = "default") -> dict:
+    env = dict(os.environ)
+    d = account_dir(aid)
+    if d:
+        env["CLAUDE_CONFIG_DIR"] = str(d)
+    return env
+
+
+def claude_config(aid: str = "default") -> Path:
+    d = account_dir(aid)
+    return (d or Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home())) / ".claude.json"
+
+
+def credentials(aid: str = "default") -> Path:
+    d = account_dir(aid)
+    if d:
+        return d / ".credentials.json"
+    own = os.environ.get("CLAUDE_CONFIG_DIR")
+    return Path(own) / ".credentials.json" if own else Path.home() / ".claude" / ".credentials.json"
+
+
+def account_info(a: dict) -> dict:
+    """What the app shows: the name, whether it's signed in, and as whom."""
+    creds = credentials(a["id"])
+    signed = creds.is_file() and creds.stat().st_size > 2
+    email = ""
+    try:
+        email = json.loads(claude_config(a["id"]).read_text()).get("oauthAccount", {}).get("emailAddress", "")
+    except (OSError, ValueError, AttributeError):
+        pass
+    d = account_dir(a["id"])
+    return {"id": a["id"], "name": a["name"], "signedIn": signed, "email": email if signed else "",
+            "configDir": str(d) if d else ""}
+
+
+def add_account(name: str) -> dict:
+    name = " ".join(name.split())[:40]
+    if not name:
+        raise Refused(400, "an account needs a name, like Work")
+    items = accounts()
+    if any(a["name"].lower() == name.lower() for a in items):
+        raise Refused(400, f"there's already an account called {name}")
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:24] or "account"
+    aid, n = base, 2
+    while any(a["id"] == aid for a in items) or aid == "default":
+        aid, n = f"{base}-{n}", n + 1
+    items.append({"id": aid, "name": name})
+    save_accounts(items)
+    return account_info(items[-1])
+
+
+def rename_account(aid: str, name: str) -> dict:
+    name = " ".join(name.split())[:40]
+    if not name:
+        raise Refused(400, "an account needs a name")
+    items = accounts()
+    for a in items:
+        if a["id"] == account(aid)["id"]:
+            a["name"] = name
+    save_accounts(items)
+    return account_info(account(aid))
+
+
+def remove_account(aid: str) -> None:
+    """Forgets the account and its sign-in on this phone. Not default: that is
+    claude's own, which other things here use."""
+    aid = account(aid)["id"]
+    if aid == "default":
+        raise Refused(400, "the first account stays; sign it out with claude auth logout instead")
+    save_accounts([a for a in accounts() if a["id"] != aid])
+    shutil.rmtree(home() / "accounts" / aid, ignore_errors=True)
+
+
+def prepare_claude(cwd: Path, aid: str = "default") -> None:
     """Answers ahead what an interactive `claude` asks on its first run and in a
     new folder: the theme, and whether you trust the folder. Nobody is there to
     pick, so unanswered it waits until the bridge gives up. The folder is a
     checkout of your own repo that the bridge made."""
-    path = claude_config()
+    path = claude_config(aid)
     with lock:
         try:
             data = json.loads(path.read_text())
@@ -335,16 +453,16 @@ def prepare_claude(cwd: Path) -> None:
         os.chmod(tmp, 0o600)
         tmp.replace(path)
 
-def run_cloud(cwd: Path, task: str):
+def run_cloud(cwd: Path, task: str, aid: str = "default"):
     """`claude --cloud <task>` in [cwd], under util-linux's `script` (it wants a
     terminal). Gives (url, id) once it prints the session's link, else
     (None, all it printed)."""
-    prepare_claude(cwd)
+    prepare_claude(cwd, aid)
     command = f"{shlex.quote(CLAUDE)} --cloud {shlex.quote(task)}"
     argv = ["script", "-qfec", command, "/dev/null"] if shutil.which("script") else [CLAUDE, "--cloud", task]
     # claude's own git runs, too, save objects by renaming, not hard-linking (see git()).
     n = int(os.environ.get("GIT_CONFIG_COUNT", "0") or 0)
-    env = dict(os.environ, GIT_CONFIG_COUNT=str(n + 1), **{f"GIT_CONFIG_KEY_{n}": "core.createObject", f"GIT_CONFIG_VALUE_{n}": "rename"})
+    env = dict(claude_env(aid), GIT_CONFIG_COUNT=str(n + 1), **{f"GIT_CONFIG_KEY_{n}": "core.createObject", f"GIT_CONFIG_VALUE_{n}": "rename"})
     proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     seen = []
     deadline = time.time() + START_WAIT
@@ -373,7 +491,7 @@ def run_cloud(cwd: Path, task: str):
 REFUSED_TREE = re.compile(r"Not uploading|working tree|shallow|bundle|fresh clone|retry there", re.I)
 
 
-def start_cloud(repo: str, task: str, branch: str = "") -> dict:
+def start_cloud(repo: str, task: str, branch: str = "", aid: str = "default") -> dict:
     """Starts a cloud session for the repo. `claude --cloud` takes the repo and
     branch from the folder it runs in, so it needs a checkout to stand in:
     first a stub with no files ([stub]), and when claude won't take that, a
@@ -384,13 +502,14 @@ def start_cloud(repo: str, task: str, branch: str = "") -> dict:
         raise Refused(400, "the task is empty")
     if not REPO.match(repo):
         raise Refused(400, "a repo is owner/name, like SebbeJohansson/yggdrasil")
+    aid = account(aid)["id"]
     found, out = (None, "")
     tried_stub = STUB
     if STUB:
         # A git error here (no such repo, no access, no network) stands: a full clone would meet it too.
-        found, out = run_cloud(stub(repo, branch), task)
+        found, out = run_cloud(stub(repo, branch), task, aid)
     if not found and (not tried_stub or REFUSED_TREE.search(reason(out))):
-        found, out = run_cloud(checkout(repo, branch), task)
+        found, out = run_cloud(checkout(repo, branch), task, aid)
     if not found:
         try:
             # Readable first, then all of it as printed, for when the reading is wrong.
@@ -399,7 +518,7 @@ def start_cloud(repo: str, task: str, branch: str = "") -> dict:
             pass
         raise Refused(502, "claude --cloud made no session: " + reason(out) + " (all of it: ~/.ygg-bridge/last-start.log)")
     url, sid = found
-    session = {"id": sid, "url": url, "repo": repo, "branch": branch, "task": task, "at": int(time.time() * 1000)}
+    session = {"id": sid, "url": url, "repo": repo, "branch": branch, "task": task, "account": aid, "at": int(time.time() * 1000)}
     with lock:
         data = state()
         data["sessions"] = [session] + [s for s in data["sessions"] if s["id"] != sid]
@@ -408,7 +527,7 @@ def start_cloud(repo: str, task: str, branch: str = "") -> dict:
     return session
 
 
-def message_cloud(sid: str, text: str) -> dict:
+def message_cloud(sid: str, text: str, aid: str = "") -> dict:
     """`claude -p "<text>" --cloud <id> --output-format json`: queues the
     message in any cloud session of your account and returns at once."""
     need_claude()
@@ -417,9 +536,13 @@ def message_cloud(sid: str, text: str) -> dict:
         raise Refused(400, "the message is empty")
     if not re.match(r"^(session_|cse_)[A-Za-z0-9_-]+$", sid):
         raise Refused(400, "that isn't a cloud session id")
+    # The account the session is in: as asked, else the one that started it here, else default.
+    if not aid:
+        aid = next((s.get("account", "") for s in state()["sessions"] if s["id"] == sid), "") or "default"
+    env = claude_env(aid)
     with tempfile.TemporaryDirectory() as empty:
         out = subprocess.run([CLAUDE, "-p", text, "--cloud", sid, "--output-format", "json"], cwd=empty,
-                             capture_output=True, text=True, timeout=90)
+                             capture_output=True, text=True, timeout=90, env=env)
     try:
         sent = json.loads(out.stdout)
     except ValueError:
@@ -454,12 +577,13 @@ def complete(body: dict) -> dict:
     argv = [CLAUDE, "-p", prompt, "--output-format", "json", "--tools", ""]
     if body.get("system"):
         argv += ["--append-system-prompt", body["system"]]
+    env = claude_env(str(body.get("account") or "default"))
     with tempfile.TemporaryDirectory() as empty:
-        out = subprocess.run(argv, cwd=empty, capture_output=True, text=True, timeout=300)
+        out = subprocess.run(argv, cwd=empty, capture_output=True, text=True, timeout=300, env=env)
         if out.returncode != 0 and "--tools" in (out.stderr + out.stdout):
             # An older claude without --tools: ask again without it (print mode still asks before any tool).
             argv = [a for i, a in enumerate(argv) if a != "--tools" and not (i > 0 and argv[i - 1] == "--tools")]
-            out = subprocess.run(argv, cwd=empty, capture_output=True, text=True, timeout=300)
+            out = subprocess.run(argv, cwd=empty, capture_output=True, text=True, timeout=300, env=env)
     try:
         result = json.loads(out.stdout)
     except ValueError:
@@ -516,10 +640,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self.answer(200, {"repos": repos()})
             if method == "POST" and path == "/v1/cloud":
                 b = self.body()
-                return self.answer(200, start_cloud(str(b.get("repo", "")), str(b.get("task", "")), str(b.get("branch") or "")))
+                return self.answer(200, start_cloud(str(b.get("repo", "")), str(b.get("task", "")), str(b.get("branch") or ""),
+                                                    str(b.get("account") or "default")))
             m = re.match(r"^/v1/cloud/([A-Za-z0-9_-]+)/message$", path)
             if method == "POST" and m:
-                return self.answer(200, message_cloud(m.group(1), str(self.body().get("text", ""))))
+                b = self.body()
+                return self.answer(200, message_cloud(m.group(1), str(b.get("text", "")), str(b.get("account") or "")))
+            if method == "GET" and path == "/v1/accounts":
+                return self.answer(200, {"accounts": [account_info(a) for a in accounts()]})
+            if method == "POST" and path == "/v1/accounts":
+                return self.answer(200, add_account(str(self.body().get("name", ""))))
+            m = re.match(r"^/v1/accounts/([a-z0-9-]+)(/remove)?$", path)
+            if method == "POST" and m:
+                if m.group(2):
+                    remove_account(m.group(1))
+                    return self.answer(200, {"ok": True})
+                return self.answer(200, rename_account(m.group(1), str(self.body().get("name", ""))))
             if method == "POST" and path == "/v1/github":
                 keep_github(str(self.body().get("token", "")))
                 return self.answer(200, {"ok": True, "github": bool(secret("github"))})
@@ -553,6 +689,18 @@ def main(argv: list) -> int:
         serve()
     elif command == "key":
         print(key())
+    elif command == "accounts":
+        for a in accounts():
+            i = account_info(a)
+            print(f"{i['id']:<16} {i['name']:<20} {i['email'] or ('signed in' if i['signedIn'] else 'not signed in')}")
+    elif command == "login":
+        # ygg_bridge.py login [account]: claude's own sign-in, into that account's folder.
+        try:
+            env = claude_env(argv[2] if len(argv) > 2 else "default")
+        except Refused as e:
+            print(e)
+            return 2
+        return subprocess.run([CLAUDE, "auth", "login"], env=env).returncode
     elif command == "github" and len(argv) > 2:
         try:
             keep_github(argv[2])

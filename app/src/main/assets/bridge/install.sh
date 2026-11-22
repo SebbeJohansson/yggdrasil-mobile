@@ -32,7 +32,7 @@ proot-distro login "$distro" -- env HOME=/root PATH="/root/.local/bin:/usr/local
 mkdir -p "$HOME/bin"
 cat > "$HOME/bin/ygg-bridge" <<'LAUNCHER'
 #!/data/data/com.termux/files/usr/bin/bash
-# ygg-bridge start | stop | status | login | key | github <token> | log
+# ygg-bridge start | stop | status | login [account] | accounts | key | github <token> | log
 distro=ubuntu
 log="$HOME/.ygg-bridge.log"
 inside() { proot-distro login "$distro" -- env DISABLE_AUTOUPDATER=1 PATH="/root/.local/bin:/usr/local/bin:/usr/bin:/bin" "$@"; }
@@ -55,11 +55,12 @@ case "${1:-status}" in
     running && echo "Running." || echo "Not running: ygg-bridge start"
     curl -s http://127.0.0.1:8765/health || true; echo
     ;;
-  login) inside script -qfec "claude auth login" /dev/null ;;
+  login) inside script -qfec "python3 /root/ygg-bridge/ygg_bridge.py login ${2:-default}" /dev/null ;;
+  accounts) inside python3 /root/ygg-bridge/ygg_bridge.py accounts ;;
   key) inside python3 /root/ygg-bridge/ygg_bridge.py key ;;
   github) inside python3 /root/ygg-bridge/ygg_bridge.py github "${2:?ygg-bridge github <token>}" ;;
   log) tail -n 40 "$log" ;;
-  *) echo "ygg-bridge start | stop | status | login | key | github <token> | log"; exit 2 ;;
+  *) echo "ygg-bridge start | stop | status | login [account] | accounts | key | github <token> | log"; exit 2 ;;
 esac
 LAUNCHER
 chmod +x "$HOME/bin/ygg-bridge"
