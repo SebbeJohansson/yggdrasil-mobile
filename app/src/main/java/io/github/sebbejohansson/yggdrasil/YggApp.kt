@@ -1,6 +1,7 @@
 package io.github.sebbejohansson.yggdrasil
 
 import io.github.sebbejohansson.yggdrasil.linux.LinuxLogin
+import io.github.sebbejohansson.yggdrasil.linux.LinuxShell
 import io.github.sebbejohansson.yggdrasil.linux.OwnLinux
 import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeSettings
 import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeClient
@@ -138,6 +139,8 @@ class AppContainer(private val app: Application) {
     /** Ygg's own Linux (Ubuntu under proot), where the bridge runs by default. */
     val ownLinux = OwnLinux(app)
     val linuxLogin = LinuxLogin(ownLinux)
+    /** A shell in it, for what the app has no button for. */
+    val linuxShell = LinuxShell(ownLinux)
     /**
      * Claude, behind the names guard: names are swapped for placeholders by the
      * local model before anything leaves the phone, or nothing is sent.

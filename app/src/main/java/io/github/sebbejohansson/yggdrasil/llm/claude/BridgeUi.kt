@@ -7,6 +7,7 @@ import io.github.sebbejohansson.yggdrasil.ui.HudToggle
 import io.github.sebbejohansson.yggdrasil.linux.OwnLinux
 import io.github.sebbejohansson.yggdrasil.linux.LinuxState
 import io.github.sebbejohansson.yggdrasil.linux.LinuxLogin
+import io.github.sebbejohansson.yggdrasil.linux.LinuxShell
 import io.github.sebbejohansson.yggdrasil.linux.LinuxBridgeService
 import androidx.core.net.toUri
 import androidx.compose.runtime.rememberCoroutineScope
@@ -16,6 +17,18 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import io.github.sebbejohansson.yggdrasil.ui.HudFonts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -239,7 +252,7 @@ fun FollowUp(id: String, s: BridgeUiState, vm: BridgeViewModel, draft: String, o
  * app; UserLAnd and Termux get an install command to paste.
  */
 @Composable
-fun BridgePanel(vm: BridgeViewModel, settings: BridgeSettings, linux: OwnLinux, login: LinuxLogin) {
+fun BridgePanel(vm: BridgeViewModel, settings: BridgeSettings, linux: OwnLinux, login: LinuxLogin, shell: LinuxShell) {
     val s = vm.state.collectAsStateWithLifecycle().value
     var place by remember { mutableStateOf(settings.place) }
     FollowBridge(vm)
@@ -265,7 +278,7 @@ fun BridgePanel(vm: BridgeViewModel, settings: BridgeSettings, linux: OwnLinux, 
             color = if (s.ready) Hud.green else Hud.amber,
         )
         if (s.health != null && !s.health.github) GitHubTokenField(vm, s.hasKey)
-        if (place == BridgePlace.OWN_LINUX) OwnLinuxSetup(vm, linux, login) else PastedSetup(vm, s, place)
+        if (place == BridgePlace.OWN_LINUX) OwnLinuxSetup(vm, linux, login, shell) else PastedSetup(vm, s, place)
     }
 }
 
@@ -291,7 +304,7 @@ private fun GitHubTokenField(vm: BridgeViewModel, hasKey: Boolean) {
 // what keeping the bridge always on needs, and you're asked by Android itself.
 @SuppressLint("BatteryLife")
 @Composable
-private fun OwnLinuxSetup(vm: BridgeViewModel, linux: OwnLinux, login: LinuxLogin) {
+private fun OwnLinuxSetup(vm: BridgeViewModel, linux: OwnLinux, login: LinuxLogin, shell: LinuxShell) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state = linux.state.collectAsStateWithLifecycle().value
@@ -322,7 +335,7 @@ private fun OwnLinuxSetup(vm: BridgeViewModel, linux: OwnLinux, login: LinuxLogi
         LinuxState.Ready -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Ubuntu with Claude Code, set up.", style = HudText.small, modifier = Modifier.weight(1f))
             HudButton("Update", { scope.launch { linux.install() } }, kind = HudButtonKind.SMALL)
-            HudButton("Remove", { LinuxBridgeService.stop(context); scope.launch { linux.remove() } }, kind = HudButtonKind.SMALL)
+            HudButton("Remove", { shell.stop(); LinuxBridgeService.stop(context); scope.launch { linux.remove() } }, kind = HudButtonKind.SMALL)
         }
         is LinuxState.Failed -> {
             Text("Setup stopped: ${state.message}", style = HudText.small.copy(color = Hud.amber))
@@ -376,6 +389,45 @@ private fun OwnLinuxSetup(vm: BridgeViewModel, linux: OwnLinux, login: LinuxLogi
         }, kind = HudButtonKind.SMALL)
     }
     Text("If Android still stops it: Developer options → Disable child process restrictions.", style = HudText.meta.copy(color = Hud.overlay0))
+
+    HudLabel("4 · Shell", modifier = Modifier.padding(top = 4.dp))
+    if (ready) LinuxShellPanel(shell) else Text("After the Linux is set up.", style = HudText.meta)
+}
+
+/** A terminal into Ygg's own Linux: root's bash, one line at a time. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LinuxShellPanel(shell: LinuxShell) {
+    val s = shell.state.collectAsStateWithLifecycle().value
+    var input by remember { mutableStateOf("") }
+    val scroll = rememberScrollState()
+    if (!s.running) {
+        Text("Bash as root in the Ubuntu, for anything without a button here." +
+            (s.exit?.let { " Last shell ended ($it)." } ?: ""), style = HudText.meta)
+        HudButton("Open shell", { shell.start() }, kind = HudButtonKind.GHOST)
+        return
+    }
+    LaunchedEffect(s.lines.size, s.lines.lastOrNull()) { scroll.scrollTo(scroll.maxValue) }
+    Box(Modifier.fillMaxWidth().height(320.dp).background(Hud.crust).padding(8.dp)) {
+        Column(Modifier.fillMaxSize().verticalScroll(scroll).horizontalScroll(rememberScrollState())) {
+            s.lines.forEach { Text(it.ifEmpty { " " }, style = HudText.meta.copy(fontFamily = HudFonts.mono, color = Hud.text), softWrap = false) }
+        }
+    }
+    fun send() { shell.send(input); input = "" }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        HudTextField(
+            input, { input = it }, placeholder = "Command", maxLines = 1, leading = "#", modifier = Modifier.weight(1f),
+            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Send),
+            keyboardActions = KeyboardActions(onSend = { send() }),
+        )
+        HudButton("Run", { send() }, kind = HudButtonKind.PRIMARY)
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        HudButton("Ctrl-C", { shell.interrupt() }, kind = HudButtonKind.SMALL)
+        LinuxShell.SHORTCUTS.forEach { (label, cmd) -> HudButton(label, { shell.send(cmd) }, kind = HudButtonKind.SMALL) }
+        HudButton("Set GitHub token…", { input = LinuxShell.GITHUB_PREFIX }, kind = HudButtonKind.SMALL)
+        HudButton("End shell", { shell.stop() }, kind = HudButtonKind.SMALL)
+    }
 }
 
 /** UserLAnd or Termux: an install command to paste there, and the key to paste back. */
