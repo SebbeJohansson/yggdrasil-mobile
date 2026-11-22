@@ -51,7 +51,8 @@ class BridgeTest(unittest.TestCase):
         subprocess.run(["git", "-C", str(work), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "one"], check=True)
         subprocess.run(["git", "clone", "-q", "--bare", str(work), str(origin)], check=True)
         os.environ.update(YGG_BRIDGE_HOME=str(tmp / "home"), CLAUDE_BIN=str(fake), YGG_BRIDGE_GIT_BASE="file://" + str(tmp / "gh"),
-                          YGG_BRIDGE_START_WAIT="20")
+                          YGG_BRIDGE_START_WAIT="20", CLAUDE_CONFIG_DIR=str(tmp / "claude-config"))
+        (tmp / "claude-config").mkdir()
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app/src/main/assets/bridge"))
         import ygg_bridge
         cls.b = ygg_bridge
@@ -91,6 +92,10 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual("session_01AbC-xyz", s["id"])
         self.assertEqual("https://claude.ai/code/session_01AbC-xyz", s["url"])
         self.assertTrue((Path(self.tmp) / "home" / "repos" / "me" / "app" / "README.md").exists())
+        # claude's first-run questions are answered, so it doesn't wait for nobody.
+        config = json.loads((Path(self.tmp) / "claude-config" / ".claude.json").read_text())
+        self.assertTrue(config["hasCompletedOnboarding"])
+        self.assertTrue(config["projects"][str(Path(self.tmp) / "home" / "repos" / "me" / "app")]["hasTrustDialogAccepted"])
         _, listed = self.call("GET", "/v1/cloud")
         self.assertEqual("Fix the README", listed["sessions"][0]["task"])
         _, rs = self.call("GET", "/v1/repos")

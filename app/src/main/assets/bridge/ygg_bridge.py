@@ -191,6 +191,30 @@ def repos() -> list:
 
 # Cloud sessions --------------------------------------------------------------
 
+def claude_config() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home()) / ".claude.json"
+
+
+def prepare_claude(cwd: Path) -> None:
+    """Answers ahead what an interactive `claude` asks on its first run and in a
+    new folder: the theme, and whether you trust the folder. Nobody is there to
+    pick, so unanswered it waits until the bridge gives up. The folder is a
+    checkout of your own repo that the bridge made."""
+    path = claude_config()
+    with lock:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            data = {}
+        data.setdefault("theme", "dark")
+        data["hasCompletedOnboarding"] = True
+        project = data.setdefault("projects", {}).setdefault(str(cwd), {})
+        project["hasTrustDialogAccepted"] = True
+        tmp = path.with_name(path.name + ".ygg-tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        os.chmod(tmp, 0o600)
+        tmp.replace(path)
+
 def start_cloud(repo: str, task: str, branch: str = "") -> dict:
     """`claude --cloud` in the repo. It wants a terminal, so util-linux's
     `script` gives it one; the session exists once its link is printed."""
@@ -199,6 +223,7 @@ def start_cloud(repo: str, task: str, branch: str = "") -> dict:
     if not task:
         raise Refused(400, "the task is empty")
     cwd = checkout(repo, branch)
+    prepare_claude(cwd)
     command = f"{shlex.quote(CLAUDE)} --cloud {shlex.quote(task)}"
     argv = ["script", "-qfec", command, "/dev/null"] if shutil.which("script") else [CLAUDE, "--cloud", task]
     proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
