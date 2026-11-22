@@ -78,6 +78,7 @@ class LinuxBridgeService : Service() {
             }
             val started = System.currentTimeMillis()
             update("Running on 127.0.0.1:8765")
+            runCatching { linux.refreshBridge() }
             val p = runCatching { linux.start(GuestSetup.BRIDGE, GuestSetup.BRIDGE_ENV) }.getOrNull()
             process = p
             if (p != null) {

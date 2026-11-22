@@ -79,6 +79,18 @@ class OwnLinux(private val context: Context) {
      */
     fun signedIn(): Boolean = File(rootfs, "root/.claude/.credentials.json").let { it.isFile && it.length() > 2 }
 
+    /**
+     * Puts this app's bridge in the guest. An app update brings a new bridge,
+     * and the service runs this before each start, so it never runs an old one.
+     */
+    fun refreshBridge() {
+        val to = File(rootfs, "root/ygg-bridge/ygg_bridge.py")
+        val fresh = context.assets.open("bridge/ygg_bridge.py").use { it.readBytes() }
+        if (to.isFile && to.readBytes().contentEquals(fresh)) return
+        to.parentFile?.mkdirs()
+        to.writeBytes(fresh)
+    }
+
     /** The bridge's key, as the guest keeps it: Ygg reads it itself, no pasting. */
     fun bridgeKey(): String? = File(rootfs, "root/.ygg-bridge/key").takeIf { it.isFile }?.readText()?.trim()?.ifEmpty { null }
 
