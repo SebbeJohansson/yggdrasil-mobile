@@ -48,7 +48,9 @@ GIT_BASE = os.environ.get("YGG_BRIDGE_GIT_BASE", "https://github.com")
 
 CLOUD_URL = re.compile(r"https://claude\.ai/code/(session_[A-Za-z0-9_-]+)")
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
+ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[A-Za-z~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[78=>]")
+# A terminal program moves the cursor right instead of printing spaces.
+CURSOR_RIGHT = re.compile(r"\x1b\[\d*C")
 
 lock = threading.Lock()
 
@@ -111,6 +113,17 @@ def last_lines(text: str, n: int = 3) -> str:
     return " / ".join(lines[-n:])[:400]
 
 
+def reason(text: str) -> str:
+    """The line that says why, from a terminal program's output: its first
+    error line, else its last lines. Cursor moves and bare control bytes go."""
+    clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", ANSI.sub("", CURSOR_RIGHT.sub(" ", text)))
+    lines = [l.strip() for l in clean.replace("\r", "\n").splitlines() if l.strip()]
+    for i, l in enumerate(lines):
+        if re.match(r"(Error\b|error:|Not uploading|Cloud agents require)", l):
+            return " ".join(lines[i:i + 4])[:600]
+    return " / ".join(lines[-3:])[:400]
+
+
 class Refused(Exception):
     def __init__(self, status: int, message: str):
         super().__init__(message)
@@ -158,22 +171,71 @@ def git(args: list, cwd: Path = None, timeout: int = 300) -> str:
     return out.stdout
 
 
+def plain_git_files(path: Path) -> None:
+    """`claude --cloud` refuses a checkout whose index (or shallow list or
+    split-index file) is a link or has a second name: git never makes them so.
+    proot's --link2symlink, which Ygg's own Linux needs for dpkg, turns hard
+    links into symlinks, so here they can be. Each becomes a plain file with
+    the same bytes, which is all git wrote there."""
+    gitdir = path / ".git"
+    names = [gitdir / "index", gitdir / "shallow", *gitdir.glob("sharedindex.*")]
+    for f in names:
+        try:
+            st = f.lstat()
+        except OSError:
+            continue
+        if not f.is_symlink() and st.st_nlink == 1:
+            continue
+        data = f.read_bytes()  # Through the link, if it is one.
+        tmp = f.with_name(f.name + ".ygg-plain")
+        tmp.write_bytes(data)
+        os.chmod(tmp, 0o644)
+        f.unlink()
+        tmp.rename(f)
+
+
+def fresh_clone(url: str, path: Path, branch: str) -> None:
+    """A full clone: no shallow list for `claude --cloud` to object to, and the
+    history it needs to work out where your branch stands."""
+    tmp = path.with_name(path.name + ".ygg-new")
+    shutil.rmtree(tmp, ignore_errors=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        git(["clone", *(["--branch", branch] if branch else []), url, str(tmp)])
+    except Refused:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    shutil.rmtree(path, ignore_errors=True)
+    tmp.rename(path)
+
+
 def checkout(repo: str, branch: str = "") -> Path:
-    """A shallow checkout of the repo at the branch (its default when none):
-    `claude --cloud` clones the GitHub remote at the current branch."""
+    """A checkout of the repo at the branch (its default when none), as GitHub
+    has it: `claude --cloud` starts the session from the GitHub remote at the
+    current branch. Kept between sessions; when it can't be brought up to
+    date (or is an old shallow one), it's cloned again."""
     if not REPO.match(repo):
         raise Refused(400, "a repo is owner/name, like SebbeJohansson/yggdrasil")
     path = repo_dir(repo)
     url = f"{GIT_BASE}/{repo}.git"
-    if not (path / ".git").exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        git(["clone", "--depth", "1", *(["--branch", branch] if branch else []), url, str(path)])
-        return path
-    if branch:
-        git(["fetch", "--depth", "1", "origin", f"{branch}:refs/remotes/origin/{branch}"], cwd=path)
-        git(["checkout", "-B", branch, f"origin/{branch}"], cwd=path)
+    if (path / ".git").is_dir() and not (path / ".git" / "shallow").exists():
+        try:
+            git(["fetch", "--prune", "origin"], cwd=path)
+            if not branch:
+                git(["remote", "set-head", "origin", "--auto"], cwd=path)
+                head = git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd=path).strip()
+                branch_here = head.split("/", 1)[1]
+            else:
+                branch_here = branch
+            git(["checkout", "-f", "-B", branch_here, f"origin/{branch_here}"], cwd=path)
+            git(["clean", "-fdq"], cwd=path)
+        except Refused as e:
+            if "GitHub refused" in str(e):
+                raise
+            fresh_clone(url, path, branch)
     else:
-        git(["pull", "--ff-only", "--depth", "1"], cwd=path)
+        fresh_clone(url, path, branch)
+    plain_git_files(path)
     return path
 
 
@@ -249,7 +311,12 @@ def start_cloud(repo: str, task: str, branch: str = "") -> dict:
         proc.stdin.close()
         proc.stdout.close()
     if not found:
-        raise Refused(502, "claude --cloud printed no session link: " + last_lines("".join(seen)))
+        text = "".join(seen)
+        try:
+            (home() / "last-start.log").write_text(ANSI.sub("", text))
+        except OSError:
+            pass
+        raise Refused(502, "claude --cloud made no session: " + reason(text) + " (all of it: ~/.ygg-bridge/last-start.log)")
     url, sid = found
     session = {"id": sid, "url": url, "repo": repo, "branch": branch, "task": task, "at": int(time.time() * 1000)}
     with lock:

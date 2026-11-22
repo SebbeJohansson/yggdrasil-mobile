@@ -115,6 +115,35 @@ class BridgeTest(unittest.TestCase):
         status, body = self.call("POST", "/v1/github", {"token": ""})
         self.assertEqual((200, False), (status, body["github"]))
 
+    def test_checkout_is_full_plain_and_kept_up_to_date(self):
+        b = self.b
+        path = b.checkout("me/app")
+        self.assertFalse((path / ".git" / "shallow").exists())
+        # An old shallow checkout is cloned again.
+        (path / ".git" / "shallow").write_text("x\n")
+        path = b.checkout("me/app")
+        self.assertFalse((path / ".git" / "shallow").exists())
+        # A checkout git can't bring up to date is cloned again.
+        (path / ".git" / "HEAD").write_text("garbage\n")
+        path = b.checkout("me/app")
+        self.assertEqual("main", subprocess.run(["git", "branch", "--show-current"], cwd=path, capture_output=True, text=True).stdout.strip())
+
+    def test_linked_index_becomes_a_plain_file(self):
+        path = self.b.checkout("me/app")
+        index = path / ".git" / "index"
+        real = path / ".git" / ".l2s.index0001"
+        index.rename(real)
+        index.symlink_to(real.name)
+        self.b.plain_git_files(path)
+        self.assertFalse(index.is_symlink())
+        self.assertEqual(real.read_bytes(), index.read_bytes())
+        ok = subprocess.run(["git", "status", "--porcelain"], cwd=path, capture_output=True, text=True)
+        self.assertEqual(0, ok.returncode, ok.stderr)
+
+    def test_reason_finds_the_error_line(self):
+        out = "\x1b7\x1b[?25l\x1b(B\x1b[>4m\x1b]0;claude\x1b\\Working\x1b8\r\nNot\x1b[1Cuploading this working tree: its index is a link.\r\nUse a fresh clone.\r\n\x1b[<u"
+        self.assertTrue(self.b.reason(out).startswith("Not uploading this working tree: its index is a link. Use a fresh clone."), self.b.reason(out))
+
     def test_message_queues_in_any_session(self):
         status, body = self.call("POST", "/v1/cloud/session_abc/message", {"text": "Also add tests"})
         self.assertEqual((200, True), (status, body["ok"]))
