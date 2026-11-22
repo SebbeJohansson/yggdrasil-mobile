@@ -1,5 +1,16 @@
 package io.github.sebbejohansson.yggdrasil.llm.claude
 
+import android.annotation.SuppressLint
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import io.github.sebbejohansson.yggdrasil.ui.HudToggle
+import io.github.sebbejohansson.yggdrasil.linux.OwnLinux
+import io.github.sebbejohansson.yggdrasil.linux.LinuxState
+import io.github.sebbejohansson.yggdrasil.linux.LinuxLogin
+import io.github.sebbejohansson.yggdrasil.linux.LinuxBridgeService
+import androidx.core.net.toUri
+import androidx.compose.runtime.rememberCoroutineScope
+import android.os.PowerManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -155,8 +166,8 @@ fun PhoneCloudPanel(vm: BridgeViewModel, onSetUp: () -> Unit) {
         when {
             !s.checked -> Text("Looking for the bridge…", style = HudText.meta)
             s.health == null -> {
-                Text("Start cloud sessions from here, with no computer on: Ygg's Claude bridge runs Claude Code on this phone, in Android's Linux Terminal.", style = HudText.small)
-                Text("Not running. Open Terminal (it starts with it), or ygg-bridge start. Not installed yet: Settings → Claude bridge.", style = HudText.meta)
+                Text("Start cloud sessions from here, with no computer on: Ygg's Claude bridge runs Claude Code on this phone, in Ygg's own Linux.", style = HudText.small)
+                Text("Not running. Set it up and turn on Always on under Settings → Claude bridge.", style = HudText.meta)
                 HudButton("Set it up", onSetUp, kind = HudButtonKind.SMALL)
             }
             s.health.claude.isEmpty() -> Text("The bridge runs, but Claude Code isn't installed in it: run its installer again.", style = HudText.meta.copy(color = Hud.amber))
@@ -216,15 +227,13 @@ fun FollowUp(id: String, s: BridgeUiState, vm: BridgeViewModel, draft: String, o
 }
 
 /**
- * Settings → Claude bridge: where it runs (Android's Linux Terminal, or
- * Termux), whether it does, its key, and the install command to paste.
+ * Settings → Claude bridge: where it runs, and setting it up there. Ygg's own
+ * Linux (the default) is set up, signed in and kept on from here, no other
+ * app; UserLAnd and Termux get an install command to paste.
  */
 @Composable
-fun BridgePanel(vm: BridgeViewModel, settings: BridgeSettings) {
+fun BridgePanel(vm: BridgeViewModel, settings: BridgeSettings, linux: OwnLinux, login: LinuxLogin) {
     val s = vm.state.collectAsStateWithLifecycle().value
-    val context = LocalContext.current
-    var key by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf<String?>(null) }
     var place by remember { mutableStateOf(settings.place) }
     FollowBridge(vm)
     Text(
@@ -234,71 +243,162 @@ fun BridgePanel(vm: BridgeViewModel, settings: BridgeSettings) {
     )
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         BridgePlace.entries.forEach { p ->
-            HudButton(p.label, { place = p; settings.place = p; note = null }, kind = if (p == place) HudButtonKind.PRIMARY else HudButtonKind.GHOST)
+            HudButton(p.label, { place = p; settings.place = p }, kind = if (p == place) HudButtonKind.PRIMARY else HudButtonKind.GHOST)
         }
     }
     Column(Modifier.fillMaxWidth().hudPanel(warn = s.checked && !s.ready).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         HudLabel(
             when {
                 !s.checked -> "Looking…"
-                s.health == null -> "Not running"
-                s.health.claude.isEmpty() -> "Running, Claude Code missing"
-                !s.hasKey -> "Running, key missing"
+                s.health == null -> "Bridge not running"
+                s.health.claude.isEmpty() -> "Bridge running, Claude Code missing"
+                !s.hasKey -> "Bridge running, key missing"
                 else -> "Ready · ${s.health.claude}"
             },
             color = if (s.ready) Hud.green else Hud.amber,
         )
         if (s.health != null && !s.health.github) Text("No GitHub token: public repos only (ygg-bridge github <token>).", style = HudText.meta)
-        Text(
-            when (place) {
-                BridgePlace.LINUX_TERMINAL ->
-                    "1. Turn on Settings → System → Developer options → Linux development environment, and open Terminal once.\n" +
-                        "2. Copy the install command, paste it into Terminal and run it.\n" +
-                        "3. Allow port 8765 when Terminal asks (or its settings → Port control).\n" +
-                        "4. Sign Claude Code in: ygg-bridge login\n" +
-                        "5. Paste the key it shows (ygg-bridge key) below.\n" +
-                        "It runs while Terminal's Linux is on: keep Terminal open in the background."
-                BridgePlace.TERMUX ->
-                    "1. Install Termux from F-Droid (and Termux:Boot to start with the phone).\n" +
-                        "2. Copy the install command, paste it into Termux and run it.\n" +
-                        "3. Sign Claude Code in: ygg-bridge login\n" +
-                        "4. Paste the key it shows (ygg-bridge key) below."
-            },
-            style = HudText.small,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            HudButton("Copy install command", {
-                copy(context, BridgeClient.installCommand(context, place))
-                note = "Copied. Paste it into ${place.label}."
-            }, kind = HudButtonKind.SMALL)
-            HudButton("Open ${place.label}", {
-                val launch = context.packageManager.getLaunchIntentForPackage(place.app)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                when {
-                    launch != null -> context.startActivity(launch)
-                    place == BridgePlace.LINUX_TERMINAL -> {
-                        note = "Turn on Linux development environment in Developer options first."
-                        runCatching {
-                            context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                        }
-                    }
-                    else -> note = "Termux isn't installed: get it from F-Droid."
-                }
-            }, kind = HudButtonKind.SMALL)
-        }
-        if (s.hasKey) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Key set, kept encrypted.", style = HudText.meta, modifier = Modifier.weight(1f))
-                HudButton("Remove", { vm.removeKey() }, kind = HudButtonKind.SMALL)
-            }
-        } else {
-            HudTextField(key, { key = it }, placeholder = "The bridge's key", maxLines = 1, visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth())
-            HudButton("Save key", {
-                if (vm.setKey(key)) { key = ""; note = null } else note = "That doesn't look like the bridge's key."
-            }, enabled = key.isNotBlank(), kind = HudButtonKind.GHOST)
-        }
-        note?.let { Text(it, style = HudText.meta.copy(color = Hud.cyan)) }
+        if (place == BridgePlace.OWN_LINUX) OwnLinuxSetup(vm, linux, login) else PastedSetup(vm, s, place)
     }
+}
+
+/** Ygg's own Linux: set up, sign in, always on. */
+// Ygg is sideloaded, not on the Play Store: asking to run in the background is
+// what keeping the bridge always on needs, and you're asked by Android itself.
+@SuppressLint("BatteryLife")
+@Composable
+private fun OwnLinuxSetup(vm: BridgeViewModel, linux: OwnLinux, login: LinuxLogin) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val state = linux.state.collectAsStateWithLifecycle().value
+    val signIn = login.state.collectAsStateWithLifecycle().value
+    val on = LinuxBridgeService.runningState.collectAsStateWithLifecycle().value
+    val status = LinuxBridgeService.status.collectAsStateWithLifecycle().value
+    val lastExit = LinuxBridgeService.lastExit.collectAsStateWithLifecycle().value
+    var code by remember { mutableStateOf("") }
+    val uri = LocalUriHandler.current
+
+    // The bridge's key is in Ygg's own storage: Ygg takes it, no pasting.
+    LaunchedEffect(state) {
+        if (state == LinuxState.Ready) withContext(Dispatchers.IO) { linux.bridgeKey() }?.let { vm.setKey(it) }
+    }
+
+    HudLabel("1 · Linux")
+    when (state) {
+        LinuxState.NotInstalled -> {
+            Text("Ubuntu 24.04 inside Ygg, with Claude Code. About 30 MB to download and 1 GB once set up; Wi-Fi is best.", style = HudText.small)
+            HudButton("Set up", { scope.launch { linux.install() } }, kind = HudButtonKind.PRIMARY)
+        }
+        is LinuxState.Downloading -> Text("Downloading Ubuntu: ${state.bytes / 1_000_000} of ${state.total / 1_000_000} MB", style = HudText.small)
+        is LinuxState.Unpacking -> Text("Unpacking: ${state.files} files", style = HudText.small)
+        is LinuxState.SettingUp -> {
+            Text("Setting up (a few minutes):", style = HudText.small)
+            Text(state.line, style = HudText.meta, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        LinuxState.Ready -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Ubuntu with Claude Code, set up.", style = HudText.small, modifier = Modifier.weight(1f))
+            HudButton("Update", { scope.launch { linux.install() } }, kind = HudButtonKind.SMALL)
+            HudButton("Remove", { LinuxBridgeService.stop(context); scope.launch { linux.remove() } }, kind = HudButtonKind.SMALL)
+        }
+        is LinuxState.Failed -> {
+            Text("Setup stopped: ${state.message}", style = HudText.small.copy(color = Hud.amber))
+            state.log.takeLast(6).forEach { Text(it, style = HudText.meta, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            HudButton("Try again", { scope.launch { linux.install() } }, kind = HudButtonKind.PRIMARY)
+        }
+    }
+    val ready = state == LinuxState.Ready
+
+    HudLabel("2 · Sign in to Claude", modifier = Modifier.padding(top = 4.dp))
+    when {
+        !ready -> Text("After the Linux is set up.", style = HudText.meta)
+        signIn.done -> Text("Signed in.", style = HudText.small.copy(color = Hud.green))
+        !signIn.running -> {
+            Text("Once: open the link it gives, sign in with your Claude account, and paste the code back here.", style = HudText.meta)
+            HudButton("Sign in", { scope.launch { login.start() } }, kind = HudButtonKind.GHOST)
+            if (signIn.code != null && signIn.code != 0) {
+                Text("Sign-in ended (${signIn.code}): ${signIn.lines.lastOrNull().orEmpty()}", style = HudText.meta.copy(color = Hud.amber))
+            }
+        }
+        else -> {
+            signIn.url?.let { link -> HudButton("Open the sign-in link", { uri.openUri(link) }, kind = HudButtonKind.PRIMARY) }
+                ?: Text("Starting…", style = HudText.meta)
+            signIn.lines.takeLast(3).forEach { Text(it, style = HudText.meta, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                HudTextField(code, { code = it }, placeholder = "The code the browser shows", maxLines = 1, modifier = Modifier.weight(1f))
+                HudButton("Send", { login.send(code); code = "" }, kind = HudButtonKind.SMALL, enabled = code.isNotBlank())
+            }
+            HudButton("Cancel", { login.cancel() }, kind = HudButtonKind.SMALL)
+        }
+    }
+
+    HudLabel("3 · Always on", modifier = Modifier.padding(top = 4.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(if (on) status else "Off. On, it runs with a quiet notification, and starts with the phone.", style = HudText.meta)
+            lastExit?.takeIf { on }?.let { Text("Last stop: $it", style = HudText.meta.copy(color = Hud.amber), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+        }
+        HudToggle(on, { want -> if (want) LinuxBridgeService.start(context) else LinuxBridgeService.stop(context) })
+    }
+    val power = context.getSystemService(PowerManager::class.java)
+    if (!power.isIgnoringBatteryOptimizations(context.packageName)) {
+        Text("For it to stay on, let Ygg run in the background (battery: Unrestricted).", style = HudText.meta)
+        HudButton("Allow in the background", {
+            runCatching {
+                context.startActivity(
+                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri())
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        }, kind = HudButtonKind.SMALL)
+    }
+    Text("If Android still stops it: Developer options → Disable child process restrictions.", style = HudText.meta.copy(color = Hud.overlay0))
+}
+
+/** UserLAnd or Termux: an install command to paste there, and the key to paste back. */
+@Composable
+private fun PastedSetup(vm: BridgeViewModel, s: BridgeUiState, place: BridgePlace) {
+    val context = LocalContext.current
+    var key by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf<String?>(null) }
+    Text(
+        when (place) {
+            BridgePlace.USERLAND ->
+                "1. Install UserLAnd (Play Store, free) and start an Ubuntu session.\n" +
+                    "2. Copy the install command, paste it into the session and run it.\n" +
+                    "3. Sign Claude Code in: ygg-bridge login\n" +
+                    "4. Paste the key it shows (ygg-bridge key) below.\n" +
+                    "It runs while UserLAnd's session does."
+            else ->
+                "1. Install Termux from F-Droid (and Termux:Boot to start with the phone).\n" +
+                    "2. Copy the install command, paste it into Termux and run it.\n" +
+                    "3. Sign Claude Code in: ygg-bridge login\n" +
+                    "4. Paste the key it shows (ygg-bridge key) below."
+        },
+        style = HudText.small,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        HudButton("Copy install command", {
+            copy(context, BridgeClient.installCommand(context, place))
+            note = "Copied. Paste it into ${place.label}."
+        }, kind = HudButtonKind.SMALL)
+        HudButton("Open ${place.label}", {
+            val launch = place.app?.let { context.packageManager.getLaunchIntentForPackage(it) }?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (launch != null) context.startActivity(launch) else note = "${place.label} isn't installed."
+        }, kind = HudButtonKind.SMALL)
+    }
+    if (s.hasKey) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Key set, kept encrypted.", style = HudText.meta, modifier = Modifier.weight(1f))
+            HudButton("Remove", { vm.removeKey() }, kind = HudButtonKind.SMALL)
+        }
+    } else {
+        HudTextField(key, { key = it }, placeholder = "The bridge's key", maxLines = 1, visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth())
+        HudButton("Save key", {
+            if (vm.setKey(key)) { key = ""; note = null } else note = "That doesn't look like the bridge's key."
+        }, enabled = key.isNotBlank(), kind = HudButtonKind.GHOST)
+    }
+    note?.let { Text(it, style = HudText.meta.copy(color = Hud.cyan)) }
 }
 
 private fun copy(context: Context, text: String) {

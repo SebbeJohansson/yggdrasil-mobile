@@ -1,5 +1,7 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.linux.LinuxLogin
+import io.github.sebbejohansson.yggdrasil.linux.OwnLinux
 import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeSettings
 import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeClient
 import io.github.sebbejohansson.yggdrasil.core.NetMeter
@@ -130,6 +132,9 @@ class AppContainer(private val app: Application) {
     /** Ygg's Claude bridge in Termux: cloud sessions and the Claude provider. Its key is kept encrypted. */
     val bridge = BridgeClient(KeystoreTokenVault(app, prefsName = "bridge_key", alias = "ygg-bridge-key"))
     val bridgeSettings = BridgeSettings(app)
+    /** Ygg's own Linux (Ubuntu under proot), where the bridge runs by default. */
+    val ownLinux = OwnLinux(app)
+    val linuxLogin = LinuxLogin(ownLinux)
     /**
      * Claude, behind the names guard: names are swapped for placeholders by the
      * local model before anything leaves the phone, or nothing is sent.

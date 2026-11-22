@@ -70,6 +70,8 @@ class DellingrWorker(context: Context, params: WorkerParameters) : CoroutineWork
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        // Ygg's own Linux and its bridge, if you had it always on.
+        io.github.sebbejohansson.yggdrasil.linux.LinuxBridgeService.resume(context)
         // YggApp.onCreate has already run and set the alarm; nothing else to do.
     }
 }

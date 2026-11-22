@@ -67,8 +67,10 @@ android {
     }
 
     packaging {
-        // LiteRT-LM loads its .so files straight from the APK.
-        jniLibs.useLegacyPackaging = false
+        // Unpacked at install: Ygg's own Linux runs proot from nativeLibraryDir
+        // (Android runs no program from app storage). LiteRT-LM loads either way,
+        // and the APK is smaller compressed.
+        jniLibs.useLegacyPackaging = true
     }
 
     testOptions {

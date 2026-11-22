@@ -16,6 +16,10 @@
     <!-- Model downloads run as a foreground job, so they carry on outside the app. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Ygg's own Linux: the Claude bridge, always on, in a foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- To ask that the bridge's service isn't paused to save battery. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Updates from the GitHub releases: install, and on Android 12+ without asking each time. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
@@ -133,6 +137,15 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+        <!-- Ygg's own Linux running the Claude bridge, always on. -->
+        <service
+            android:name=".linux.LinuxBridgeService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs a local Linux (proot) with the Claude Code CLI as a localhost bridge for this app's own coding-session features." />
+        </service>
         <!-- Focus as a Quick Settings tile. -->
         <service
             android:name=".hermodr.FocusTileService"

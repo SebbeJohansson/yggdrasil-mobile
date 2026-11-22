@@ -16,37 +16,72 @@ and the bridge runs `claude`.
 
 ```
 Ygg ──HTTP 127.0.0.1:8765 (key)──► ygg_bridge.py ──► claude --cloud / claude -p
-                                   (Termux → Ubuntu via proot-distro)
+                                   (Ygg's own Linux: Ubuntu under proot)
 ```
 
 Claude Code supports Ubuntu but not Android itself, so the bridge and
-`claude` live in an Ubuntu inside Termux. proot shares the phone's
-network, so the app reaches it on `127.0.0.1`.
+`claude` run in Linux. Three places can host it; Ygg's own Linux is the default.
 
-The bridge is one Python file with no dependencies:
-`app/src/main/assets/bridge/ygg_bridge.py`. Its installer is next to it.
-Both ship inside the app, because the repo is private.
+| Place | What it is | Always on |
+| --- | --- | --- |
+| **Ygg's own Linux** (default) | Ubuntu 24.04's official base, under proot shipped inside Ygg | Yes: Ygg's own foreground service, starts with the phone |
+| UserLAnd | UserLAnd's Ubuntu (Play Store, free), also proot | While its session runs |
+| Termux | Termux with Ubuntu (proot-distro) | With Termux:Boot and its wake lock |
 
-## Set up (once)
+All three run the same `ygg_bridge.py` and set up with the same
+`app/src/main/assets/linux/setup.sh`. proot shares the phone's network, so
+Ygg reaches the bridge on `127.0.0.1` in each.
 
-1. **Termux:** install it from F-Droid. Optionally install Termux:Boot and
-   open it once, so the bridge starts with the phone.
-2. **Install:** in Ygg, go to Settings → Claude bridge → **Copy install
-   command**. Paste it into Termux and run it. It sets up Ubuntu (a few
-   hundred MB), Python, git and Claude Code (the official
-   `claude.ai/install.sh`), then starts the bridge.
-3. **Sign in:** run `ygg-bridge login`. That's `claude auth login` inside
-   Ubuntu: open the link, sign in, paste the code back. Cloud sessions need
-   this sign-in, not a `setup-token`.
-4. **Key:** run `ygg-bridge key` and paste the key into Ygg (Settings →
-   Claude bridge). Every call but `/health` needs it, so other apps on the
-   phone can't use your account through the bridge.
-5. **Private repos:** run `ygg-bridge github <token>` with a GitHub token
-   that can read them. It's only used to clone, sent as a header to
-   github.com, and never written into a checkout.
+## Ygg's own Linux (default)
 
-After that: `ygg-bridge start | stop | status | log`. While it runs it holds
-Termux's wake lock, so Android doesn't pause it.
+Settings → Claude bridge → *Ygg's own Linux*:
+
+1. **Set up:**
+   - Ygg downloads Ubuntu 24.04's base for arm64 (about 30 MB, checked
+     against Ubuntu's SHA-256) and unpacks it into its own storage.
+   - It then runs `setup.sh` inside it: Python, git, util-linux, and Claude
+     Code's official binary from Anthropic's download host, checked against
+     its manifest.
+   - About 1 GB once done. *Update* runs it again, and *Remove* deletes it
+     all.
+2. **Sign in to Claude:**
+   - Ygg runs `claude auth login` and shows its link. Open it, sign in, and
+     paste the code back into Ygg.
+   - The bridge's key is in Ygg's own storage, so Ygg takes it by itself.
+3. **Always on:**
+   - The bridge runs in a foreground service with a quiet notification
+     (with *Stop*). It starts again if it stops, and starts with the phone.
+   - Allow Ygg in the background (battery: Unrestricted) when asked.
+   - If Android still stops it: Developer options → *Disable child process
+     restrictions*.
+
+**How it runs:**
+- **proot:** Termux's builds of `proot`, its loader, `talloc` and
+  `libandroid-shmem` ship as Ygg's native libraries, because Android runs no
+  program written into app storage.
+- **Updating proot:** `linux/prepare-proot.py` fetches and checks them;
+  licences are in `docs/licenses/proot-NOTICE.md`.
+- **Claude Code:**
+  - It isn't installed with `claude install`, because its self-copy fails
+    under proot.
+  - Its auto-updater is off (`DISABLE_AUTOUPDATER=1`); *Update* brings the
+    newest instead.
+- **Tested:** `LinuxIntegrationTest` (run with `YGG_LINUX_IT=1`) does it all
+  for real on a desktop Ubuntu with its own proot: unpack, `setup.sh`, Claude
+  Code running, and the bridge answering on 127.0.0.1. What it can't cover is
+  Android's proot build on the phone.
+
+## UserLAnd or Termux
+
+Settings → Claude bridge → *UserLAnd* or *Termux* → **Copy install
+command**:
+
+1. Paste the command there and run it. It carries `ygg_bridge.py`,
+   `setup.sh` and the installer, because the repo is private.
+2. Run `ygg-bridge login` to sign Claude Code in.
+3. Paste `ygg-bridge key` into Ygg.
+4. **Private repos:** `ygg-bridge github <token>`.
+5. **Day to day:** `ygg-bridge start | stop | status | log`.
 
 ## Contract
 

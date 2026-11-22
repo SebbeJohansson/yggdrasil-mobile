@@ -553,10 +553,17 @@ The Code tab has a **This phone** section. You can start a Claude Code
 cloud session for any repo and follow up on it with no computer on. Follow
 ups also work on the desktop's cloud sessions while the desktop is away.
 
-- **How:** Ygg's Claude bridge runs the real `claude` CLI in Termux (an
-  Ubuntu inside it) with your subscription, on `127.0.0.1` with its own key.
-- **Setup:** Settings → Claude bridge → *Copy install command*, paste it
-  into Termux, then `ygg-bridge login` and paste `ygg-bridge key` back.
+- **How:** Ygg's Claude bridge runs the real `claude` CLI with your
+  subscription, on `127.0.0.1` with its own key, in **Ygg's own Linux**:
+  Ubuntu's official base under proot shipped inside Ygg.
+  - **Always on:** it runs under Ygg's own foreground service, and starts
+    with the phone.
+- **Setup:** Settings → Claude bridge.
+  1. *Set up*: downloads about 30 MB, and takes about 1 GB once done.
+  2. *Sign in to Claude*: the link and a code box, all in Ygg.
+  3. *Always on*.
+- **Elsewhere:** UserLAnd and Termux work too, with an install command to
+  paste.
 - **Also:** it makes the Claude provider work.
 
 Details and the contract are in [docs/claude-bridge.md](docs/claude-bridge.md).
@@ -577,7 +584,7 @@ is allowed, fits the tier, and is ready. When none can answer,
 | Provider | Where | Status |
 | --- | --- | --- |
 | `LiteRtLmProvider` | on the phone, GPU with CPU fallback | working: Gemma 4 E2B (default), E4B |
-| `ClaudeBridgeProvider` | Claude Code CLI on the phone (Termux), your subscription | working, through Ygg's Claude bridge |
+| `ClaudeBridgeProvider` | Claude Code CLI on the phone (Ygg's own Linux), your subscription | working, through Ygg's Claude bridge |
 
 `LiteRtLmProvider` keeps the last conversation open, so a follow-up
 message doesn't feed the whole chat to the model again.

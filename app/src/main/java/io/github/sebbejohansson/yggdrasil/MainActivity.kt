@@ -429,7 +429,7 @@ private fun Root(
                         )
                         UpdatesPanel(container.updater, container.appScope)
                         HudSection("Claude bridge", Modifier.padding(top = 8.dp))
-                        BridgePanel(bridgeVm, container.bridgeSettings)
+                        BridgePanel(bridgeVm, container.bridgeSettings, container.ownLinux, container.linuxLogin)
                         HudSection("Focus", Modifier.padding(top = 8.dp))
                         FocusPanel(container.hermodr)
                         HudSection("Watching you", Modifier.padding(top = 8.dp))

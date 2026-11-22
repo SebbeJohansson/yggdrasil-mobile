@@ -92,16 +92,16 @@ class BridgeContractTest {
     }
 
     @Test fun theInstallCommandWritesTheBridgeAsItIsForEachPlace() {
-        for (place in BridgePlace.entries) {
-            val command = BridgeClient.installCommand(RuntimeEnvironment.getApplication(), place).replace("bash ${place.installer}\n", "")
+        for (place in BridgePlace.entries.filter { it.installer != null }) {
+            val installer = place.installer!!
+            val command = BridgeClient.installCommand(RuntimeEnvironment.getApplication(), place).replace("bash $installer\n", "")
             val home = Files.createTempDirectory("terminal").toFile()
             val run = ProcessBuilder("bash", "-c", command).apply { environment()["HOME"] = home.path }.start()
             assertEquals(0, run.waitFor())
-            for (name in listOf("ygg_bridge.py", place.installer)) {
-                assertEquals(File("src/main/assets/bridge/$name").readText(), File(home, "ygg-bridge-setup/$name").readText())
+            for ((asset, name) in listOf("bridge/ygg_bridge.py" to "ygg_bridge.py", "linux/setup.sh" to "setup.sh", "bridge/$installer" to installer)) {
+                assertEquals(File("src/main/assets/$asset").readText(), File(home, "ygg-bridge-setup/$name").readText())
+                if (name.endsWith(".sh")) assertEquals(0, ProcessBuilder("bash", "-n", File(home, "ygg-bridge-setup/$name").path).start().waitFor())
             }
-            // The installer is valid bash.
-            assertEquals(0, ProcessBuilder("bash", "-n", File(home, "ygg-bridge-setup/${place.installer}").path).start().waitFor())
         }
     }
 }
