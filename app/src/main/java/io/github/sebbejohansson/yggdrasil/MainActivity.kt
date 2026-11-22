@@ -381,6 +381,24 @@ private fun Root(
                 })
             }
             if (tab == MainActivity.TAB_CHAT) todayCard()
+            // Health, from the arc reactor and from System; Performance opens from it.
+            val healthPage: @Composable (onBack: () -> Unit, onPerformance: () -> Unit) -> Unit = { onBack, onPerformance ->
+                val loopsVersion by container.loops.changes.flow.collectAsStateWithLifecycle()
+                val readings by container.vedrfolnir.latest.collectAsStateWithLifecycle()
+                val focusVersion by container.hermodr.changes.flow.collectAsStateWithLifecycle()
+                @Suppress("UNUSED_EXPRESSION") loopsVersion
+                @Suppress("UNUSED_EXPRESSION") focusVersion
+                val now = java.time.Instant.now()
+                val all = alertState.active
+                val cards = Parts.cards(
+                    partReports(
+                        chatState, messageState, container.hermodr.focusNow(), jobsState, huginnState, readings, phoneFailing,
+                        alertState, container.you, container.updater, container.loops, now,
+                    ),
+                    all, container.loops.startedAt, now,
+                )
+                HealthScreen(cards, Parts.unclaimed(cards, all), alerts, onBack = onBack, onPerformance = onPerformance)
+            }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
                     MainActivity.TAB_ALERTS, MainActivity.TAB_MESSAGES, MainActivity.TAB_PROMISES -> InboxScreen(
@@ -394,24 +412,10 @@ private fun Root(
                         onPage = { tab = it },
                     )
                     MainActivity.TAB_CODE -> CodeScreen(codeVm, phone = bridgeVm, local = localVm, onSetUpPhone = ::openSettings)
-                    MainActivity.TAB_SYSTEM -> SystemScreen(systemPage, { systemPage = it }, phone, jobs, huginnVm, historyVm)
-                    MainActivity.TAB_HEALTH -> {
-                        val loopsVersion by container.loops.changes.flow.collectAsStateWithLifecycle()
-                        val readings by container.vedrfolnir.latest.collectAsStateWithLifecycle()
-                        val focusVersion by container.hermodr.changes.flow.collectAsStateWithLifecycle()
-                        @Suppress("UNUSED_EXPRESSION") loopsVersion
-                        @Suppress("UNUSED_EXPRESSION") focusVersion
-                        val now = java.time.Instant.now()
-                        val all = alertState.active
-                        val cards = Parts.cards(
-                            partReports(
-                                chatState, messageState, container.hermodr.focusNow(), jobsState, huginnState, readings, phoneFailing,
-                                alertState, container.you, container.updater, container.loops, now,
-                            ),
-                            all, container.loops.startedAt, now,
-                        )
-                        HealthScreen(cards, Parts.unclaimed(cards, all), alerts, onBack = { tab = beforeSettings }, onPerformance = { tab = MainActivity.TAB_PERF })
-                    }
+                    MainActivity.TAB_SYSTEM -> SystemScreen(systemPage, { systemPage = it }, phone, jobs, huginnVm, historyVm,
+                        health = { healthPage({ systemPage = 0 }, { systemPage = 6 }) },
+                        performance = { PerformanceScreen(container, onBack = { systemPage = 5 }) })
+                    MainActivity.TAB_HEALTH -> healthPage({ tab = beforeSettings }, { tab = MainActivity.TAB_PERF })
                     MainActivity.TAB_PERF -> PerformanceScreen(container, onBack = { tab = MainActivity.TAB_HEALTH })
                     MainActivity.TAB_SETTINGS -> SettingsScreen(
                         chat = chat,
@@ -637,16 +641,22 @@ private fun SystemScreen(
     jobs: JobsViewModel,
     huginn: HuginnViewModel,
     history: HistoryViewModel,
+    /** Every part's health, as the arc reactor opens it. */
+    health: @Composable () -> Unit,
+    /** What pulls on what: processes, battery, storage, the phone, the model. */
+    performance: @Composable () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
-        PageTabs(listOf("Phone", "Jobs", "Huginn", "Tree", "Runes"), selected = page, onSelect = onPage)
+        PageTabs(listOf("Phone", "Jobs", "Huginn", "Tree", "Runes", "Health", "Performance"), selected = page, onSelect = onPage)
         Box(Modifier.weight(1f)) {
             when (page) {
                 0 -> PhoneScreen(phone)
                 1 -> JobsScreen(jobs)
                 2 -> HuginnScreen(huginn)
                 3 -> TreeScreen(history)
-                else -> RunesScreen(history)
+                4 -> RunesScreen(history)
+                5 -> health()
+                else -> performance()
             }
         }
     }
