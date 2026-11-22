@@ -103,6 +103,13 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(502, status)
         self.assertIn("git clone failed", body["error"])
 
+    def test_github_token_is_kept_and_forgotten(self):
+        self.assertEqual(400, self.call("POST", "/v1/github", {"token": "not a token!"})[0])
+        status, body = self.call("POST", "/v1/github", {"token": "ghp_" + "a" * 36})
+        self.assertEqual((200, True), (status, body["github"]))
+        status, body = self.call("POST", "/v1/github", {"token": ""})
+        self.assertEqual((200, False), (status, body["github"]))
+
     def test_message_queues_in_any_session(self):
         status, body = self.call("POST", "/v1/cloud/session_abc/message", {"text": "Also add tests"})
         self.assertEqual((200, True), (status, body["ok"]))

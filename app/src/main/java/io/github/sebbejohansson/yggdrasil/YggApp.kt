@@ -130,7 +130,10 @@ class AppContainer(private val app: Application) {
     val defaultModel = ModelCatalog.GEMMA_4_E2B
     val localLlm = LiteRtLmProvider(defaultModel, modelStore, app.cacheDir)
     /** Ygg's Claude bridge in Termux: cloud sessions and the Claude provider. Its key is kept encrypted. */
-    val bridge = BridgeClient(KeystoreTokenVault(app, prefsName = "bridge_key", alias = "ygg-bridge-key"))
+    val bridge = BridgeClient(
+        KeystoreTokenVault(app, prefsName = "bridge_key", alias = "ygg-bridge-key"),
+        githubToken = { KeystoreTokenVault(app).get() },
+    )
     val bridgeSettings = BridgeSettings(app)
     /** Ygg's own Linux (Ubuntu under proot), where the bridge runs by default. */
     val ownLinux = OwnLinux(app)

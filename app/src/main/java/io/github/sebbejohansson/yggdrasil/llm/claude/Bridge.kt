@@ -40,6 +40,8 @@ class BridgeException(val status: Int, message: String) : IOException(message)
 class BridgeClient(
     private val vault: TokenVault,
     private val baseUrl: String = "http://127.0.0.1:8765",
+    /** Ygg's own GitHub token (the updater's), handed to the bridge when it has none, for private repos. */
+    private val githubToken: () -> String? = { null },
 ) {
     val changes = Changes()
 
@@ -104,10 +106,27 @@ class BridgeClient(
         (0 until list.length()).map { list.getJSONObject(it).optString("repo") }.filter { it.isNotEmpty() }
     }
 
-    /** Starts a cloud session for [repo] (owner/name). Takes a minute or two: it clones, then waits for the link. */
+    /** Keeps [token] in the bridge for cloning private repos; blank forgets it. */
+    suspend fun setGitHub(token: String) = withContext(Dispatchers.IO) {
+        call("POST", "/v1/github", JSONObject().put("token", token.trim()))
+        changes.bump()
+    }
+
+    /**
+     * Starts a cloud session for [repo] (owner/name). Takes a minute or two: it clones, then waits for the link.
+     * When GitHub refuses the clone and the bridge has no token, Ygg's own is handed over and it tries once more.
+     */
     suspend fun start(repo: String, task: String, branch: String? = null): BridgeSession = withContext(Dispatchers.IO) {
         val body = JSONObject().put("repo", repo).put("task", task).put("branch", branch ?: "")
-        session(call("POST", "/v1/cloud", body, timeoutMs = 240_000)).also { changes.bump() }
+        val s = try {
+            call("POST", "/v1/cloud", body, timeoutMs = 240_000)
+        } catch (e: BridgeException) {
+            val token = githubToken()
+            if (token == null || e.message?.contains("no GitHub token") != true) throw e
+            call("POST", "/v1/github", JSONObject().put("token", token))
+            call("POST", "/v1/cloud", body, timeoutMs = 240_000)
+        }
+        session(s).also { changes.bump() }
     }
 
     /** Queues [text] in any cloud session of your account; returns once it's queued. */

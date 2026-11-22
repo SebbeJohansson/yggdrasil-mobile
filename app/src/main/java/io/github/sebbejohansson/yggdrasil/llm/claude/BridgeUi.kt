@@ -101,6 +101,13 @@ class BridgeViewModel(private val bridge: BridgeClient) : ViewModel() {
     fun setKey(text: String): Boolean = bridge.setKey(text).also { if (it) refresh() }
     fun removeKey() { bridge.removeKey(); refresh() }
 
+    fun setGitHub(token: String) = viewModelScope.launch {
+        runCatching { bridge.setGitHub(token) }
+            .onSuccess { _state.update { it.copy(error = null) } }
+            .onFailure { e -> _state.update { it.copy(error = "GitHub token not kept: ${e.message}") } }
+        refresh()
+    }
+
     fun start(repo: String, task: String) = viewModelScope.launch {
         _state.update { it.copy(starting = repo, error = null) }
         runCatching { bridge.start(repo, task) }
@@ -257,8 +264,25 @@ fun BridgePanel(vm: BridgeViewModel, settings: BridgeSettings, linux: OwnLinux, 
             },
             color = if (s.ready) Hud.green else Hud.amber,
         )
-        if (s.health != null && !s.health.github) Text("No GitHub token: public repos only (ygg-bridge github <token>).", style = HudText.meta)
+        if (s.health != null && !s.health.github) GitHubTokenField(vm, s.hasKey)
         if (place == BridgePlace.OWN_LINUX) OwnLinuxSetup(vm, linux, login) else PastedSetup(vm, s, place)
+    }
+}
+
+/** The bridge clones over https; private repos need a GitHub token that can read them. */
+@Composable
+private fun GitHubTokenField(vm: BridgeViewModel, hasKey: Boolean) {
+    var token by remember { mutableStateOf("") }
+    Text(
+        "No GitHub token: public repos only. Ygg's update token is handed over when a private clone is refused, " +
+            "or paste one (Contents: read) here.",
+        style = HudText.meta,
+    )
+    if (!hasKey) return
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        HudTextField(token, { token = it }, placeholder = "GitHub token", maxLines = 1, visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.weight(1f))
+        HudButton("Keep", { vm.setGitHub(token); token = "" }, kind = HudButtonKind.SMALL, enabled = token.isNotBlank())
     }
 }
 
