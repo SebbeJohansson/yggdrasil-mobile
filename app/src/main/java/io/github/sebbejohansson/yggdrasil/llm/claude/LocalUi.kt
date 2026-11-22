@@ -1,6 +1,8 @@
 package io.github.sebbejohansson.yggdrasil.llm.claude
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.size
 import io.github.sebbejohansson.yggdrasil.ui.Markdown
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
@@ -132,6 +134,7 @@ class LocalViewModel(private val bridge: BridgeClient) : ViewModel() {
     fun send(name: String, text: String) = act { bridge.promptLocal(name, text) }
     fun choose(name: String, d: LocalDialog, c: LocalChoice) = act { bridge.chooseLocal(name, d, c) }
     fun interrupt(name: String) = act { bridge.keysLocal(name, "esc") }
+    fun resume(name: String) = act { bridge.resumeLocal(name) }
 
     fun stop(name: String) = viewModelScope.launch {
         runCatching { bridge.stopLocal(name) }.onFailure { e -> _state.update { it.copy(error = e.message) } }
@@ -144,6 +147,7 @@ class LocalViewModel(private val bridge: BridgeClient) : ViewModel() {
         runCatching { what() }.onFailure { e -> _state.update { it.copy(error = e.message) } }
         _state.update { it.copy(sending = false) }
         refreshChat()
+        refresh()
     }
 
     companion object {
@@ -151,18 +155,19 @@ class LocalViewModel(private val bridge: BridgeClient) : ViewModel() {
     }
 }
 
-private fun statusText(s: String) = when (s) {
-    "working" -> "working"
-    "idle", "done" -> "your move"
+/** A local session's phase in words, as the desktop's sessions say it. */
+fun phaseText(c: LocalSession) = when (c.phase) {
+    "busy" -> if (c.tool.isNotEmpty()) "running ${c.tool}…" else "working"
+    "turn-ended" -> "your move"
     "blocked" -> "needs you"
-    "gone" -> "ended"
+    "ended" -> if (c.resumable) "ended · resumable" else "ended"
     else -> "starting"
 }
 
-private fun statusColor(s: String) = when (s) {
-    "working" -> Hud.cyan
-    "idle", "done" -> Hud.green
-    "blocked" -> Hud.amber
+fun phaseColor(phase: String) = when (phase) {
+    "busy" -> Hud.green
+    "turn-ended" -> Hud.cyan
+    "blocked" -> Hud.yellow
     else -> Hud.overlay0
 }
 
@@ -187,13 +192,12 @@ fun PhoneLocalDialog(bridgeVm: BridgeViewModel, vm: LocalViewModel, onSetUp: () 
             delay(if (open) 2_000 else 5_000)
         }
     }
-    Dialog(onDismissRequest = { if (s.chat != null) vm.open(null) else onDismiss() },
+    Dialog(onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Column(Modifier.fillMaxSize().background(Hud.base).systemBarsPadding().imePadding().padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (s.chat != null) HudButton("‹ Back", { vm.open(null) }, kind = HudButtonKind.SMALL, modifier = Modifier.padding(end = 8.dp))
-                Text(if (s.chat != null) s.chat.repo.substringAfter('/') else "On this phone", style = HudText.title,
+                Text(if (s.chat != null) s.chat.title.ifEmpty { s.chat.repo.substringAfter('/') } else "New session on this phone", style = HudText.title,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 HudButton("Close", onDismiss, kind = HudButtonKind.SMALL)
             }
@@ -250,20 +254,78 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
         )
         if (s.starting != null) Text("Getting ${s.starting} onto the phone (the first time it's cloned) and Claude started.", style = HudText.meta)
     }
-    val byAccount = s.sessions.groupBy { it.account }
-    val order = b.accounts.map { it.id } + byAccount.keys.filter { k -> b.accounts.none { it.id == k } }
-    order.filter { it in byAccount }.forEach { id ->
-        val a = b.accounts.firstOrNull { it.id == id }
-        if (b.accounts.size > 1 || a == null) {
-            HudLabel(listOfNotNull(a?.name ?: id, a?.email?.ifEmpty { null }).joinToString(" · "), modifier = Modifier.padding(top = 4.dp))
+}
+
+/**
+ * The phone's own Claude Code sessions, in the Code tab's list beside the
+ * desktop's and drawn like them: what it's doing, its last words, a question
+ * it asks as buttons, and a message box. A message to an ended one resumes
+ * it first. The chat and the checkout's changes open full screen.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun PhoneSessions(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel, onOpen: () -> Unit, onNew: () -> Unit) {
+    val now = java.time.Instant.now()
+    Column(Modifier.fillMaxWidth().hudPanel(warn = s.sessions.any { it.phase == "blocked" }).padding(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (s.sessions.isEmpty()) Text("Nothing running here. Claude Code runs on the phone itself, in herdr, in the phone's own checkout of a repo.",
+            style = HudText.small.copy(color = Hud.overlay0))
+        val byAccount = s.sessions.groupBy { it.account }
+        val order = b.accounts.map { it.id } + byAccount.keys.filter { k -> b.accounts.none { it.id == k } }
+        order.filter { it in byAccount }.forEach { id ->
+            val a = b.accounts.firstOrNull { it.id == id }
+            if (b.accounts.size > 1 || a == null) HudLabel(listOfNotNull(a?.name ?: id, a?.email?.ifEmpty { null }).joinToString(" · "))
+            byAccount.getValue(id).forEach { c -> PhoneSessionItem(c, s, vm, now) { vm.open(c); onOpen() } }
         }
-        byAccount.getValue(id).forEach { c ->
-            Column(Modifier.fillMaxWidth().leftStripe(statusColor(c.status)).padding(start = 10.dp).clickable { vm.open(c) },
-                verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(c.task.ifEmpty { c.repo }, style = HudText.small.copy(color = Hud.text), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text("${c.repo.substringAfter('/')} · ${statusText(c.status)}", style = HudText.meta.copy(color = statusColor(c.status)))
+        HudButton("New session on this phone", onNew, kind = HudButtonKind.SMALL)
+        s.error?.let { Text(it, style = HudText.meta.copy(color = Hud.amber), maxLines = 3, overflow = TextOverflow.Ellipsis) }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PhoneSessionItem(c: LocalSession, s: LocalUiState, vm: LocalViewModel, now: java.time.Instant, open: () -> Unit) {
+    var draft by remember(c.name) { mutableStateOf("") }
+    val color = phaseColor(c.phase)
+    Column(Modifier.fillMaxWidth().leftStripe(color).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.clickable(onClick = open), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.size(7.dp).background(color, CircleShape))
+            Text(c.title.ifEmpty { c.task.ifEmpty { c.repo.substringAfter('/') } }, style = HudText.small.copy(color = Hud.text),
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(listOfNotNull(c.repo.substringAfter('/'), c.lastActivity?.let { agoShort(it, now) }).joinToString(" · "), style = HudText.meta)
+        }
+        Text(phaseText(c), style = HudText.meta.copy(color = color))
+        if (c.phase != "busy" && c.lastText.isNotBlank()) {
+            Text(c.lastText, style = HudText.meta.copy(color = Hud.subtext0), maxLines = 4, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable(onClick = open))
+        }
+        val dialog = c.dialog
+        if (dialog != null) {
+            Text(dialog.question, style = HudText.meta.copy(color = Hud.subtext0))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                dialog.choices.forEach { ch -> HudButton(ch.label, { vm.choose(c.name, dialog, ch) }, kind = HudButtonKind.SMALL, enabled = !s.sending) }
+            }
+        } else if (c.phase != "ended" || c.resumable) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                HudTextField(draft, { draft = it }, placeholder = if (c.phase == "ended") "Type to resume it" else "Type into it on this phone",
+                    maxLines = 3, modifier = Modifier.weight(1f))
+                HudButton("Send", { vm.send(c.name, draft.trim()); draft = "" }, kind = HudButtonKind.SMALL, enabled = draft.isNotBlank() && !s.sending)
             }
         }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudButton("Open", open, kind = HudButtonKind.SMALL)
+            if (c.phase == "busy") HudButton("Esc", { vm.interrupt(c.name) }, kind = HudButtonKind.SMALL)
+            if (c.phase == "ended" && c.resumable) HudButton("Resume", { vm.resume(c.name) }, kind = HudButtonKind.SMALL, enabled = !s.sending)
+        }
+    }
+}
+
+private fun agoShort(t: java.time.Instant, now: java.time.Instant): String {
+    val d = java.time.Duration.between(t, now).coerceAtLeast(java.time.Duration.ZERO)
+    return when {
+        d.toMinutes() < 1 -> "now"
+        d.toHours() < 1 -> "${d.toMinutes()}m"
+        d.toDays() < 1 -> "${d.toHours()}h"
+        else -> "${d.toDays()}d"
     }
 }
 
@@ -275,7 +337,7 @@ private fun LocalSessionView(c: LocalSession, s: LocalUiState, vm: LocalViewMode
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // Where things stand, at a glance.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(statusText(c.status), style = HudText.meta.copy(color = statusColor(c.status)))
+            Text(phaseText(c), style = HudText.meta.copy(color = phaseColor(c.phase)))
             if (r != null) {
                 Text("⎇ ${r.branch.ifEmpty { "detached" }}" + (if (r.ahead > 0) " ↑${r.ahead}" else "") + (if (r.behind > 0) " ↓${r.behind}" else ""),
                     style = HudText.meta.copy(fontFamily = HudFonts.mono), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
@@ -336,7 +398,7 @@ private fun LocalChat(c: LocalSession, s: LocalUiState, vm: LocalViewModel, modi
                     }
                 }
             }
-            if (c.status == "working") item { Text("Claude is working…", style = HudText.meta.copy(color = Hud.cyan)) }
+            if (c.phase == "busy") item { Text(phaseText(c).replaceFirstChar { it.uppercase() }, style = HudText.meta.copy(color = Hud.cyan)) }
             item { Box(Modifier.heightIn(min = 1.dp)) }
         }
         c.dialog?.let { d ->
@@ -351,16 +413,17 @@ private fun LocalChat(c: LocalSession, s: LocalUiState, vm: LocalViewModel, modi
                 }
             }
         }
-        if (c.status != "gone") {
+        if (c.phase != "ended" || c.resumable) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                HudTextField(draft, { draft = it }, placeholder = "Message Claude", maxLines = 5, modifier = Modifier.weight(1f))
+                HudTextField(draft, { draft = it }, placeholder = if (c.phase == "ended") "Message Claude (resumes it)" else "Message Claude", maxLines = 5, modifier = Modifier.weight(1f))
                 HudButton(if (s.sending) "…" else "Send", { vm.send(c.name, draft.trim()); draft = "" }, kind = HudButtonKind.PRIMARY,
-                    enabled = draft.isNotBlank() && !s.sending && c.status != "blocked")
+                    enabled = draft.isNotBlank() && !s.sending && c.phase != "blocked")
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (c.status == "working") HudButton("Esc (interrupt)", { vm.interrupt(c.name) }, kind = HudButtonKind.SMALL)
-            HudButton(if (c.status == "gone") "Remove" else "Stop", { vm.stop(c.name) }, kind = HudButtonKind.SMALL)
+            if (c.phase == "busy") HudButton("Esc (interrupt)", { vm.interrupt(c.name) }, kind = HudButtonKind.SMALL)
+            if (c.phase == "ended" && c.resumable) HudButton("Resume", { vm.resume(c.name) }, kind = HudButtonKind.SMALL, enabled = !s.sending)
+            HudButton(if (c.phase == "ended") "Remove" else "Stop", { vm.stop(c.name) }, kind = HudButtonKind.SMALL)
         }
     }
 }
@@ -398,7 +461,7 @@ private fun LocalChanges(c: LocalSession, s: LocalUiState, vm: LocalViewModel, m
             HudButton("Push", { vm.git("push") }, kind = if (r.ahead > 0 || r.upstream.isEmpty()) HudButtonKind.PRIMARY else HudButtonKind.SMALL, enabled = !s.sending)
             if (r.files.isNotEmpty()) HudButton("Ask Claude to commit", {
                 vm.send(c.name, "Commit the current changes with a clear, conventional commit message. Don't push.")
-            }, kind = HudButtonKind.SMALL, enabled = !s.sending && c.status != "working" && c.status != "blocked")
+            }, kind = HudButtonKind.SMALL, enabled = !s.sending && c.phase != "busy" && c.phase != "blocked")
         }
         s.gitNote?.let { Text(it, style = HudText.meta.copy(color = Hud.green, fontFamily = HudFonts.mono)) }
         HudLabel(if (r.files.isEmpty()) "no changes" else "${r.files.size} changed")

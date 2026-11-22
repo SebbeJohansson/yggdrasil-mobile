@@ -56,9 +56,20 @@ data class LocalSession(
     val repo: String,
     val task: String,
     val at: Instant,
-    /** idle (your move), working, blocked (a dialog waits), done, unknown (starting), gone (it ended). */
+    /** herdr's word: idle, working, blocked, done, unknown (starting), gone (its pane closed). */
     val status: String,
     val dialog: LocalDialog?,
+    /** As the desktop's sessions: busy, turn-ended (your move), blocked (a question waits), ended, starting. */
+    val phase: String = "starting",
+    /** The tool Claude is in while busy. */
+    val tool: String = "",
+    /** Claude's last words when its turn ended, up to 600 characters. */
+    val lastText: String = "",
+    /** The session's title as Claude keeps it; empty until it has one. */
+    val title: String = "",
+    val lastActivity: Instant? = null,
+    /** An ended session with a conversation to go on with. */
+    val resumable: Boolean = false,
     /** The chat, when asked for one session; and its screen while there's no chat to show. */
     val messages: List<ChatLine> = emptyList(),
     val screen: String = "",
@@ -230,6 +241,11 @@ class BridgeClient(
         call("POST", "/v1/local/$name/git", JSONObject().put("action", action), timeoutMs = 120_000).optString("output")
     }
 
+    /** An ended session again, with its conversation: claude --resume in a new herdr workspace. */
+    suspend fun resumeLocal(name: String): LocalSession = withContext(Dispatchers.IO) {
+        local(call("POST", "/v1/local/$name/resume", JSONObject(), timeoutMs = 90_000)).also { changes.bump() }
+    }
+
     /** Ends it; the checkout and its work stay on the phone. */
     suspend fun stopLocal(name: String) = withContext(Dispatchers.IO) {
         call("POST", "/v1/local/$name/stop", JSONObject())
@@ -294,6 +310,12 @@ class BridgeClient(
                 LocalDialog(it.optString("question"), it.optString("detail"),
                     (0 until cs.length()).map { i -> cs.getJSONObject(i).let { c -> LocalChoice(c.optString("key"), c.optString("label"), c.optBoolean("selected")) } })
             },
+            phase = o.optString("phase").ifEmpty { "starting" },
+            tool = o.optString("tool"),
+            lastText = o.optString("lastText"),
+            title = o.optString("title"),
+            lastActivity = o.optLong("lastActivity").takeIf { it > 0 }?.let(Instant::ofEpochMilli),
+            resumable = o.optBoolean("resumable"),
             messages = (0 until msgs.length()).map { msgs.getJSONObject(it).let { m -> ChatLine(m.optString("role"), m.optString("text")) } },
             screen = o.optString("screen"),
         )

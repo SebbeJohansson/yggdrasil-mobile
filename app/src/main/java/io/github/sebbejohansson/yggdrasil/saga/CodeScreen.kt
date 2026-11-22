@@ -3,6 +3,7 @@ package io.github.sebbejohansson.yggdrasil.saga
 import io.github.sebbejohansson.yggdrasil.llm.claude.PhoneCloudDialog
 import io.github.sebbejohansson.yggdrasil.llm.claude.PhoneLocalDialog
 import io.github.sebbejohansson.yggdrasil.llm.claude.LocalViewModel
+import io.github.sebbejohansson.yggdrasil.llm.claude.PhoneSessions
 import io.github.sebbejohansson.yggdrasil.llm.claude.FollowUp
 import io.github.sebbejohansson.yggdrasil.llm.claude.FollowBridge
 import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeUiState
@@ -23,6 +24,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -129,7 +131,17 @@ fun CodeScreen(
     var cloudOpen by remember { mutableStateOf(false) }
     if (phone != null && cloudOpen) PhoneCloudDialog(phone, onSetUpPhone) { cloudOpen = false }
     var localOpen by remember { mutableStateOf(false) }
-    if (phone != null && local != null && localOpen) PhoneLocalDialog(phone, local, onSetUpPhone) { localOpen = false }
+    if (phone != null && local != null && localOpen) PhoneLocalDialog(phone, local, onSetUpPhone) { localOpen = false; local.open(null) }
+    val localState = local?.state?.collectAsStateWithLifecycle()?.value
+    // The phone's own sessions, kept fresh while the Code tab shows.
+    if (local != null && phoneState?.ready == true) {
+        LaunchedEffect(Unit) {
+            while (true) {
+                local.refresh()
+                kotlinx.coroutines.delay(5_000)
+            }
+        }
+    }
     LazyColumn(
         modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -148,16 +160,22 @@ fun CodeScreen(
                         },
                     )
                 }
-                if (phone != null && local != null) {
-                    // Claude Code on the phone itself, in herdr: a chat.
-                    HudButton("Phone", { localOpen = true }, kind = HudButtonKind.SMALL, modifier = Modifier.padding(end = 6.dp))
-                }
                 if (phone != null) {
                     // Cloud sessions from this phone, in a popup: a start, and where to find them.
                     HudButton(if (phoneState?.starting != null) "Cloud · starting…" else "Cloud", { cloudOpen = true },
                         kind = HudButtonKind.SMALL, modifier = Modifier.padding(end = 6.dp))
                 }
                 HudButton("Sync now", { vm.syncNow() }, kind = HudButtonKind.SMALL)
+            }
+        }
+        if (phone != null && local != null && localState != null && phoneState?.ready == true && phoneState?.health?.herdr == true) {
+            item(key = "phone-local-h") {
+                HudSection("This phone", Modifier.padding(top = 8.dp)) {
+                    HudLabel("${localState.sessions.size} ${if (localState.sessions.size == 1) "session" else "sessions"} · herdr")
+                }
+            }
+            item(key = "phone-local") {
+                PhoneSessions(phoneState, localState, local, onOpen = { localOpen = true }, onNew = { local.open(null); localOpen = true })
             }
         }
         if (s.devices.isEmpty()) {
