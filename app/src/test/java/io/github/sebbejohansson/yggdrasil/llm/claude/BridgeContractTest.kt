@@ -88,6 +88,9 @@ class BridgeContractTest {
         assertEquals("Job", client.accounts().last().name)
         client.removeAccount("work")
         assertEquals(listOf("default"), client.accounts().map { it.id })
+        // Local sessions: none yet, and one that isn't there is refused.
+        assertEquals(emptyList<LocalSession>(), client.localSessions())
+        assertEquals(404, (runCatching { client.localChat("nothing-here") }.exceptionOrNull() as BridgeException).status)
         client.message("session_abc", "Also add tests")
         val gone = runCatching { client.message("session_gone", "hi") }.exceptionOrNull() as BridgeException
         assertTrue(gone.message!!.contains("not found"))

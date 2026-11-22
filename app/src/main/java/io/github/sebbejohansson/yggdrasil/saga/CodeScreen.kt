@@ -1,6 +1,8 @@
 package io.github.sebbejohansson.yggdrasil.saga
 
 import io.github.sebbejohansson.yggdrasil.llm.claude.PhoneCloudDialog
+import io.github.sebbejohansson.yggdrasil.llm.claude.PhoneLocalDialog
+import io.github.sebbejohansson.yggdrasil.llm.claude.LocalViewModel
 import io.github.sebbejohansson.yggdrasil.llm.claude.FollowUp
 import io.github.sebbejohansson.yggdrasil.llm.claude.FollowBridge
 import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeUiState
@@ -116,6 +118,8 @@ fun CodeScreen(
     modifier: Modifier = Modifier,
     /** Ygg's Claude bridge on this phone: cloud sessions with no machine on. */
     phone: BridgeViewModel? = null,
+    /** Claude Code on this phone, in herdr. */
+    local: LocalViewModel? = null,
     onSetUpPhone: () -> Unit = {},
 ) {
     val s by vm.state.collectAsStateWithLifecycle()
@@ -124,6 +128,8 @@ fun CodeScreen(
     val now = Instant.now()
     var cloudOpen by remember { mutableStateOf(false) }
     if (phone != null && cloudOpen) PhoneCloudDialog(phone, onSetUpPhone) { cloudOpen = false }
+    var localOpen by remember { mutableStateOf(false) }
+    if (phone != null && local != null && localOpen) PhoneLocalDialog(phone, local, onSetUpPhone) { localOpen = false }
     LazyColumn(
         modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -141,6 +147,10 @@ fun CodeScreen(
                                 if (s.devices.size == 1) "machine" else "machines"
                         },
                     )
+                }
+                if (phone != null && local != null) {
+                    // Claude Code on the phone itself, in herdr: a chat.
+                    HudButton("Phone", { localOpen = true }, kind = HudButtonKind.SMALL, modifier = Modifier.padding(end = 6.dp))
                 }
                 if (phone != null) {
                     // Cloud sessions from this phone, in a popup: a start, and where to find them.

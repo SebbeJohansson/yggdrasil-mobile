@@ -560,6 +560,371 @@ def message_cloud(sid: str, text: str, aid: str = "") -> dict:
     return {"ok": True, "id": sid, "url": sent.get("url", f"https://claude.ai/code/{sid}")}
 
 
+# Local sessions: Claude Code on this phone, in herdr ----------------------------
+#
+# As on the desktop, Claude Code runs interactively in herdr (https://herdr.dev),
+# the terminal multiplexer for coding agents: herdr says whether it works, waits
+# at its prompt or shows a dialog, types a prompt as you would, and presses the
+# key of a dialog's choice. What Claude answered is read from the transcript it
+# writes, not off the screen. One headless herdr server per account, started
+# with the account's CLAUDE_CONFIG_DIR, so each Claude in it is that account.
+
+HERDR = os.environ.get("HERDR_BIN", "herdr")
+LOCAL_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+
+
+def herdr_session(aid: str) -> str:
+    return "ygg-" + account(aid)["id"]
+
+
+def herdr_socket(aid: str) -> Path:
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return config / "herdr" / "sessions" / herdr_session(aid) / "herdr.sock"
+
+
+class HerdrRefused(Refused):
+    def __init__(self, code: str, message: str):
+        super().__init__(409 if code in ("agent_blocked", "agent_not_ready", "agent_pane_busy") else 502, message)
+        self.code = code
+
+
+def herdr(aid: str, method: str, params: dict = None, timeout: float = 10) -> dict:
+    """One request to the account's herdr: a line of JSON each way over its socket."""
+    import socket as sock
+    s = sock.socket(sock.AF_UNIX)
+    s.settimeout(timeout)
+    try:
+        s.connect(str(herdr_socket(aid)))
+    except OSError as e:
+        s.close()
+        raise Refused(503, f"herdr isn't running for this account ({e})")
+    try:
+        s.sendall((json.dumps({"id": f"ygg:{secrets.token_hex(4)}", "method": method, "params": params or {}}) + "\n").encode())
+        buf = b""
+        while not buf.endswith(b"\n"):
+            chunk = s.recv(1 << 16)
+            if not chunk:
+                break
+            buf += chunk
+    finally:
+        s.close()
+    reply = json.loads(buf or b"{}")
+    if "error" in reply:
+        err = reply["error"] or {}
+        raise HerdrRefused(str(err.get("code", "")), "herdr: " + str(err.get("message", err)))
+    return reply.get("result", {})
+
+
+def need_herdr(aid: str) -> None:
+    """Starts the account's headless herdr server unless it answers already."""
+    try:
+        herdr(aid, "ping", timeout=3)
+        return
+    except Refused:
+        pass
+    if not shutil.which(HERDR):
+        raise Refused(503, "herdr isn't installed here: update Ygg's Linux (Settings > Claude bridge > Update)")
+    env = claude_env(aid)
+    env.setdefault("SHELL", "/bin/bash")
+    env.setdefault("TERM", "xterm-256color")
+    # Claude in its panes saves git objects by renaming, not hard-linking (see git()).
+    n = int(env.get("GIT_CONFIG_COUNT", "0") or 0)
+    env.update({"GIT_CONFIG_COUNT": str(n + 1), f"GIT_CONFIG_KEY_{n}": "core.createObject", f"GIT_CONFIG_VALUE_{n}": "rename"})
+    log = open(home() / f"herdr-{account(aid)['id']}.log", "ab")
+    subprocess.Popen([HERDR, "server", "--session", herdr_session(aid)], env=env, stdin=subprocess.DEVNULL,
+                     stdout=log, stderr=subprocess.STDOUT, start_new_session=True, cwd=str(Path.home()))
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        time.sleep(0.3)
+        try:
+            herdr(aid, "ping", timeout=2)
+            return
+        except Refused:
+            continue
+    raise Refused(503, f"herdr didn't start (see ~/.ygg-bridge/herdr-{account(aid)['id']}.log)")
+
+
+def workdir(repo: str, branch: str = "") -> Path:
+    """The phone's own checkout of a repo to work in: cloned once, then only
+    fetched, so work in it is never thrown away. Git in it can push with the
+    bridge's GitHub token, read when git needs it, never written into it."""
+    if not REPO.match(repo):
+        raise Refused(400, "a repo is owner/name, like SebbeJohansson/yggdrasil")
+    path = home() / "work" / repo
+    url = f"{GIT_BASE}/{repo}.git"
+    if not (path / ".git").is_dir():
+        fresh_clone(url, path, branch)
+        helper = ('!f() { test "$1" = get || exit 0; t=$(cat "$HOME/.ygg-bridge/github" 2>/dev/null) || exit 0; '
+                  'echo username=x-access-token; echo "password=$t"; }; f')
+        git(["config", "credential.https://github.com.helper", helper], cwd=path)
+        git(["config", "core.createObject", "rename"], cwd=path)
+    else:
+        git(["fetch", "-q", "--prune", "origin"], cwd=path)
+        if branch:
+            current = git(["branch", "--show-current"], cwd=path).strip()
+            if current != branch:
+                git(["checkout", "-q", branch], cwd=path)
+    plain_git_files(path)
+    return path
+
+
+def local_sessions() -> list:
+    return state().get("local", [])
+
+
+def save_local(items: list) -> None:
+    with lock:
+        data = state()
+        data["local"] = items
+        save(data)
+
+
+def local(name: str) -> dict:
+    for s in local_sessions():
+        if s["name"] == name:
+            return s
+    raise Refused(404, f"no local session '{name}'")
+
+
+def local_name(repo: str) -> str:
+    base = re.sub(r"[^a-z0-9_-]+", "-", repo.split("/")[-1].lower()).strip("-")
+    base = re.sub(r"^[^a-z]+", "", base)[:26] or "work"
+    taken = {s["name"] for s in local_sessions()}
+    while True:
+        name = f"{base}-{secrets.token_hex(2)}"
+        if name not in taken:
+            return name
+
+
+def start_local(repo: str, task: str, aid: str = "default", branch: str = "") -> dict:
+    """Claude Code in herdr, in the phone's checkout of the repo, as the account;
+    then the task typed in, as you would."""
+    need_claude()
+    aid = account(aid)["id"]
+    cwd = workdir(repo, branch)
+    prepare_claude(cwd, aid)
+    need_herdr(aid)
+    name = local_name(repo)
+    created = herdr(aid, "workspace.create", {"cwd": str(cwd), "label": name, "focus": False})
+    pane = created.get("root_pane", {}).get("pane_id", "")
+    workspace = (created.get("workspace") or {}).get("workspace_id") or pane.split(":")[0]
+    deadline = time.time() + 20
+    while True:
+        try:
+            herdr(aid, "agent.start", {"name": name, "kind": "claude", "pane_id": pane, "args": [], "timeout_ms": 30000}, timeout=40)
+            break
+        except HerdrRefused as e:
+            if e.code == "agent_pane_busy" and time.time() < deadline:
+                time.sleep(0.3)
+                continue
+            if e.code == "agent_not_ready":
+                break  # Up, but at a dialog: it shows in the chat.
+            herdr(aid, "workspace.close", {"workspace_id": workspace})
+            raise
+    session = {"name": name, "account": aid, "repo": repo, "cwd": str(cwd), "workspace": workspace, "pane": pane,
+               "task": task.strip(), "at": int(time.time() * 1000)}
+    save_local([session] + local_sessions())
+    if task.strip():
+        prompt_local(name, task)
+    return local_view(session)
+
+
+def wait_idle(s: dict, seconds: float) -> None:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        status = agent_info(s).get("agent_status")
+        if status in ("idle", "done", "blocked"):
+            return
+        time.sleep(0.5)
+
+
+def prompt_local(name: str, text: str) -> dict:
+    s = local(name)
+    text = " ".join(text.split("\r"))
+    if not text.strip():
+        raise Refused(400, "the message is empty")
+    # Claude may still be getting ready (its prompt not up yet): wait a little.
+    wait_idle(s, 20)
+    herdr(s["account"], "agent.prompt", {"target": name, "text": text}, timeout=30)
+    s["promptedAt"] = int(time.time() * 1000)
+    save_local([s if x["name"] == name else x for x in local_sessions()])
+    return {"ok": True}
+
+
+def agent_info(s: dict) -> dict:
+    try:
+        agents = herdr(s["account"], "agent.list", timeout=5).get("agents", [])
+    except Refused:
+        return {}
+    return next((a for a in agents if a.get("name") == s["name"] or a.get("pane_id") == s["pane"]), {})
+
+
+def screen(s: dict, source: str = "detection", lines: int = 0) -> str:
+    params = {"target": s["pane"], "source": source, "strip_ansi": True}
+    if lines:
+        params["lines"] = lines
+    return herdr(s["account"], "agent.read", params, timeout=5).get("read", {}).get("text", "")
+
+
+# A Claude Code dialog read off the screen (as Sindri's DialogScreenOf).
+CHOICE = re.compile(r"^\s*(❯\s*)?(\d)\.\s+(.*\S)\s*$")
+RULE = re.compile(r"^\s*─{10,}\s*$")
+DOTTED = re.compile(r"^\s*╌{10,}\s*$")
+FOOTER = re.compile(r"(?i)Esc to cancel|Enter to confirm|Tab to amend")
+FAR_RIGHT = re.compile(r"^\s{30,}")
+PINNED_RIGHT = re.compile(r"(\S)\s{8,}\S.*$")
+
+
+def dialog_of(text: str):
+    """The question, the detail above it and its numbered choices; None without one."""
+    lines = ["" if FAR_RIGHT.match(l) else PINNED_RIGHT.sub(r"\1", l).rstrip() for l in text.split("\n")]
+    found = [(i, int(m.group(2)), bool(m.group(1)), m.group(3).strip()) for i, l in enumerate(lines) if (m := CHOICE.match(l))]
+    if not found:
+        return None
+    run = [found[-1]]
+    for f in reversed(found[:-1]):
+        if run[0][1] == 1 or f[1] != run[0][1] - 1:
+            break
+        run.insert(0, f)
+    if len(run) < 2 or run[0][1] != 1:
+        return None
+    choices = []
+    for at, (index, number, selected, label) in enumerate(run):
+        end = run[at + 1][0] if at + 1 < len(run) else len(lines)
+        parts = [label]
+        for l in lines[index + 1:end]:
+            if not l.strip() or FOOTER.search(l):
+                break
+            parts.append(l.strip())
+        choices.append({"key": str(number), "label": " ".join(parts), "selected": selected})
+    q = run[0][0] - 1
+    while q >= 0 and not lines[q].strip():
+        q -= 1
+    if q < 0 or RULE.match(lines[q]):
+        return None
+    top = q
+    while top > 0 and q - top < 16 and not RULE.match(lines[top - 1]):
+        top -= 1
+    detail = "\n".join(l for l in lines[top:q] if not DOTTED.match(l)).strip("\n").rstrip()
+    return {"question": lines[q].strip(), "detail": detail, "choices": choices}
+
+
+def transcript(s: dict):
+    """The transcript of the Claude in the session's pane: its pid, in claude's
+    own registry (sessions/<pid>.json), gives its session id."""
+    base = claude_config(s["account"]).parent if s["account"] != "default" or os.environ.get("CLAUDE_CONFIG_DIR") \
+        else Path.home() / ".claude"
+    pids = []
+    try:
+        info = herdr(s["account"], "pane.process_info", {"pane_id": s["pane"]}, timeout=5)
+        pids = [p.get("pid") for p in info.get("process_info", {}).get("foreground_processes", []) if p.get("pid")]
+    except Refused:
+        pass
+    sid = s.get("sessionId", "")
+    for pid in pids:
+        try:
+            sid = json.loads((base / "sessions" / f"{pid}.json").read_text()).get("sessionId") or sid
+            break
+        except (OSError, ValueError):
+            continue
+    if sid and sid != s.get("sessionId"):
+        s["sessionId"] = sid
+        save_local([s if x["name"] == s["name"] else x for x in local_sessions()])
+    if not sid:
+        return None
+    path = base / "projects" / re.sub(r"[^a-zA-Z0-9]", "-", s["cwd"]) / f"{sid}.jsonl"
+    return path if path.is_file() else None
+
+
+def tool_line(block: dict) -> str:
+    name = block.get("name", "tool")
+    args = block.get("input") or {}
+    what = args.get("command") or args.get("file_path") or args.get("path") or args.get("pattern") or args.get("url") or args.get("description") or ""
+    return f"{name}: {str(what).splitlines()[0][:160]}" if what else name
+
+
+def messages(path, limit: int = 200) -> list:
+    """The chat: your messages, Claude's text, and a line per tool it used."""
+    out = []
+    if not path:
+        return out
+    for raw in path.read_text(errors="replace").splitlines():
+        try:
+            e = json.loads(raw)
+        except ValueError:
+            continue
+        if e.get("isSidechain") or e.get("isMeta") or e.get("type") not in ("user", "assistant"):
+            continue
+        content = (e.get("message") or {}).get("content")
+        at = e.get("timestamp", "")
+        if e["type"] == "user":
+            text = content if isinstance(content, str) else "\n".join(b.get("text", "") for b in content or [] if isinstance(b, dict) and b.get("type") == "text")
+            if text.strip() and not text.lstrip().startswith(("<command-", "<local-command", "<system-reminder", "Caveat:")):
+                out.append({"role": "user", "text": text.strip(), "at": at})
+        else:
+            for b in content or []:
+                if not isinstance(b, dict):
+                    continue
+                if b.get("type") == "text" and b.get("text", "").strip():
+                    out.append({"role": "assistant", "text": b["text"].strip(), "at": at})
+                elif b.get("type") == "tool_use":
+                    out.append({"role": "tool", "text": tool_line(b), "at": at})
+    return out[-limit:]
+
+
+def local_view(s: dict, chat: bool = False) -> dict:
+    """A session as the app shows it: status, any dialog, and with chat its messages."""
+    info = agent_info(s)
+    status = info.get("agent_status") or ("gone" if not info else "unknown")
+    view = {k: s.get(k) for k in ("name", "account", "repo", "task", "at", "cwd")}
+    view["status"] = status
+    view["dialog"] = None
+    if status == "blocked":
+        try:
+            view["dialog"] = dialog_of(screen(s))
+        except Refused:
+            pass
+    if chat:
+        view["messages"] = messages(transcript(s))
+        if not view["messages"] or status in ("blocked", "unknown"):
+            try:
+                view["screen"] = screen(s, "recent_unwrapped", 40)[-4000:]
+            except Refused:
+                view["screen"] = ""
+    return view
+
+
+def choose_local(name: str, question: str, key: str, label: str) -> dict:
+    """Presses a dialog's choice, only while that same dialog shows: the same
+    digit means something else in the next one."""
+    s = local(name)
+    shown = dialog_of(screen(s))
+    if not shown or shown["question"] != question or not any(c["key"] == key and c["label"] == label for c in shown["choices"]):
+        raise Refused(409, "that question isn't showing any more")
+    herdr(s["account"], "agent.send_keys", {"target": s["pane"], "keys": [key]})
+    return {"ok": True}
+
+
+def keys_local(name: str, keys: list) -> dict:
+    allowed = {"esc", "enter", "ctrl+c", "up", "down", "tab", "shift+tab"}
+    if not keys or any(k not in allowed for k in keys):
+        raise Refused(400, "only " + ", ".join(sorted(allowed)))
+    s = local(name)
+    herdr(s["account"], "agent.send_keys", {"target": s["pane"], "keys": keys})
+    return {"ok": True}
+
+
+def stop_local(name: str) -> dict:
+    """Ends Claude there and closes its workspace; the checkout and its work stay."""
+    s = local(name)
+    try:
+        herdr(s["account"], "workspace.close", {"workspace_id": s.get("workspace") or s["pane"].split(":")[0]})
+    except Refused:
+        pass
+    save_local([x for x in local_sessions() if x["name"] != name])
+    return {"ok": True}
+
+
 # Ygg's Claude provider --------------------------------------------------------
 
 def complete(body: dict) -> dict:
@@ -631,7 +996,7 @@ class Handler(BaseHTTPRequestHandler):
             if method == "GET" and path == "/health":
                 version = claude_version()
                 return self.answer(200 if version else 503, {"ok": bool(version), "bridge": VERSION, "claude": version,
-                                                             "github": bool(secret("github"))})
+                                                             "github": bool(secret("github")), "herdr": bool(shutil.which(HERDR))})
             if not self.allowed():
                 return
             if method == "GET" and path == "/v1/cloud":
@@ -646,6 +1011,25 @@ class Handler(BaseHTTPRequestHandler):
             if method == "POST" and m:
                 b = self.body()
                 return self.answer(200, message_cloud(m.group(1), str(b.get("text", "")), str(b.get("account") or "")))
+            if method == "GET" and path == "/v1/local":
+                return self.answer(200, {"sessions": [local_view(x) for x in local_sessions()]})
+            if method == "POST" and path == "/v1/local":
+                b = self.body()
+                return self.answer(200, start_local(str(b.get("repo", "")), str(b.get("task", "")),
+                                                    str(b.get("account") or "default"), str(b.get("branch") or "")))
+            m = re.match(r"^/v1/local/([a-z][a-z0-9_-]{0,31})(?:/(prompt|choose|keys|stop))?$", path)
+            if m and method == "GET" and not m.group(2):
+                return self.answer(200, local_view(local(m.group(1)), chat=True))
+            if m and method == "POST" and m.group(2):
+                b = self.body()
+                name, what = m.group(1), m.group(2)
+                if what == "prompt":
+                    return self.answer(200, prompt_local(name, str(b.get("text", ""))))
+                if what == "choose":
+                    return self.answer(200, choose_local(name, str(b.get("question", "")), str(b.get("key", "")), str(b.get("label", ""))))
+                if what == "keys":
+                    return self.answer(200, keys_local(name, [str(k) for k in b.get("keys") or []]))
+                return self.answer(200, stop_local(name))
             if method == "GET" and path == "/v1/accounts":
                 return self.answer(200, {"accounts": [account_info(a) for a in accounts()]})
             if method == "POST" and path == "/v1/accounts":

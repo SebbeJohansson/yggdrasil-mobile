@@ -2,6 +2,7 @@ package io.github.sebbejohansson.yggdrasil
 
 import io.github.sebbejohansson.yggdrasil.llm.claude.BridgePanel
 import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeViewModel
+import io.github.sebbejohansson.yggdrasil.llm.claude.LocalViewModel
 import io.github.sebbejohansson.yggdrasil.parts.PerformanceScreen
 import io.github.sebbejohansson.yggdrasil.today.TodayTarget
 import io.github.sebbejohansson.yggdrasil.today.TodayCard
@@ -257,6 +258,7 @@ private fun Root(
     val promisesDue = PromisesViewModel.dueSoon(promiseList)
     val codeVm: CodeViewModel = viewModel(factory = CodeViewModel.factory(container))
     val bridgeVm: BridgeViewModel = viewModel(factory = BridgeViewModel.factory(container))
+    val localVm: LocalViewModel = viewModel(factory = LocalViewModel.factory(container))
     val appsVm: AppsViewModel? = if (home) viewModel(factory = AppsViewModel.factory(container)) else null
     val presses by homePresses.collectAsStateWithLifecycle()
     // Home goes to the apps, whatever page you were on.
@@ -391,7 +393,7 @@ private fun Root(
                         promisesDue = promisesDue,
                         onPage = { tab = it },
                     )
-                    MainActivity.TAB_CODE -> CodeScreen(codeVm, phone = bridgeVm, onSetUpPhone = ::openSettings)
+                    MainActivity.TAB_CODE -> CodeScreen(codeVm, phone = bridgeVm, local = localVm, onSetUpPhone = ::openSettings)
                     MainActivity.TAB_SYSTEM -> SystemScreen(systemPage, { systemPage = it }, phone, jobs, huginnVm, historyVm)
                     MainActivity.TAB_HEALTH -> {
                         val loopsVersion by container.loops.changes.flow.collectAsStateWithLifecycle()

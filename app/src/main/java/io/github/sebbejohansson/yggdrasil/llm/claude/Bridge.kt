@@ -15,7 +15,7 @@ import java.net.URL
 import java.time.Instant
 
 /** What GET /health says. */
-data class BridgeHealth(val claude: String, val github: Boolean)
+data class BridgeHealth(val claude: String, val github: Boolean, val herdr: Boolean = false)
 
 /** A Claude account the bridge signs in as: its own sign-in and settings. */
 data class BridgeAccount(
@@ -39,6 +39,29 @@ data class BridgeSession(
     val account: String = "default",
     val lastSentAt: Instant? = null,
     val lastError: String? = null,
+)
+
+/** A Claude Code dialog in a local session, waiting for you: a question and its numbered choices. */
+data class LocalDialog(val question: String, val detail: String, val choices: List<LocalChoice>)
+
+data class LocalChoice(val key: String, val label: String, val selected: Boolean)
+
+/** One line of a local session's chat: yours, Claude's, or a tool Claude used. */
+data class ChatLine(val role: String, val text: String)
+
+/** Claude Code on this phone, in herdr, in the phone's checkout of a repo. */
+data class LocalSession(
+    val name: String,
+    val account: String,
+    val repo: String,
+    val task: String,
+    val at: Instant,
+    /** idle (your move), working, blocked (a dialog waits), done, unknown (starting), gone (it ended). */
+    val status: String,
+    val dialog: LocalDialog?,
+    /** The chat, when asked for one session; and its screen while there's no chat to show. */
+    val messages: List<ChatLine> = emptyList(),
+    val screen: String = "",
 )
 
 /** The bridge said no, with its reason. */
@@ -101,7 +124,7 @@ class BridgeClient(
     suspend fun health(): BridgeHealth? = withContext(Dispatchers.IO) {
         try {
             val h = call("GET", "/health", timeoutMs = 2_000, key = false)
-            BridgeHealth(h.optString("claude"), h.optBoolean("github"))
+            BridgeHealth(h.optString("claude"), h.optBoolean("github"), h.optBoolean("herdr"))
         } catch (e: BridgeException) {
             if (e.status == 503) BridgeHealth("", false) else throw e
         } catch (_: IOException) {
@@ -137,6 +160,40 @@ class BridgeClient(
     /** Forgets the account and its sign-in on this phone. */
     suspend fun removeAccount(id: String) = withContext(Dispatchers.IO) {
         call("POST", "/v1/accounts/$id/remove", JSONObject())
+        changes.bump()
+    }
+
+    suspend fun localSessions(): List<LocalSession> = withContext(Dispatchers.IO) {
+        val list = call("GET", "/v1/local").optJSONArray("sessions") ?: JSONArray()
+        (0 until list.length()).map { local(list.getJSONObject(it)) }
+    }
+
+    /** Claude Code on the phone for [repo], as [account], with [task] typed in. Cloning first time takes a while. */
+    suspend fun startLocal(repo: String, task: String, account: String = "default"): LocalSession = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("repo", repo).put("task", task).put("account", account)
+        local(call("POST", "/v1/local", body, timeoutMs = 300_000)).also { changes.bump() }
+    }
+
+    /** One local session with its chat. */
+    suspend fun localChat(name: String): LocalSession = withContext(Dispatchers.IO) { local(call("GET", "/v1/local/$name")) }
+
+    suspend fun promptLocal(name: String, text: String) = withContext(Dispatchers.IO) {
+        call("POST", "/v1/local/$name/prompt", JSONObject().put("text", text), timeoutMs = 60_000)
+    }
+
+    /** Picks [choice] in [dialog], only while that same dialog still shows. */
+    suspend fun chooseLocal(name: String, dialog: LocalDialog, choice: LocalChoice) = withContext(Dispatchers.IO) {
+        call("POST", "/v1/local/$name/choose", JSONObject().put("question", dialog.question).put("key", choice.key).put("label", choice.label))
+    }
+
+    /** Presses keys in its pane: esc interrupts Claude. */
+    suspend fun keysLocal(name: String, vararg keys: String) = withContext(Dispatchers.IO) {
+        call("POST", "/v1/local/$name/keys", JSONObject().put("keys", JSONArray(keys.toList())))
+    }
+
+    /** Ends it; the checkout and its work stay on the phone. */
+    suspend fun stopLocal(name: String) = withContext(Dispatchers.IO) {
+        call("POST", "/v1/local/$name/stop", JSONObject())
         changes.bump()
     }
 
@@ -182,6 +239,26 @@ class BridgeClient(
         lastError = o.optString("lastError").ifEmpty { null },
         account = o.optString("account").ifEmpty { "default" },
     )
+
+    private fun local(o: JSONObject): LocalSession {
+        val d = o.optJSONObject("dialog")
+        val msgs = o.optJSONArray("messages") ?: JSONArray()
+        return LocalSession(
+            name = o.getString("name"),
+            account = o.optString("account").ifEmpty { "default" },
+            repo = o.optString("repo"),
+            task = o.optString("task"),
+            at = Instant.ofEpochMilli(o.optLong("at")),
+            status = o.optString("status").ifEmpty { "unknown" },
+            dialog = d?.let {
+                val cs = it.optJSONArray("choices") ?: JSONArray()
+                LocalDialog(it.optString("question"), it.optString("detail"),
+                    (0 until cs.length()).map { i -> cs.getJSONObject(i).let { c -> LocalChoice(c.optString("key"), c.optString("label"), c.optBoolean("selected")) } })
+            },
+            messages = (0 until msgs.length()).map { msgs.getJSONObject(it).let { m -> ChatLine(m.optString("role"), m.optString("text")) } },
+            screen = o.optString("screen"),
+        )
+    }
 
     private fun account(o: JSONObject) = BridgeAccount(
         id = o.getString("id"),

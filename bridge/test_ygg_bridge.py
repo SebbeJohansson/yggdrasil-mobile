@@ -222,6 +222,50 @@ class BridgeTest(unittest.TestCase):
         self.assertFalse(cfg.exists())
         self.assertEqual(400, self.call("POST", "/v1/accounts/default/remove")[0])
 
+    def test_dialog_is_read_off_the_screen(self):
+        screen = "\n".join([
+            "─" * 40,
+            " Bash command",
+            "   npm test",
+            "   Run the tests",
+            "",
+            " Do you want to proceed?",
+            " ❯ 1. Yes",
+            "   2. Yes, and don't ask again for npm test commands in /root/app",
+            "   3. No, and tell Claude what to do differently (esc)",
+            "",
+            " Esc to cancel",
+        ])
+        d = self.b.dialog_of(screen)
+        self.assertEqual("Do you want to proceed?", d["question"])
+        self.assertIn("npm test", d["detail"])
+        self.assertEqual(["1", "2", "3"], [c["key"] for c in d["choices"]])
+        self.assertTrue(d["choices"][0]["selected"])
+        self.assertIsNone(self.b.dialog_of("❯ Try \"fix typecheck errors\""))
+
+    def test_transcript_becomes_a_chat(self):
+        lines = [
+            {"type": "user", "message": {"role": "user", "content": "Add a README"}, "timestamp": "t1"},
+            {"type": "user", "isMeta": True, "message": {"role": "user", "content": "<system-reminder>x</system-reminder>"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Sure."},
+                {"type": "tool_use", "name": "Write", "input": {"file_path": "/root/app/README.md", "content": "hi"}}]}},
+            {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "content": "ok"}]}},
+            {"type": "assistant", "isSidechain": True, "message": {"content": [{"type": "text", "text": "subagent"}]}},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Done."}]}},
+        ]
+        f = Path(self.tmp) / "t.jsonl"
+        f.write_text("\n".join(json.dumps(l) for l in lines) + "\nnot json\n")
+        self.assertEqual([("user", "Add a README"), ("assistant", "Sure."), ("tool", "Write: /root/app/README.md"), ("assistant", "Done.")],
+                         [(m["role"], m["text"]) for m in self.b.messages(f)])
+
+    def test_local_sessions_need_one(self):
+        self.assertEqual(404, self.call("GET", "/v1/local/nothing-here")[0])
+        self.assertEqual(404, self.call("POST", "/v1/local/nothing-here/prompt", {"text": "hi"})[0])
+        self.assertEqual(200, self.call("GET", "/v1/local")[0])
+        with self.assertRaises(self.b.Refused):
+            self.b.keys_local("nothing-here", ["rm -rf"])
+
     def test_message_queues_in_any_session(self):
         status, body = self.call("POST", "/v1/cloud/session_abc/message", {"text": "Also add tests"})
         self.assertEqual((200, True), (status, body["ok"]))

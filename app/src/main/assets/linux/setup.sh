@@ -39,6 +39,28 @@ export PATH="$HOME/.local/bin:$PATH"
 find "$HOME/.local/share/claude-code" -maxdepth 1 -type f -name 'claude-[0-9]*' ! -name "claude-$version" -delete
 claude --version
 
+echo "== herdr"
+# herdr (https://herdr.dev, Apache-2.0), the terminal multiplexer Claude Code
+# runs in for local sessions, as on the desktop. One static binary from its
+# GitHub release, pinned and checked; a new version means new sums here.
+herdr_version=0.9.5
+case "$arch" in
+  arm64) herdr_asset=herdr-linux-aarch64; herdr_sum=17d7536f2da50859523680ef279dffcac8e4a235f4e46fe8da6c2ec44141897c ;;
+  x64) herdr_asset=herdr-linux-x86_64; herdr_sum=14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d ;;
+esac
+herdr_bin="$HOME/.local/share/herdr/herdr-$herdr_version"
+mkdir -p "$HOME/.local/share/herdr"
+if [ ! -x "$herdr_bin" ] || [ "$(sha256sum "$herdr_bin" | cut -d' ' -f1)" != "$herdr_sum" ]; then
+  echo "Downloading herdr $herdr_version…"
+  curl -fsSL "https://github.com/herdrdev/herdr/releases/download/v$herdr_version/$herdr_asset" -o "$herdr_bin.part"
+  [ "$(sha256sum "$herdr_bin.part" | cut -d' ' -f1)" = "$herdr_sum" ] || { echo "herdr's checksum didn't match"; exit 1; }
+  chmod +x "$herdr_bin.part"
+  mv "$herdr_bin.part" "$herdr_bin"
+fi
+ln -sf "$herdr_bin" "$HOME/.local/bin/herdr"
+find "$HOME/.local/share/herdr" -maxdepth 1 -type f -name 'herdr-[0-9]*' ! -name "herdr-$herdr_version" -delete
+herdr --version
+
 echo "== The bridge"
 export PATH="$HOME/.local/bin:$PATH"
 python3 "$HOME/ygg-bridge/ygg_bridge.py" key >/dev/null

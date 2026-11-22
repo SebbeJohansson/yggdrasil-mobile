@@ -101,6 +101,18 @@ is `401`. Errors are `{ "error": "…" }` with a non-2xx code.
 | `POST /v1/accounts {name}` | adds an account; sign it in with `ygg_bridge.py login <id>` (or from the app, in Ygg's own Linux) | `{id, name, ...}` |
 | `POST /v1/accounts/{id} {name}` / `POST /v1/accounts/{id}/remove` | renames / forgets an account and its sign-in | |
 
+| `GET /v1/local` | the local sessions: Claude Code on the phone, in herdr | `{sessions: [{name, account, repo, task, at, status, dialog}]}` |
+| `POST /v1/local {repo, task?, account?, branch?}` | clones the repo once into `~/.ygg-bridge/work` (then only fetches), starts `claude` in a herdr workspace there as the account, and types the task | a session |
+| `GET /v1/local/{name}` | the session with its chat (from Claude's transcript) and, while there's none, its screen | a session with `messages`, `screen` |
+| `POST /v1/local/{name}/prompt {text}` / `choose {question, key, label}` / `keys {keys}` / `stop` | types a message; picks a dialog's choice while that dialog still shows; presses esc etc.; closes the workspace (the checkout stays) | `{ok}` |
+
+Local sessions run Claude Code interactively in herdr (https://herdr.dev), as
+the desktop's Sindri does: one headless `herdr server --session ygg-<account>`
+per account, started with the account's `CLAUDE_CONFIG_DIR`. herdr says
+whether Claude works, waits or shows a dialog, and types for you; what Claude
+said is read from its transcript (`sessions/<pid>.json` gives the session id).
+Setup installs herdr, pinned and checked against its sums.
+
 Accounts: each Claude account has its own claude config folder
 (`CLAUDE_CONFIG_DIR`, in `~/.ygg-bridge/accounts/<id>`), so a personal and a
 work account each keep their own sign-in. `default` is claude's own
