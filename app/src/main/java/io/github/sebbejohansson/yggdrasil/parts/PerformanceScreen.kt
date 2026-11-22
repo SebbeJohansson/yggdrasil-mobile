@@ -1,5 +1,14 @@
 package io.github.sebbejohansson.yggdrasil.parts
 
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import io.github.sebbejohansson.yggdrasil.core.DiskUse
+import io.github.sebbejohansson.yggdrasil.core.DiskItem
+import io.github.sebbejohansson.yggdrasil.core.BatteryNow
+import io.github.sebbejohansson.yggdrasil.core.ProcGroup
+import io.github.sebbejohansson.yggdrasil.core.Procs
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -74,6 +83,28 @@ fun PerformanceScreen(c: AppContainer, onBack: () -> Unit) {
             delay(5_000)
         }
     }
+    // Every process of the app's, Ygg's Linux included, read twice 3 s apart for CPU.
+    val procs by produceState(emptyList<ProcGroup>()) {
+        var before = withContext(Dispatchers.IO) { Procs.read() }
+        var at = System.currentTimeMillis()
+        while (true) {
+            delay(3_000)
+            val after = withContext(Dispatchers.IO) { Procs.read() }
+            val t = System.currentTimeMillis()
+            value = Procs.groups(before, after, t - at)
+            before = after; at = t
+        }
+    }
+    val context = LocalContext.current
+    val battery by produceState<BatteryNow?>(null) {
+        while (true) {
+            value = withContext(Dispatchers.IO) { runCatching { BatteryNow.read(context) }.getOrNull() }
+            delay(5_000)
+        }
+    }
+    var disk by remember { mutableStateOf<List<DiskItem>?>(null) }
+    var measuring by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -97,6 +128,54 @@ fun PerformanceScreen(c: AppContainer, onBack: () -> Unit) {
                 Fact("CPU", "%.1f%% of a core".format(p.cpuPercent), "on average, ${PerfMath.time(p.cpuMs)} in ${PerfMath.time(p.upMs)} since the app started")
                 Fact("Network", "${PerfMath.bytes(p.rxBytes)} in · ${PerfMath.bytes(p.txBytes)} out", "since the phone started")
             } ?: Text("Reading…", style = HudText.meta)
+        }
+
+        HudSection("What runs now", Modifier.padding(top = 6.dp))
+        Text("Every process of Ygg's, Ygg's Linux included (Claude Code, herdr, the bridge): CPU over the last 3 s, as a share of one core.",
+            style = HudText.meta)
+        if (procs.isEmpty()) Text("Reading…", style = HudText.meta)
+        val cpuAll = procs.sumOf { it.cpuPercent }
+        val memAll = procs.sumOf { it.rssKb }.coerceAtLeast(1)
+        if (procs.isNotEmpty()) Fact("In all", "%.0f%% CPU · %s".format(cpuAll, mb(memAll)), "${procs.sumOf { it.processes }} processes")
+        procs.forEach { g ->
+            RowView(
+                title = g.group,
+                share = (if (cpuAll >= 1) g.cpuPercent / cpuAll else g.rssKb.toDouble() / memAll).toFloat(),
+                right = "%.0f%% · %s".format(g.cpuPercent, mb(g.rssKb)),
+                line = "${g.processes} ${if (g.processes == 1) "process" else "processes"} · " +
+                    g.commands.joinToString(" · ") { it.substringAfterLast('/').take(48) },
+                warn = g.cpuPercent >= 80,
+            )
+        }
+
+        HudSection("Battery", Modifier.padding(top = 6.dp))
+        Column(Modifier.fillMaxWidth().hudPanel().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            battery?.let { b ->
+                Fact("Level", "${b.percent}%" + if (b.charging) " · charging" else "", null)
+                Fact("Drawing", b.currentMa?.let { "${kotlin.math.abs(it)} mA" + if (it > 0 && b.charging) " in" else "" } ?: "the phone doesn't say",
+                    "the whole phone, screen included: Android doesn't tell an app its own share")
+                b.temperatureC?.let { Fact("Temperature", "%.1f °C".format(it), if (it >= 40) "warm: heavy work slows down to cool" else null) }
+            } ?: Text("Reading…", style = HudText.meta)
+        }
+
+        HudSection("Storage", Modifier.padding(top = 6.dp))
+        if (disk == null) {
+            Text("What takes the phone's storage: the models, Ygg's Linux by part, and the app's own. Measuring takes a few seconds.", style = HudText.meta)
+            HudButton(if (measuring) "Measuring…" else "Measure", {
+                measuring = true
+                scope.launch {
+                    disk = withContext(Dispatchers.IO) { DiskUse.measure(context, c.modelStore.dir, c.ownLinux.rootfs) }
+                    measuring = false
+                }
+            }, kind = HudButtonKind.SMALL, enabled = !measuring)
+        }
+        disk?.let { items ->
+            val all = items.sumOf { it.bytes }.coerceAtLeast(1)
+            Fact("In all", PerfMath.bytes(all), null)
+            items.filter { it.bytes > 0 }.sortedByDescending { it.bytes }.forEach { d ->
+                RowView(title = d.label, share = d.bytes.toFloat() / all, right = PerfMath.bytes(d.bytes), line = d.note ?: "", warn = false)
+            }
+            HudButton("Measure again", { disk = null }, kind = HudButtonKind.SMALL)
         }
 
         val rows = PerfMath.rows(steps)
