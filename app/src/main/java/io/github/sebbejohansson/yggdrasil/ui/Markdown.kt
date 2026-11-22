@@ -8,12 +8,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -174,20 +178,43 @@ fun Markdown(text: String, modifier: Modifier = Modifier, style: TextStyle = Hud
                     b.text, style = style.copy(fontFamily = HudFonts.mono, fontSize = 12.sp), softWrap = false,
                     modifier = Modifier.fillMaxWidth().background(Hud.crust).horizontalScroll(rememberScrollState()).padding(8.dp),
                 )
-                is MdBlock.Table -> Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(Hud.crust).padding(6.dp)) {
-                    b.rows.forEachIndexed { r, row ->
-                        Row(Modifier.padding(vertical = 2.dp)) {
-                            row.forEach { cell ->
-                                Text(annotated(cell), style = style.copy(fontWeight = if (r == 0) FontWeight.SemiBold else null,
-                                    color = if (r == 0) Hud.bright else style.color), modifier = Modifier.widthIn(min = 60.dp, max = 260.dp).padding(end = 12.dp))
-                            }
-                        }
-                    }
-                }
+                is MdBlock.Table -> MdTable(b, style)
                 is MdBlock.Quote -> Text(annotated(b.text), style = style.copy(color = Hud.subtext0, fontStyle = FontStyle.Italic),
                     modifier = Modifier.leftStripe(Hud.overlay0).padding(start = 10.dp))
                 MdBlock.Rule -> Text("─".repeat(24), style = style.copy(color = Hud.line))
             }
+        }
+    }
+}
+
+/** A table whose columns line up: each column as wide as its widest cell, up to a cap; long cells wrap. */
+@Composable
+private fun MdTable(b: MdBlock.Table, style: TextStyle) {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val maxCell = 240.dp
+    val columns = b.rows.maxOf { it.size }
+    val widths = remember(b, style) {
+        val maxPx = with(density) { maxCell.roundToPx() }
+        (0 until columns).map { col ->
+            val px = b.rows.mapIndexed { r, row ->
+                val cell = row.getOrNull(col) ?: ""
+                val s = if (r == 0) style.copy(fontWeight = FontWeight.SemiBold) else style
+                measurer.measure(annotated(cell), s, constraints = Constraints(maxWidth = maxPx)).size.width
+            }.maxOrNull() ?: 0
+            // Room for the text and the gap after it.
+            with(density) { px.toDp() } + 14.dp
+        }
+    }
+    Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(Hud.crust).padding(6.dp)) {
+        b.rows.forEachIndexed { r, row ->
+            Row(Modifier.padding(vertical = 3.dp)) {
+                (0 until columns).forEach { col ->
+                    Text(annotated(row.getOrNull(col) ?: ""), style = style.copy(fontWeight = if (r == 0) FontWeight.SemiBold else null,
+                        color = if (r == 0) Hud.bright else style.color), modifier = Modifier.width(widths[col]).padding(end = 12.dp))
+                }
+            }
+            if (r == 0) Box(Modifier.width(widths.fold(0.dp) { a, w -> a + w }).height(1.dp).background(Hud.line))
         }
     }
 }
