@@ -318,6 +318,7 @@ private fun OwnLinuxSetup(vm: BridgeViewModel, linux: OwnLinux, login: LinuxLogi
     // The bridge's key is in Ygg's own storage: Ygg takes it, no pasting.
     LaunchedEffect(state) {
         if (state == LinuxState.Ready) withContext(Dispatchers.IO) { linux.bridgeKey() }?.let { vm.setKey(it) }
+        withContext(Dispatchers.IO) { login.refresh() }
     }
 
     HudLabel("1 · Linux")
@@ -348,7 +349,10 @@ private fun OwnLinuxSetup(vm: BridgeViewModel, linux: OwnLinux, login: LinuxLogi
     HudLabel("2 · Sign in to Claude", modifier = Modifier.padding(top = 4.dp))
     when {
         !ready -> Text("After the Linux is set up.", style = HudText.meta)
-        signIn.done -> Text("Signed in.", style = HudText.small.copy(color = Hud.green))
+        signIn.done -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Signed in.", style = HudText.small.copy(color = Hud.green), modifier = Modifier.weight(1f))
+            HudButton("Sign in again", { scope.launch { login.start() } }, kind = HudButtonKind.SMALL)
+        }
         !signIn.running -> {
             Text("Once: open the link it gives, sign in with your Claude account, and paste the code back here.", style = HudText.meta)
             HudButton("Sign in", { scope.launch { login.start() } }, kind = HudButtonKind.GHOST)

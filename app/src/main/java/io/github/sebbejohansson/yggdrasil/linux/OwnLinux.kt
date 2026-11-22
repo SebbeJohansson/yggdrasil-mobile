@@ -73,6 +73,12 @@ class OwnLinux(private val context: Context) {
         ProcessBuilder(Proot.command(paths, argv, env = env)).redirectErrorStream(true)
             .apply { environment().putAll(Proot.hostEnv(paths)) }.start()
 
+    /**
+     * Whether Claude Code in the guest has a sign-in kept: `claude auth login`
+     * leaves it in root's ~/.claude/.credentials.json, which outlives app updates.
+     */
+    fun signedIn(): Boolean = File(rootfs, "root/.claude/.credentials.json").let { it.isFile && it.length() > 2 }
+
     /** The bridge's key, as the guest keeps it: Ygg reads it itself, no pasting. */
     fun bridgeKey(): String? = File(rootfs, "root/.ygg-bridge/key").takeIf { it.isFile }?.readText()?.trim()?.ifEmpty { null }
 
@@ -200,9 +206,16 @@ class OwnLinux(private val context: Context) {
 class LinuxLogin(private val linux: OwnLinux) {
     data class State(val running: Boolean = false, val url: String? = null, val lines: List<String> = emptyList(), val done: Boolean = false, val code: Int? = null)
 
-    private val _state = MutableStateFlow(State())
+    // Signed in is what's on disk, not what this run of the app saw: it survives updates and restarts.
+    private val _state = MutableStateFlow(State(done = runCatching { linux.signedIn() }.getOrDefault(false)))
     val state: StateFlow<State> = _state
     private var process: Process? = null
+
+    /** Looks again at what's kept, unless a sign-in is under way. */
+    fun refresh() {
+        val kept = runCatching { linux.signedIn() }.getOrDefault(false)
+        _state.update { if (it.running) it else it.copy(done = kept) }
+    }
 
     private val link = Regex("""https://\S+""")
     private val ansi = Regex("\u001B\\[[0-9;?]*[A-Za-z]|\u001B\\][^\u0007]*\u0007")
@@ -224,7 +237,7 @@ class LinuxLogin(private val linux: OwnLinux) {
             _state.update { s -> s.copy(lines = lines, url = s.url ?: lines.firstNotNullOfOrNull { l -> link.find(l)?.value }) }
         }
         val code = p.waitFor()
-        _state.update { it.copy(running = false, done = code == 0, code = code) }
+        _state.update { it.copy(running = false, done = code == 0 || linux.signedIn(), code = code) }
     }
 
     /** The code the browser shows, typed into the login. */
