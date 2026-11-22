@@ -259,6 +259,34 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual([("user", "Add a README"), ("assistant", "Sure."), ("tool", "Write: /root/app/README.md"), ("assistant", "Done.")],
                          [(m["role"], m["text"]) for m in self.b.messages(f)])
 
+    def test_local_repo_changes_diff_and_push(self):
+        b = self.b
+        cwd = b.workdir("me/app")
+        b.save_local([{"name": "app-test", "account": "default", "repo": "me/app", "cwd": str(cwd), "pane": "w9:p1", "task": "", "at": 0}])
+        try:
+            (cwd / "README.md").write_text("hi\nmore\n")
+            (cwd / "new.txt").write_text("new\n")
+            status, r = self.call("GET", "/v1/local/app-test/repo")
+            self.assertEqual(200, status, r)
+            self.assertEqual(("main", "origin/main", 0, 0), (r["branch"], r["upstream"], r["ahead"], r["behind"]))
+            files = {f["path"]: f for f in r["files"]}
+            self.assertEqual((2, 1), (files["README.md"]["added"], files["README.md"]["removed"]))
+            self.assertEqual("??", files["new.txt"]["status"])
+            status, d = self.call("GET", "/v1/local/app-test/diff?path=README.md")
+            self.assertIn("+more", d["diff"])
+            self.assertIn("+new", self.call("GET", "/v1/local/app-test/diff?path=new.txt")[1]["diff"])
+            subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "more"], cwd=cwd, check=True)
+            self.assertEqual(1, self.call("GET", "/v1/local/app-test/repo")[1]["ahead"])
+            status, out = self.call("POST", "/v1/local/app-test/git", {"action": "push"})
+            self.assertEqual(200, status, out)
+            self.assertEqual(0, self.call("GET", "/v1/local/app-test/repo")[1]["ahead"])
+            self.assertEqual(200, self.call("POST", "/v1/local/app-test/git", {"action": "pull"})[0])
+            self.assertEqual(400, self.call("POST", "/v1/local/app-test/git", {"action": "reset"})[0])
+            self.assertEqual(404, self.call("POST", "/v1/local/app-test/nothing")[0])
+            self.assertEqual("app-test", b.local_sessions()[0]["name"])  # an unknown action doesn't stop it
+        finally:
+            b.save_local([])
+
     def test_local_sessions_need_one(self):
         self.assertEqual(404, self.call("GET", "/v1/local/nothing-here")[0])
         self.assertEqual(404, self.call("POST", "/v1/local/nothing-here/prompt", {"text": "hi"})[0])

@@ -1,6 +1,13 @@
 package io.github.sebbejohansson.yggdrasil.llm.claude
 
 import androidx.compose.foundation.background
+import io.github.sebbejohansson.yggdrasil.ui.Markdown
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -57,6 +64,13 @@ data class LocalUiState(
     val starting: String? = null,
     val sending: Boolean = false,
     val error: String? = null,
+    /** The open session's checkout: branch, changes, commits. */
+    val repo: RepoState? = null,
+    /** The file whose diff is open, and the diff. */
+    val diffPath: String? = null,
+    val diff: String = "",
+    /** What a pull or push said. */
+    val gitNote: String? = null,
 )
 
 /** Claude Code on this phone, in herdr: the sessions, and the one open as a chat. */
@@ -77,8 +91,33 @@ class LocalViewModel(private val bridge: BridgeClient) : ViewModel() {
     }
 
     fun open(s: LocalSession?) {
-        _state.update { it.copy(chat = s, error = null) }
-        if (s != null) refreshChat()
+        _state.update { it.copy(chat = s, error = null, repo = null, diffPath = null, diff = "", gitNote = null) }
+        if (s != null) { refreshChat(); refreshRepo() }
+    }
+
+    fun refreshRepo() = viewModelScope.launch {
+        val name = _state.value.chat?.name ?: return@launch
+        runCatching { bridge.repoLocal(name) }.onSuccess { r -> _state.update { if (it.chat?.name == name) it.copy(repo = r) else it } }
+    }
+
+    fun openDiff(path: String?) = viewModelScope.launch {
+        val name = _state.value.chat?.name ?: return@launch
+        _state.update { it.copy(diffPath = path, diff = "") }
+        if (path == null) return@launch
+        runCatching { bridge.diffLocal(name, path) }
+            .onSuccess { d -> _state.update { if (it.diffPath == path) it.copy(diff = d) else it } }
+            .onFailure { e -> _state.update { it.copy(error = e.message) } }
+    }
+
+    /** pull or push, with the bridge's GitHub token. */
+    fun git(action: String) = viewModelScope.launch {
+        val name = _state.value.chat?.name ?: return@launch
+        _state.update { it.copy(sending = true, gitNote = null, error = null) }
+        runCatching { bridge.gitLocal(name, action) }
+            .onSuccess { out -> _state.update { it.copy(gitNote = "${action.replaceFirstChar { c -> c.uppercase() }}: $out") } }
+            .onFailure { e -> _state.update { it.copy(error = e.message) } }
+        _state.update { it.copy(sending = false) }
+        refreshRepo()
     }
 
     fun start(repo: String, task: String, account: String) = viewModelScope.launch {
@@ -136,23 +175,26 @@ private fun statusColor(s: String) = when (s) {
 fun PhoneLocalDialog(bridgeVm: BridgeViewModel, vm: LocalViewModel, onSetUp: () -> Unit, onDismiss: () -> Unit) {
     val b = bridgeVm.state.collectAsStateWithLifecycle().value
     val s = vm.state.collectAsStateWithLifecycle().value
-    // The list every 5 s; the open chat every 2 s. Read fresh each time round.
+    // The list every 5 s; the open chat every 2 s, and its checkout every 10 s. Read fresh each time round.
     LaunchedEffect(Unit) {
+        var n = 0
         while (true) {
             val open = vm.state.value.chat != null
-            if (open) vm.refreshChat() else vm.refresh()
+            if (open) {
+                vm.refreshChat()
+                if (n++ % 5 == 0) vm.refreshRepo()
+            } else vm.refresh()
             delay(if (open) 2_000 else 5_000)
         }
     }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 24.dp).background(Hud.base)
-                .verticalScroll(rememberScrollState()).padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
+    Dialog(onDismissRequest = { if (s.chat != null) vm.open(null) else onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Column(Modifier.fillMaxSize().background(Hud.base).systemBarsPadding().imePadding().padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (s.chat != null) s.chat.repo.substringAfter('/') else "On this phone", style = HudText.title, modifier = Modifier.weight(1f))
-                if (s.chat != null) HudButton("Back", { vm.open(null) }, kind = HudButtonKind.SMALL, modifier = Modifier.padding(end = 6.dp))
+                if (s.chat != null) HudButton("‹ Back", { vm.open(null) }, kind = HudButtonKind.SMALL, modifier = Modifier.padding(end = 8.dp))
+                Text(if (s.chat != null) s.chat.repo.substringAfter('/') else "On this phone", style = HudText.title,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 HudButton("Close", onDismiss, kind = HudButtonKind.SMALL)
             }
             when {
@@ -164,10 +206,12 @@ fun PhoneLocalDialog(bridgeVm: BridgeViewModel, vm: LocalViewModel, onSetUp: () 
                     Text("herdr isn't in Ygg's Linux yet: Settings → Claude bridge → Update adds it.", style = HudText.small)
                     HudButton("Settings", { onDismiss(); onSetUp() }, kind = HudButtonKind.SMALL)
                 }
-                s.chat != null -> LocalChat(s.chat, s, vm)
-                else -> LocalList(b, s, vm)
+                s.chat != null -> LocalSessionView(s.chat, s, vm, Modifier.weight(1f))
+                else -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LocalList(b, s, vm)
+                }
             }
-            s.error?.let { Text(it, style = HudText.meta.copy(color = Hud.amber)) }
+            s.error?.let { Text(it, style = HudText.meta.copy(color = Hud.amber), maxLines = 3, overflow = TextOverflow.Ellipsis) }
         }
     }
 }
@@ -223,48 +267,176 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
     }
 }
 
+/** One session: its branch and state on top, then the chat or its changes, and the message box. */
 @Composable
-private fun LocalChat(c: LocalSession, s: LocalUiState, vm: LocalViewModel) {
+private fun LocalSessionView(c: LocalSession, s: LocalUiState, vm: LocalViewModel, modifier: Modifier) {
+    var tab by remember(c.name) { mutableStateOf("chat") }
+    val r = s.repo
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Where things stand, at a glance.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(statusText(c.status), style = HudText.meta.copy(color = statusColor(c.status)))
+            if (r != null) {
+                Text("⎇ ${r.branch.ifEmpty { "detached" }}" + (if (r.ahead > 0) " ↑${r.ahead}" else "") + (if (r.behind > 0) " ↓${r.behind}" else ""),
+                    style = HudText.meta.copy(fontFamily = HudFonts.mono), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            } else Box(Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudButton("Chat", { tab = "chat" }, kind = if (tab == "chat") HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+            HudButton("Changes" + (r?.files?.size?.takeIf { it > 0 }?.let { " ($it)" } ?: ""),
+                { tab = "changes"; vm.refreshRepo() }, kind = if (tab == "changes") HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+        }
+        if (tab == "chat") LocalChat(c, s, vm, Modifier.weight(1f)) else LocalChanges(c, s, vm, Modifier.weight(1f))
+    }
+}
+
+/** A run of tool lines, or one message. */
+private sealed interface ChatItem {
+    data class Message(val line: ChatLine) : ChatItem
+    data class Tools(val lines: List<String>) : ChatItem
+}
+
+private fun chatItems(lines: List<ChatLine>): List<ChatItem> {
+    val out = mutableListOf<ChatItem>()
+    for (l in lines) {
+        val last = out.lastOrNull()
+        if (l.role == "tool") {
+            if (last is ChatItem.Tools) out[out.lastIndex] = ChatItem.Tools(last.lines + l.text) else out += ChatItem.Tools(listOf(l.text))
+        } else out += ChatItem.Message(l)
+    }
+    return out
+}
+
+@Composable
+private fun LocalChat(c: LocalSession, s: LocalUiState, vm: LocalViewModel, modifier: Modifier) {
     var draft by remember(c.name) { mutableStateOf("") }
-    Text("${c.repo} · ${statusText(c.status)}", style = HudText.meta.copy(color = statusColor(c.status)))
-    if (c.messages.isEmpty() && c.screen.isBlank()) Text("Nothing yet.", style = HudText.meta)
-    c.messages.takeLast(60).forEach { m ->
-        when (m.role) {
-            "user" -> Text(m.text, style = HudText.small.copy(color = Hud.cyan), modifier = Modifier.fillMaxWidth().padding(start = 32.dp))
-            "tool" -> Text("· ${m.text}", style = HudText.meta.copy(fontFamily = HudFonts.mono), maxLines = 2, overflow = TextOverflow.Ellipsis)
-            else -> Text(m.text, style = HudText.small.copy(color = Hud.text))
+    val chat = remember(c.messages) { chatItems(c.messages.takeLast(120)) }
+    val list = rememberLazyListState()
+    // New messages scroll into view.
+    LaunchedEffect(chat.size, c.status) { if (chat.isNotEmpty()) list.animateScrollToItem(chat.size) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (chat.isEmpty() && c.screen.isBlank()) item { Text("Nothing yet.", style = HudText.meta) }
+            items(chat.size) { i ->
+                when (val entry = chat[i]) {
+                    is ChatItem.Tools -> ToolRun(entry.lines)
+                    is ChatItem.Message -> if (entry.line.role == "user") {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            Text(entry.line.text, style = HudText.small.copy(color = Hud.bright),
+                                modifier = Modifier.widthIn(max = 300.dp).background(Hud.surface0).padding(horizontal = 10.dp, vertical = 6.dp))
+                        }
+                    } else Markdown(entry.line.text, Modifier.fillMaxWidth())
+                }
+            }
+            // Before there's a chat, or while Claude shows something only the screen has.
+            if (c.screen.isNotBlank() && (chat.isEmpty() || (c.status == "blocked" && c.dialog == null))) item {
+                Box(Modifier.fillMaxWidth().heightIn(max = 260.dp).background(Hud.crust).padding(8.dp)) {
+                    Column(Modifier.verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
+                        c.screen.lines().takeLast(30).forEach { l -> Text(l.ifEmpty { " " }, style = HudText.meta.copy(fontFamily = HudFonts.mono, color = Hud.text), softWrap = false) }
+                    }
+                }
+            }
+            if (c.status == "working") item { Text("Claude is working…", style = HudText.meta.copy(color = Hud.cyan)) }
+            item { Box(Modifier.heightIn(min = 1.dp)) }
+        }
+        c.dialog?.let { d ->
+            // A question Claude asks (a tool to allow, say): its choices, answered with its own keys.
+            Column(Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState()).hudPanel(warn = true).padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (d.detail.isNotBlank()) Text(d.detail, style = HudText.meta.copy(fontFamily = HudFonts.mono), maxLines = 12, overflow = TextOverflow.Ellipsis)
+                Text(d.question, style = HudText.small.copy(color = Hud.text))
+                d.choices.forEach { ch ->
+                    HudButton("${ch.key}. ${ch.label}", { vm.choose(c.name, d, ch) }, kind = if (ch.selected) HudButtonKind.PRIMARY else HudButtonKind.SMALL,
+                        enabled = !s.sending, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+        if (c.status != "gone") {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                HudTextField(draft, { draft = it }, placeholder = "Message Claude", maxLines = 5, modifier = Modifier.weight(1f))
+                HudButton(if (s.sending) "…" else "Send", { vm.send(c.name, draft.trim()); draft = "" }, kind = HudButtonKind.PRIMARY,
+                    enabled = draft.isNotBlank() && !s.sending && c.status != "blocked")
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (c.status == "working") HudButton("Esc (interrupt)", { vm.interrupt(c.name) }, kind = HudButtonKind.SMALL)
+            HudButton(if (c.status == "gone") "Remove" else "Stop", { vm.stop(c.name) }, kind = HudButtonKind.SMALL)
         }
     }
-    // Before there's a chat, or while Claude shows something only the screen has.
-    if (c.screen.isNotBlank() && (c.messages.isEmpty() || (c.status == "blocked" && c.dialog == null))) {
-        Box(Modifier.fillMaxWidth().heightIn(max = 260.dp).background(Hud.crust).padding(8.dp)) {
-            Column(Modifier.verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
-                c.screen.lines().takeLast(30).forEach { Text(it.ifEmpty { " " }, style = HudText.meta.copy(fontFamily = HudFonts.mono, color = Hud.text), softWrap = false) }
+}
+
+/** Tools Claude used in a row: one line, open on a tap. */
+@Composable
+private fun ToolRun(lines: List<String>) {
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().leftStripe(Hud.overlay0).clickable { open = !open }.padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        val names = lines.map { it.substringBefore(':') }.distinct().joinToString(", ")
+        Text((if (open) "▾ " else "▸ ") + if (lines.size == 1) lines[0] else "${lines.size} tools · $names",
+            style = HudText.meta.copy(fontFamily = HudFonts.mono), maxLines = if (open) 3 else 1, overflow = TextOverflow.Ellipsis)
+        if (open && lines.size > 1) lines.forEach { Text("· $it", style = HudText.meta.copy(fontFamily = HudFonts.mono), maxLines = 3, overflow = TextOverflow.Ellipsis) }
+    }
+}
+
+/** The checkout: what changed (a file opens as its diff), the last commits, and pull and push. */
+@Composable
+private fun LocalChanges(c: LocalSession, s: LocalUiState, vm: LocalViewModel, modifier: Modifier) {
+    val r = s.repo
+    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (r == null) { Text("Looking…", style = HudText.meta); return@Column }
+        Text(
+            "${r.branch.ifEmpty { "detached" }} → ${r.upstream.ifEmpty { "no upstream yet" }}" +
+                when {
+                    r.ahead > 0 && r.behind > 0 -> " · ${r.ahead} to push, ${r.behind} to pull"
+                    r.ahead > 0 -> " · ${r.ahead} to push"
+                    r.behind > 0 -> " · ${r.behind} to pull"
+                    else -> " · up to date"
+                },
+            style = HudText.small.copy(fontFamily = HudFonts.mono),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudButton("Pull", { vm.git("pull") }, kind = HudButtonKind.SMALL, enabled = !s.sending)
+            HudButton("Push", { vm.git("push") }, kind = if (r.ahead > 0 || r.upstream.isEmpty()) HudButtonKind.PRIMARY else HudButtonKind.SMALL, enabled = !s.sending)
+            if (r.files.isNotEmpty()) HudButton("Ask Claude to commit", {
+                vm.send(c.name, "Commit the current changes with a clear, conventional commit message. Don't push.")
+            }, kind = HudButtonKind.SMALL, enabled = !s.sending && c.status != "working" && c.status != "blocked")
+        }
+        s.gitNote?.let { Text(it, style = HudText.meta.copy(color = Hud.green, fontFamily = HudFonts.mono)) }
+        HudLabel(if (r.files.isEmpty()) "no changes" else "${r.files.size} changed")
+        r.files.forEach { f ->
+            val openFile = s.diffPath == f.path
+            Column(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth().clickable { vm.openDiff(if (openFile) null else f.path) }.padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(f.status, style = HudText.meta.copy(fontFamily = HudFonts.mono, color = when (f.status) {
+                        "??", "A" -> Hud.green; "D" -> Hud.amber; else -> Hud.cyan }), modifier = Modifier.widthIn(min = 22.dp))
+                    Text(f.path, style = HudText.small.copy(fontFamily = HudFonts.mono, color = Hud.text), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text("+${f.added} −${f.removed}", style = HudText.meta.copy(fontFamily = HudFonts.mono))
+                }
+                if (openFile) DiffView(s.diff)
+            }
+        }
+        if (r.log.isNotEmpty()) {
+            HudLabel("last commits", modifier = Modifier.padding(top = 6.dp))
+            r.log.forEach { cm ->
+                Text("${cm.hash} ${cm.subject}", style = HudText.meta.copy(fontFamily = HudFonts.mono), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
-    if (c.status == "working") Text("Claude is working…", style = HudText.meta.copy(color = Hud.cyan))
-    c.dialog?.let { d ->
-        // A question Claude asks (a tool to allow, say): its choices, answered with its own keys.
-        Column(Modifier.fillMaxWidth().hudPanel(warn = true).padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (d.detail.isNotBlank()) Text(d.detail, style = HudText.meta.copy(fontFamily = HudFonts.mono), maxLines = 12, overflow = TextOverflow.Ellipsis)
-            Text(d.question, style = HudText.small.copy(color = Hud.text))
-            d.choices.forEach { ch ->
-                HudButton("${ch.key}. ${ch.label}", { vm.choose(c.name, d, ch) }, kind = if (ch.selected) HudButtonKind.PRIMARY else HudButtonKind.SMALL,
-                    enabled = !s.sending, modifier = Modifier.fillMaxWidth())
+}
+
+/** A diff in colour: added green, removed amber, hunks cyan. */
+@Composable
+private fun DiffView(diff: String) {
+    if (diff.isBlank()) { Text("…", style = HudText.meta); return }
+    Column(Modifier.fillMaxWidth().background(Hud.crust).horizontalScroll(rememberScrollState()).padding(8.dp)) {
+        diff.lines().filterNot { it.startsWith("diff --git") || it.startsWith("index ") || it.startsWith("--- ") || it.startsWith("+++ ") }
+            .take(600).forEach { l ->
+                Text(l.ifEmpty { " " }, softWrap = false, style = HudText.meta.copy(fontFamily = HudFonts.mono, color = when {
+                    l.startsWith("+") -> Hud.green
+                    l.startsWith("-") -> Hud.amber
+                    l.startsWith("@@") -> Hud.cyan
+                    else -> Hud.subtext0
+                }))
             }
-        }
     }
-    if (c.status != "gone") {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            HudTextField(draft, { draft = it }, placeholder = "Message Claude", maxLines = 5, modifier = Modifier.weight(1f))
-            HudButton(if (s.sending) "…" else "Send", { vm.send(c.name, draft.trim()); draft = "" }, kind = HudButtonKind.PRIMARY,
-                enabled = draft.isNotBlank() && !s.sending && c.status != "blocked")
-        }
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (c.status == "working") HudButton("Esc (interrupt)", { vm.interrupt(c.name) }, kind = HudButtonKind.SMALL)
-        HudButton(if (c.status == "gone") "Remove" else "Stop", { vm.stop(c.name) }, kind = HudButtonKind.SMALL)
-    }
-    if (c.status != "gone") Text("Stop ends Claude here; the checkout and its changes stay on the phone.", style = HudText.meta.copy(color = Hud.overlay0))
 }

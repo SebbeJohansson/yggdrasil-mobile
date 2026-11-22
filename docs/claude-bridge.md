@@ -104,6 +104,7 @@ is `401`. Errors are `{ "error": "…" }` with a non-2xx code.
 | `GET /v1/local` | the local sessions: Claude Code on the phone, in herdr | `{sessions: [{name, account, repo, task, at, status, dialog}]}` |
 | `POST /v1/local {repo, task?, account?, branch?}` | clones the repo once into `~/.ygg-bridge/work` (then only fetches), starts `claude` in a herdr workspace there as the account, and types the task | a session |
 | `GET /v1/local/{name}` | the session with its chat (from Claude's transcript) and, while there's none, its screen | a session with `messages`, `screen` |
+| `GET /v1/local/{name}/repo` / `GET …/diff?path=` / `POST …/git {action: pull\|push}` | the checkout's branch, ahead/behind, changed files (+/−) and last commits; one file's diff; a fast-forward pull or a push of its branch, with the bridge's GitHub token | |
 | `POST /v1/local/{name}/prompt {text}` / `choose {question, key, label}` / `keys {keys}` / `stop` | types a message; picks a dialog's choice while that dialog still shows; presses esc etc.; closes the workspace (the checkout stays) | `{ok}` |
 
 Local sessions run Claude Code interactively in herdr (https://herdr.dev), as

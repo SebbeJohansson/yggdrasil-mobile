@@ -64,6 +64,21 @@ data class LocalSession(
     val screen: String = "",
 )
 
+/** Where a local session's checkout stands. */
+data class RepoState(
+    val branch: String,
+    val upstream: String,
+    val ahead: Int,
+    val behind: Int,
+    val files: List<RepoFile>,
+    val log: List<RepoCommit>,
+)
+
+/** A changed file: git's two-letter status (M, A, D, ??…) and lines added and removed. */
+data class RepoFile(val path: String, val status: String, val added: Int, val removed: Int)
+
+data class RepoCommit(val hash: String, val at: Instant, val subject: String)
+
 /** The bridge said no, with its reason. */
 class BridgeException(val status: Int, message: String) : IOException(message)
 
@@ -189,6 +204,30 @@ class BridgeClient(
     /** Presses keys in its pane: esc interrupts Claude. */
     suspend fun keysLocal(name: String, vararg keys: String) = withContext(Dispatchers.IO) {
         call("POST", "/v1/local/$name/keys", JSONObject().put("keys", JSONArray(keys.toList())))
+    }
+
+    suspend fun repoLocal(name: String): RepoState = withContext(Dispatchers.IO) {
+        val o = call("GET", "/v1/local/$name/repo")
+        val files = o.optJSONArray("files") ?: JSONArray()
+        val log = o.optJSONArray("log") ?: JSONArray()
+        RepoState(
+            branch = o.optString("branch"),
+            upstream = o.optString("upstream"),
+            ahead = o.optInt("ahead"),
+            behind = o.optInt("behind"),
+            files = (0 until files.length()).map { files.getJSONObject(it).let { f -> RepoFile(f.optString("path"), f.optString("status"), f.optInt("added"), f.optInt("removed")) } },
+            log = (0 until log.length()).map { log.getJSONObject(it).let { c -> RepoCommit(c.optString("hash"), Instant.ofEpochMilli(c.optLong("at")), c.optString("subject")) } },
+        )
+    }
+
+    /** One file's diff against HEAD. */
+    suspend fun diffLocal(name: String, path: String): String = withContext(Dispatchers.IO) {
+        call("GET", "/v1/local/$name/diff?path=" + java.net.URLEncoder.encode(path, "UTF-8")).optString("diff")
+    }
+
+    /** pull (fast-forward only) or push the checkout's branch; git's last words. */
+    suspend fun gitLocal(name: String, action: String): String = withContext(Dispatchers.IO) {
+        call("POST", "/v1/local/$name/git", JSONObject().put("action", action), timeoutMs = 120_000).optString("output")
     }
 
     /** Ends it; the checkout and its work stay on the phone. */

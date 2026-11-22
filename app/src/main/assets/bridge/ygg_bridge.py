@@ -918,6 +918,67 @@ def keys_local(name: str, keys: list) -> dict:
     return {"ok": True}
 
 
+def repo_local(name: str) -> dict:
+    """Where the session's checkout stands: branch, ahead/behind its upstream,
+    the changed files with lines added and removed, and the last commits."""
+    cwd = Path(local(name)["cwd"])
+    branch = git(["branch", "--show-current"], cwd=cwd).strip()
+    upstream, ahead, behind = "", 0, 0
+    try:
+        upstream = git(["rev-parse", "--abbrev-ref", "@{upstream}"], cwd=cwd).strip()
+        behind, ahead = (int(x) for x in git(["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], cwd=cwd).split())
+    except Refused:
+        pass
+    files = {}
+    for line in git(["status", "--porcelain=v1", "-uall"], cwd=cwd).splitlines():
+        if len(line) > 3:
+            path = line[3:].split(" -> ")[-1].strip('"')
+            files[path] = {"path": path, "status": line[:2].strip() or "?", "added": 0, "removed": 0}
+    for args in (["diff", "--numstat"], ["diff", "--numstat", "--cached"]):
+        for line in git(args, cwd=cwd).splitlines():
+            parts = line.split("\t")
+            if len(parts) == 3 and parts[2] in files:
+                f = files[parts[2]]
+                f["added"] += int(parts[0]) if parts[0].isdigit() else 0
+                f["removed"] += int(parts[1]) if parts[1].isdigit() else 0
+    log = []
+    for line in git(["log", "-8", "--format=%h%x09%ct%x09%s"], cwd=cwd).splitlines():
+        h, t, subject = (line.split("\t", 2) + ["", ""])[:3]
+        log.append({"hash": h, "at": int(t or 0) * 1000, "subject": subject})
+    return {"branch": branch, "upstream": upstream, "ahead": ahead, "behind": behind,
+            "files": sorted(files.values(), key=lambda f: f["path"]), "log": log}
+
+
+def diff_local(name: str, path: str) -> dict:
+    """One file's changes against HEAD (a new file: all of it), at most 200 KB."""
+    cwd = Path(local(name)["cwd"])
+    if not path or path.startswith("-"):
+        raise Refused(400, "which file?")
+    text = git(["diff", "HEAD", "--", path], cwd=cwd)
+    if not text.strip():
+        untracked = git(["ls-files", "--others", "--exclude-standard", "--", path], cwd=cwd).strip()
+        if untracked:
+            out = subprocess.run(["git", "diff", "--no-index", "--", "/dev/null", path], cwd=cwd, capture_output=True, text=True)
+            text = out.stdout
+    return {"path": path, "diff": text[:200_000], "cut": len(text) > 200_000}
+
+
+def git_local(name: str, action: str) -> dict:
+    """Pull (fast-forward only) or push the checkout's branch, with the bridge's GitHub token."""
+    cwd = Path(local(name)["cwd"])
+    if action == "pull":
+        out = git(["pull", "--ff-only"], cwd=cwd)
+    elif action == "push":
+        branch = git(["branch", "--show-current"], cwd=cwd).strip()
+        if not branch:
+            raise Refused(409, "not on a branch")
+        out = git(["push", "-u", "origin", branch], cwd=cwd)
+    else:
+        raise Refused(400, "pull or push")
+    plain_git_files(cwd)
+    return {"ok": True, "output": last_lines(out, 6) or "done"}
+
+
 def stop_local(name: str) -> dict:
     """Ends Claude there and closes its workspace; the checkout and its work stay."""
     s = local(name)
@@ -1021,9 +1082,15 @@ class Handler(BaseHTTPRequestHandler):
                 b = self.body()
                 return self.answer(200, start_local(str(b.get("repo", "")), str(b.get("task", "")),
                                                     str(b.get("account") or "default"), str(b.get("branch") or "")))
-            m = re.match(r"^/v1/local/([a-z][a-z0-9_-]{0,31})(?:/(prompt|choose|keys|stop))?$", path)
+            m = re.match(r"^/v1/local/([a-z][a-z0-9_-]{0,31})(?:/(prompt|choose|keys|stop|repo|diff|git))?$", path)
             if m and method == "GET" and not m.group(2):
                 return self.answer(200, local_view(local(m.group(1)), chat=True))
+            if m and method == "GET" and m.group(2) == "repo":
+                return self.answer(200, repo_local(m.group(1)))
+            if m and method == "GET" and m.group(2) == "diff":
+                from urllib.parse import parse_qs, urlparse
+                q = parse_qs(urlparse(self.path).query)
+                return self.answer(200, diff_local(m.group(1), (q.get("path") or [""])[0]))
             if m and method == "POST" and m.group(2):
                 b = self.body()
                 name, what = m.group(1), m.group(2)
@@ -1033,7 +1100,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.answer(200, choose_local(name, str(b.get("question", "")), str(b.get("key", "")), str(b.get("label", ""))))
                 if what == "keys":
                     return self.answer(200, keys_local(name, [str(k) for k in b.get("keys") or []]))
-                return self.answer(200, stop_local(name))
+                if what == "git":
+                    return self.answer(200, git_local(name, str(b.get("action", ""))))
+                if what == "stop":
+                    return self.answer(200, stop_local(name))
             if method == "GET" and path == "/v1/accounts":
                 return self.answer(200, {"accounts": [account_info(a) for a in accounts()]})
             if method == "POST" and path == "/v1/accounts":
