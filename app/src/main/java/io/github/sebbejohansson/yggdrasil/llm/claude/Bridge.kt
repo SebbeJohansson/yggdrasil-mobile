@@ -116,6 +116,12 @@ class BridgeClient(
         changes.bump()
     }
 
+    /** Gives the bridge a GitHub token to clone private repos with; empty removes it. Kept in the bridge only. */
+    suspend fun setGithub(token: String) = withContext(Dispatchers.IO) {
+        call("POST", "/v1/github", JSONObject().put("token", token.trim()))
+        changes.bump()
+    }
+
     /** One answer for the Claude provider (docs/claude-bridge.md). */
     fun complete(body: JSONObject): String = call("POST", "/v1/complete", body, timeoutMs = 300_000).getString("text")
 

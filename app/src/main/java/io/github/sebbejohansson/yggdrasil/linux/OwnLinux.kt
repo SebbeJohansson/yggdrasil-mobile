@@ -73,6 +73,20 @@ class OwnLinux(private val context: Context) {
         ProcessBuilder(Proot.command(paths, argv, env = env)).redirectErrorStream(true)
             .apply { environment().putAll(Proot.hostEnv(paths)) }.start()
 
+    /**
+     * Puts the app's bridge into the guest when it differs (after an app
+     * update). True when it changed: the running one should restart.
+     */
+    fun syncBridge(): Boolean {
+        if (!installed) return false
+        val target = File(rootfs, "root/ygg-bridge/ygg_bridge.py")
+        val fresh = context.assets.open("bridge/ygg_bridge.py").use { it.readBytes() }
+        if (target.isFile && target.readBytes().contentEquals(fresh)) return false
+        target.parentFile?.mkdirs()
+        target.writeBytes(fresh)
+        return true
+    }
+
     /** The bridge's key, as the guest keeps it: Ygg reads it itself, no pasting. */
     fun bridgeKey(): String? = File(rootfs, "root/.ygg-bridge/key").takeIf { it.isFile }?.readText()?.trim()?.ifEmpty { null }
 

@@ -78,8 +78,10 @@ class LinuxBridgeService : Service() {
             }
             val started = System.currentTimeMillis()
             update("Running on 127.0.0.1:8765")
+            runCatching { linux.syncBridge() }
             val p = runCatching { linux.start(GuestSetup.BRIDGE, GuestSetup.BRIDGE_ENV) }.getOrNull()
             process = p
+            current = p
             if (p != null) {
                 val tail = ArrayDeque<String>()
                 p.inputStream.bufferedReader().forEachLine { tail.addLast(it); if (tail.size > 5) tail.removeFirst() }
@@ -124,6 +126,14 @@ class LinuxBridgeService : Service() {
         private const val CHANNEL = "linux_bridge"
         private const val NOTIFICATION = 7401
         private const val ACTION_STOP = "io.github.sebbejohansson.yggdrasil.LINUX_BRIDGE_STOP"
+
+        /** The bridge process now, so an update can restart it. */
+        @Volatile private var current: Process? = null
+
+        /** Ends the running bridge; the service starts it again, with what's new. */
+        fun restartBridge() {
+            current?.destroy()
+        }
 
         val running = MutableStateFlow(false)
         val status: MutableStateFlow<String> = MutableStateFlow("Off")

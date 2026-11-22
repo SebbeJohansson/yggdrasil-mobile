@@ -133,7 +133,12 @@ def git(args: list, cwd: Path = None, timeout: int = 300) -> str:
         extra = ["-c", f"http.https://github.com/.extraheader=Authorization: Basic {basic}"]
     out = subprocess.run(["git", *extra, *args], cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
     if out.returncode != 0:
-        raise Refused(502, "git " + args[0] + " failed: " + last_lines(out.stderr or out.stdout))
+        text = out.stderr or out.stdout
+        if "could not read Username" in text or "Authentication failed" in text or "Repository not found" in text:
+            if secret("github"):
+                raise Refused(403, "GitHub refused the token for this repo: it needs Contents: read on it (or the repo name is wrong)")
+            raise Refused(403, "this repo is private (or doesn't exist): add a GitHub token that can read it, in Ygg: Settings → Claude bridge")
+        raise Refused(502, "git " + args[0] + " failed: " + last_lines(text))
     return out.stdout
 
 
@@ -326,6 +331,17 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r"^/v1/cloud/([A-Za-z0-9_-]+)/message$", path)
             if method == "POST" and m:
                 return self.answer(200, message_cloud(m.group(1), str(self.body().get("text", ""))))
+            if method == "POST" and path == "/v1/github":
+                token = str(self.body().get("token", "")).strip()
+                path_ = home() / "github"
+                if not token:
+                    path_.unlink(missing_ok=True)
+                    return self.answer(200, {"github": False})
+                if not re.match(r"^(github_pat_|gh[pousr]_)[A-Za-z0-9_]{20,}$", token):
+                    raise Refused(400, "that doesn't look like a GitHub token (github_pat_… or ghp_…)")
+                path_.write_text(token + "\n")
+                os.chmod(path_, 0o600)
+                return self.answer(200, {"github": True})
             if method == "POST" and path == "/v1/complete":
                 return self.answer(200, complete(self.body()))
             return self.answer(404, {"error": "no such thing"})

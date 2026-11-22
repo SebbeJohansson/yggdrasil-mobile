@@ -99,6 +99,13 @@ class BridgeViewModel(private val bridge: BridgeClient) : ViewModel() {
     }
 
     fun setKey(text: String): Boolean = bridge.setKey(text).also { if (it) refresh() }
+
+    fun setGithub(token: String) = viewModelScope.launch {
+        runCatching { bridge.setGithub(token) }
+            .onSuccess { _state.update { it.copy(error = null) } }
+            .onFailure { e -> _state.update { it.copy(error = "GitHub token: ${e.message}") } }
+        refresh()
+    }
     fun removeKey() { bridge.removeKey(); refresh() }
 
     fun start(repo: String, task: String) = viewModelScope.launch {
@@ -257,8 +264,35 @@ fun BridgePanel(vm: BridgeViewModel, settings: BridgeSettings, linux: OwnLinux, 
             },
             color = if (s.ready) Hud.green else Hud.amber,
         )
-        if (s.health != null && !s.health.github) Text("No GitHub token: public repos only (ygg-bridge github <token>).", style = HudText.meta)
+        if (s.health != null) GithubToken(vm, s)
         if (place == BridgePlace.OWN_LINUX) OwnLinuxSetup(vm, linux, login) else PastedSetup(vm, s, place)
+    }
+}
+
+/**
+ * The bridge's GitHub token, for cloning private repos. Make a fine-grained
+ * one with Contents: read on the repos you start sessions for. It goes to the
+ * bridge only; Ygg doesn't keep it.
+ */
+@Composable
+private fun GithubToken(vm: BridgeViewModel, s: BridgeUiState) {
+    var token by remember { mutableStateOf("") }
+    val has = s.health?.github == true
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (has) "GitHub token set: private repos can be cloned." else "No GitHub token: public repos only.",
+            style = HudText.meta.copy(color = if (has) Hud.subtext0 else Hud.amber),
+            modifier = Modifier.weight(1f),
+        )
+        if (has) HudButton("Remove", { vm.setGithub("") }, kind = HudButtonKind.SMALL)
+    }
+    if (!has) {
+        Text("github.com → Settings → Developer settings → Fine-grained tokens: the repos you want, Contents: read-only.", style = HudText.meta)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudTextField(token, { token = it }, placeholder = "github_pat_…", maxLines = 1, visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.weight(1f))
+            HudButton("Save", { vm.setGithub(token); token = "" }, kind = HudButtonKind.SMALL, enabled = token.isNotBlank() && s.hasKey)
+        }
     }
 }
 

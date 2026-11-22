@@ -1,5 +1,6 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.linux.LinuxBridgeService
 import io.github.sebbejohansson.yggdrasil.linux.LinuxLogin
 import io.github.sebbejohansson.yggdrasil.linux.OwnLinux
 import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeSettings
@@ -267,6 +268,8 @@ class AppContainer(private val app: Application) {
         }
         VedrfolnirWorker.schedule(app)
         UpdateWorker.schedule(app)
+        // After an app update: the bridge in Ygg's own Linux gets the new one, and restarts.
+        appScope.launch(Dispatchers.IO) { if (runCatching { ownLinux.syncBridge() }.getOrDefault(false)) LinuxBridgeService.restartBridge() }
         // The Quick Settings tile follows a focus started or ended anywhere.
         appScope.launch { hermodr.changes.flow.collect { FocusTileService.refresh(app) } }
         appScope.launch {
