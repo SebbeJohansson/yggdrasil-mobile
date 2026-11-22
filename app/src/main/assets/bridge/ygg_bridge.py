@@ -700,6 +700,29 @@ def local_name(repo: str) -> str:
             return name
 
 
+def open_claude(aid: str, cwd: Path, name: str, args: list):
+    """Claude in a new herdr workspace in [cwd] (as Sindri's Herdr.Start): the
+    workspace's shell may still be starting (agent_pane_busy), so the start is
+    tried again for 20 s; if it never takes, the workspace is closed again.
+    Gives (pane, workspace)."""
+    created = herdr(aid, "workspace.create", {"cwd": str(cwd), "label": name, "focus": False})
+    pane = created.get("root_pane", {}).get("pane_id", "")
+    workspace = (created.get("workspace") or {}).get("workspace_id") or pane.split(":")[0]
+    deadline = time.time() + 20
+    while True:
+        try:
+            herdr(aid, "agent.start", {"name": name, "kind": "claude", "pane_id": pane, "args": args, "timeout_ms": 30000}, timeout=40)
+            return pane, workspace
+        except HerdrRefused as e:
+            if e.code == "agent_pane_busy" and time.time() < deadline:
+                time.sleep(0.3)
+                continue
+            if e.code == "agent_not_ready":
+                return pane, workspace  # Up, but at a dialog: it shows in the session.
+            herdr(aid, "workspace.close", {"workspace_id": workspace})
+            raise
+
+
 def start_local(repo: str, task: str, aid: str = "default", branch: str = "") -> dict:
     """Claude Code in herdr, in the phone's checkout of the repo, as the account;
     then the task typed in, as you would."""
@@ -709,28 +732,38 @@ def start_local(repo: str, task: str, aid: str = "default", branch: str = "") ->
     prepare_claude(cwd, aid)
     need_herdr(aid)
     name = local_name(repo)
-    created = herdr(aid, "workspace.create", {"cwd": str(cwd), "label": name, "focus": False})
-    pane = created.get("root_pane", {}).get("pane_id", "")
-    workspace = (created.get("workspace") or {}).get("workspace_id") or pane.split(":")[0]
-    deadline = time.time() + 20
-    while True:
-        try:
-            herdr(aid, "agent.start", {"name": name, "kind": "claude", "pane_id": pane, "args": [], "timeout_ms": 30000}, timeout=40)
-            break
-        except HerdrRefused as e:
-            if e.code == "agent_pane_busy" and time.time() < deadline:
-                time.sleep(0.3)
-                continue
-            if e.code == "agent_not_ready":
-                break  # Up, but at a dialog: it shows in the chat.
-            herdr(aid, "workspace.close", {"workspace_id": workspace})
-            raise
-    session = {"name": name, "account": aid, "repo": repo, "cwd": str(cwd), "workspace": workspace, "pane": pane,
+    pane, workspace = open_claude(aid, cwd, name, [])
+    session = {"name": name, "herdrName": name, "account": aid, "repo": repo, "cwd": str(cwd), "workspace": workspace, "pane": pane,
                "task": task.strip(), "at": int(time.time() * 1000)}
     save_local([session] + local_sessions())
     if task.strip():
         prompt_local(name, task)
     return local_view(session)
+
+
+SESSION_ID = re.compile(r"^\w[\w-]{0,127}$")
+
+
+def resume_local(name: str) -> dict:
+    """An ended session again (as Sága's session.resume): `claude --resume <id>`
+    in a new herdr workspace in its checkout, under a new herdr name (the old
+    may still be taken). Its conversation goes on where it stopped. Nothing to
+    do while it still runs."""
+    s = local(name)
+    if agent_info(s):
+        return local_view(s)
+    sid = s.get("sessionId", "")
+    if not SESSION_ID.match(sid):
+        raise Refused(409, "it ended before Claude kept a conversation: start a new session")
+    need_claude()
+    prepare_claude(Path(s["cwd"]), s["account"])
+    need_herdr(s["account"])
+    herdr_name = re.sub(r"-[0-9a-f]{4}$", "", s["name"])[:26] + "-" + secrets.token_hex(2)
+    s["pane"], s["workspace"] = open_claude(s["account"], Path(s["cwd"]), herdr_name, ["--resume", sid])
+    s["herdrName"] = herdr_name
+    s["resumedAt"] = int(time.time() * 1000)
+    save_local([s if x["name"] == name else x for x in local_sessions()])
+    return local_view(s)
 
 
 def wait_idle(s: dict, seconds: float) -> None:
@@ -743,13 +776,18 @@ def wait_idle(s: dict, seconds: float) -> None:
 
 
 def prompt_local(name: str, text: str) -> dict:
+    """Types [text] in, as Sága's session.prompt: once, refused (409) while a
+    dialog shows. An ended session is resumed first, so a message to it goes on
+    with the same conversation; one still starting gets 20 s to be ready."""
     s = local(name)
     text = " ".join(text.split("\r"))
     if not text.strip():
         raise Refused(400, "the message is empty")
-    # Claude may still be getting ready (its prompt not up yet): wait a little.
+    if not agent_info(s):
+        resume_local(name)
+        s = local(name)
     wait_idle(s, 20)
-    herdr(s["account"], "agent.prompt", {"target": name, "text": text}, timeout=30)
+    herdr(s["account"], "agent.prompt", {"target": s["pane"], "text": text}, timeout=30)
     s["promptedAt"] = int(time.time() * 1000)
     save_local([s if x["name"] == name else x for x in local_sessions()])
     return {"ok": True}
@@ -760,7 +798,7 @@ def agent_info(s: dict) -> dict:
         agents = herdr(s["account"], "agent.list", timeout=5).get("agents", [])
     except Refused:
         return {}
-    return next((a for a in agents if a.get("name") == s["name"] or a.get("pane_id") == s["pane"]), {})
+    return next((a for a in agents if a.get("pane_id") == s["pane"] or a.get("name") == s.get("herdrName", s["name"])), {})
 
 
 def screen(s: dict, source: str = "detection", lines: int = 0) -> str:
@@ -876,21 +914,114 @@ def messages(path, limit: int = 200) -> list:
     return out[-limit:]
 
 
+TURN_ENDS = {"end_turn", "stop_sequence", "max_tokens"}
+INTERRUPTED = re.compile(r"^\[Request interrupted by user")
+
+
+def content_text(content) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    return "\n".join(b.get("text", "") for b in content or [] if isinstance(b, dict) and b.get("type") == "text").strip()
+
+
+def tail(path, size: int) -> str:
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - size))
+        return f.read().decode(errors="replace")
+
+
+def transcript_state(path):
+    """What the transcript ends in (as Sindri's ReadTranscriptState): from the
+    last user or assistant entry that isn't meta, busy while Claude works (with
+    the tool it's in) or turn-ended when it's your move (with its last words).
+    A 32 KB tail, widened to 512 KB when that holds no whole entry."""
+    if not path:
+        return None
+    for size in (32 << 10, 512 << 10):
+        for raw in reversed(tail(path, size).splitlines()):
+            try:
+                e = json.loads(raw)
+            except ValueError:
+                continue
+            if e.get("type") not in ("user", "assistant") or e.get("isMeta") or e.get("isCompactSummary"):
+                continue
+            state = {"phase": "busy", "at": e.get("timestamp", ""), "tool": "", "lastText": "", "ending": ""}
+            msg = e.get("message") or {}
+            if e.get("isSidechain"):
+                return state  # A subagent at work.
+            if e["type"] == "assistant":
+                stop = msg.get("stop_reason")
+                if stop == "tool_use":
+                    tools = [b.get("name", "") for b in msg.get("content") or [] if isinstance(b, dict) and b.get("type") == "tool_use"]
+                    state["tool"] = tools[-1] if tools else ""
+                elif stop in TURN_ENDS:
+                    state.update(phase="turn-ended", lastText=content_text(msg.get("content"))[-4000:],
+                                 ending="error" if e.get("isApiErrorMessage") else "")
+            elif INTERRUPTED.match(content_text(msg.get("content"))):
+                state.update(phase="turn-ended", ending="interrupted")
+            return state
+    return None
+
+
+def transcript_title(path) -> str:
+    """The session's title as Claude keeps it: one you gave it, else its own."""
+    if not path:
+        return ""
+    custom = ai = ""
+    try:
+        with open(path, errors="replace") as f:
+            for raw in f:
+                if '-title"' not in raw:
+                    continue
+                try:
+                    e = json.loads(raw)
+                except ValueError:
+                    continue
+                custom = e.get("customTitle") or custom
+                ai = e.get("aiTitle") or ai
+    except OSError:
+        pass
+    return custom or ai
+
+
 def local_view(s: dict, chat: bool = False) -> dict:
-    """A session as the app shows it: status, any dialog, and with chat its messages."""
+    """A session as the app shows it, as Sága's RemoteSession: its phase
+    (busy, turn-ended, blocked; ended once its pane is gone, starting before
+    Claude kept anything), the tool it's in, its last words, any dialog; with
+    chat its messages too. The transcript says the phase; a dialog on herdr's
+    screen overrides it."""
     info = agent_info(s)
     status = info.get("agent_status") or ("gone" if not info else "unknown")
+    path = transcript(s)
+    state = transcript_state(path)
     view = {k: s.get(k) for k in ("name", "account", "repo", "task", "at", "cwd")}
-    view["status"] = status
-    view["dialog"] = None
+    view.update(status=status, dialog=None, tool="", lastText="", title=transcript_title(path),
+                resumable=bool(SESSION_ID.match(s.get("sessionId", ""))))
+    try:
+        view["lastActivity"] = int(path.stat().st_mtime * 1000) if path else s.get("at", 0)
+    except OSError:
+        view["lastActivity"] = s.get("at", 0)
     if status == "blocked":
         try:
             view["dialog"] = dialog_of(screen(s))
         except Refused:
             pass
+    if status == "gone":
+        view["phase"] = "ended"
+    elif view["dialog"]:
+        view["phase"] = "blocked"
+    elif state:
+        view["phase"] = state["phase"]
+    else:
+        view["phase"] = {"working": "busy", "idle": "turn-ended", "done": "turn-ended", "blocked": "blocked"}.get(status, "starting")
+    if state:
+        view["tool"] = state["tool"] if view["phase"] == "busy" else ""
+        view["lastText"] = state["lastText"][:600]
+        view["ending"] = state["ending"]
     if chat:
-        view["messages"] = messages(transcript(s))
-        if not view["messages"] or status in ("blocked", "unknown"):
+        view["messages"] = messages(path)
+        if status != "gone" and (not view["messages"] or status in ("blocked", "unknown")):
             try:
                 view["screen"] = screen(s, "recent_unwrapped", 40)[-4000:]
             except Refused:
@@ -1077,12 +1208,13 @@ class Handler(BaseHTTPRequestHandler):
                 b = self.body()
                 return self.answer(200, message_cloud(m.group(1), str(b.get("text", "")), str(b.get("account") or "")))
             if method == "GET" and path == "/v1/local":
-                return self.answer(200, {"sessions": [local_view(x) for x in local_sessions()]})
+                views = [local_view(x) for x in local_sessions()]
+                return self.answer(200, {"sessions": sorted(views, key=lambda v: v.get("lastActivity") or 0, reverse=True)})
             if method == "POST" and path == "/v1/local":
                 b = self.body()
                 return self.answer(200, start_local(str(b.get("repo", "")), str(b.get("task", "")),
                                                     str(b.get("account") or "default"), str(b.get("branch") or "")))
-            m = re.match(r"^/v1/local/([a-z][a-z0-9_-]{0,31})(?:/(prompt|choose|keys|stop|repo|diff|git))?$", path)
+            m = re.match(r"^/v1/local/([a-z][a-z0-9_-]{0,31})(?:/(prompt|choose|keys|stop|repo|diff|git|resume))?$", path)
             if m and method == "GET" and not m.group(2):
                 return self.answer(200, local_view(local(m.group(1)), chat=True))
             if m and method == "GET" and m.group(2) == "repo":
@@ -1102,6 +1234,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.answer(200, keys_local(name, [str(k) for k in b.get("keys") or []]))
                 if what == "git":
                     return self.answer(200, git_local(name, str(b.get("action", ""))))
+                if what == "resume":
+                    return self.answer(200, resume_local(name))
                 if what == "stop":
                     return self.answer(200, stop_local(name))
             if method == "GET" and path == "/v1/accounts":

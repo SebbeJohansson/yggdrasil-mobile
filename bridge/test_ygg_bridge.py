@@ -287,6 +287,40 @@ class BridgeTest(unittest.TestCase):
         finally:
             b.save_local([])
 
+    def test_transcript_state_as_sindri_reads_it(self):
+        b = self.b
+        f = Path(self.tmp) / "state.jsonl"
+        def write(*entries):
+            f.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+            return b.transcript_state(f)
+        user = {"type": "user", "message": {"content": "Fix it"}, "timestamp": "t1"}
+        self.assertEqual("busy", write(user)["phase"])
+        working = {"type": "assistant", "message": {"stop_reason": "tool_use", "content": [{"type": "tool_use", "name": "Bash"}]}}
+        st = write(user, working)
+        self.assertEqual(("busy", "Bash"), (st["phase"], st["tool"]))
+        done = {"type": "assistant", "message": {"stop_reason": "end_turn", "content": [{"type": "text", "text": "All fixed."}]}}
+        meta = {"type": "user", "isMeta": True, "message": {"content": "<local-command-stdout>"}}
+        st = write(user, working, done, meta, {"type": "summary"})
+        self.assertEqual(("turn-ended", "All fixed."), (st["phase"], st["lastText"]))
+        st = write(user, {"type": "user", "message": {"content": [{"type": "text", "text": "[Request interrupted by user]"}]}})
+        self.assertEqual(("turn-ended", "interrupted"), (st["phase"], st["ending"]))
+        self.assertEqual("busy", write(user, {"type": "assistant", "isSidechain": True, "message": {"stop_reason": "end_turn"}})["phase"])
+        self.assertIsNone(write({"type": "summary"}))
+        f.write_text("\n".join(json.dumps(e) for e in [{"type": "ai-title", "aiTitle": "Fixing it"}, user, {"type": "custom-title", "customTitle": "Mine"}]))
+        self.assertEqual("Mine", b.transcript_title(f))
+
+    def test_resume_needs_a_conversation(self):
+        b = self.b
+        b.save_local([{"name": "app-gone", "account": "default", "repo": "me/app", "cwd": "/nowhere", "pane": "w9:p1", "task": "", "at": 0}])
+        try:
+            v = b.local_view(b.local("app-gone"))
+            self.assertEqual(("ended", False), (v["phase"], v["resumable"]))
+            self.assertEqual(409, self.call("POST", "/v1/local/app-gone/resume")[0])
+            # A message to it resumes it first; with no conversation, that's refused too.
+            self.assertEqual(409, self.call("POST", "/v1/local/app-gone/prompt", {"text": "hi"})[0])
+        finally:
+            b.save_local([])
+
     def test_local_sessions_need_one(self):
         self.assertEqual(404, self.call("GET", "/v1/local/nothing-here")[0])
         self.assertEqual(404, self.call("POST", "/v1/local/nothing-here/prompt", {"text": "hi"})[0])
