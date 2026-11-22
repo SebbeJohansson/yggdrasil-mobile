@@ -1,0 +1,77 @@
+name: heimdall
+
+# The security watchman (.github/heimdall/heimdall.py): dependencies with
+# known vulnerabilities, keys committed by mistake, and the app's own
+# security settings. Findings go into one issue labelled heimdall, which the
+# app reads and turns into alerts. Nightly, by hand, and when dependencies change.
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "gradle/libs.versions.toml"
+      - "**/build.gradle.kts"
+      - ".github/heimdall/**"
+      - ".github/workflows/heimdall.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: heimdall
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks reads every commit
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-37.2 platform-tools"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install the scanners (pinned)
+        run: |
+          go install github.com/google/osv-scanner/cmd/osv-scanner@v1.9.0
+          go install github.com/zricethezav/gitleaks/v8@v8.18.4
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Lock the app's dependencies (for this run only)
+        # The build keeps no lockfile; an init script turns locking on here
+        # so OSV can read exactly what the APK ships.
+        run: |
+          cat > "$RUNNER_TEMP/lock.gradle" <<'EOF'
+          allprojects { dependencyLocking { lockAllConfigurations() } }
+          EOF
+          ./gradlew --init-script "$RUNNER_TEMP/lock.gradle" :app:dependencies --write-locks --console=plain -q > /dev/null
+          ls -la app/gradle.lockfile
+
+      - name: Dependencies with known vulnerabilities
+        run: osv-scanner --lockfile=app/gradle.lockfile --format json --output osv.json || true
+
+      - name: Keys in any commit
+        run: gitleaks detect --source . --redact --report-format json --report-path gitleaks.json --exit-code 0
+
+      - name: Collect
+        run: python3 .github/heimdall/heimdall.py collect
+
+      - name: Report to the heimdall issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/heimdall/heimdall.py report
