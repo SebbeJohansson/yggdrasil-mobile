@@ -107,8 +107,8 @@ is `401`. Errors are `{ "error": "…" }` with a non-2xx code.
 | `POST /v1/local/{name}/prompt {text}` / `choose {question, key, label}` / `keys {keys}` / `stop` | types a message; picks a dialog's choice while that dialog still shows; presses esc etc.; closes the workspace (the checkout stays) | `{ok}` |
 
 Local sessions run Claude Code interactively in herdr (https://herdr.dev), as
-the desktop's Sindri does: one headless `herdr server --session ygg-<account>`
-per account, started with the account's `CLAUDE_CONFIG_DIR`. herdr says
+the desktop's Sindri does: one headless `herdr server` per account (its socket at a short
+`/tmp/yh-<hash>.sock`: under proot a long path overflows a socket's 108 bytes), started with the account's `CLAUDE_CONFIG_DIR`. herdr says
 whether Claude works, waits or shows a dialog, and types for you; what Claude
 said is read from its transcript (`sessions/<pid>.json` gives the session id).
 Setup installs herdr, pinned and checked against its sums.

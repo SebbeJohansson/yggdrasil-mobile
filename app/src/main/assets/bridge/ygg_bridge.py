@@ -573,13 +573,16 @@ HERDR = os.environ.get("HERDR_BIN", "herdr")
 LOCAL_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 
-def herdr_session(aid: str) -> str:
-    return "ygg-" + account(aid)["id"]
+# Where each account's herdr listens. A unix socket's path must fit in 108
+# bytes, and under proot what counts is the path on the phone: herdr's own
+# ~/.config/herdr/sessions/<name>/herdr.sock comes to some 117 under Ygg's app
+# folder. So a short one in /tmp (herdr puts its client socket beside it).
+HERDR_DIR = Path(os.environ.get("YGG_HERDR_DIR", "/tmp"))
 
 
 def herdr_socket(aid: str) -> Path:
-    config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return config / "herdr" / "sessions" / herdr_session(aid) / "herdr.sock"
+    import hashlib
+    return HERDR_DIR / ("yh-" + hashlib.sha1(account(aid)["id"].encode()).hexdigest()[:8] + ".sock")
 
 
 class HerdrRefused(Refused):
@@ -625,13 +628,14 @@ def need_herdr(aid: str) -> None:
     if not shutil.which(HERDR):
         raise Refused(503, "herdr isn't installed here: update Ygg's Linux (Settings > Claude bridge > Update)")
     env = claude_env(aid)
+    env["HERDR_SOCKET_PATH"] = str(herdr_socket(aid))
     env.setdefault("SHELL", "/bin/bash")
     env.setdefault("TERM", "xterm-256color")
     # Claude in its panes saves git objects by renaming, not hard-linking (see git()).
     n = int(env.get("GIT_CONFIG_COUNT", "0") or 0)
     env.update({"GIT_CONFIG_COUNT": str(n + 1), f"GIT_CONFIG_KEY_{n}": "core.createObject", f"GIT_CONFIG_VALUE_{n}": "rename"})
     log = open(home() / f"herdr-{account(aid)['id']}.log", "ab")
-    subprocess.Popen([HERDR, "server", "--session", herdr_session(aid)], env=env, stdin=subprocess.DEVNULL,
+    subprocess.Popen([HERDR, "server"], env=env, stdin=subprocess.DEVNULL,
                      stdout=log, stderr=subprocess.STDOUT, start_new_session=True, cwd=str(Path.home()))
     deadline = time.time() + 15
     while time.time() < deadline:
