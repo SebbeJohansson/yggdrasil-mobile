@@ -46,6 +46,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -261,6 +263,28 @@ fun PhoneCloudPanel(vm: BridgeViewModel, onSetUp: () -> Unit) {
             }
         }
         s.error?.let { Text(it, style = HudText.meta.copy(color = Hud.amber)) }
+    }
+}
+
+/**
+ * The phone's cloud sessions in a popup over the Code tab: start one (in the
+ * account picked), and the ones started here, each a tap from Claude.
+ */
+@Composable
+fun PhoneCloudDialog(vm: BridgeViewModel, onSetUp: () -> Unit, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 24.dp).background(Hud.base)
+                .verticalScroll(rememberScrollState()).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Cloud sessions", style = HudText.title, modifier = Modifier.weight(1f))
+                HudButton("Close", onDismiss, kind = HudButtonKind.SMALL)
+            }
+            HudLabel("from this phone · results open in Claude")
+            PhoneCloudPanel(vm) { onDismiss(); onSetUp() }
+        }
     }
 }
 

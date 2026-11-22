@@ -1,6 +1,6 @@
 package io.github.sebbejohansson.yggdrasil.saga
 
-import io.github.sebbejohansson.yggdrasil.llm.claude.PhoneCloudPanel
+import io.github.sebbejohansson.yggdrasil.llm.claude.PhoneCloudDialog
 import io.github.sebbejohansson.yggdrasil.llm.claude.FollowUp
 import io.github.sebbejohansson.yggdrasil.llm.claude.FollowBridge
 import io.github.sebbejohansson.yggdrasil.llm.claude.BridgeUiState
@@ -122,6 +122,8 @@ fun CodeScreen(
     phone?.let { FollowBridge(it) }
     val phoneState = phone?.state?.collectAsStateWithLifecycle()?.value
     val now = Instant.now()
+    var cloudOpen by remember { mutableStateOf(false) }
+    if (phone != null && cloudOpen) PhoneCloudDialog(phone, onSetUpPhone) { cloudOpen = false }
     LazyColumn(
         modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -140,16 +142,13 @@ fun CodeScreen(
                         },
                     )
                 }
+                if (phone != null) {
+                    // Cloud sessions from this phone, in a popup: a start, and where to find them.
+                    HudButton(if (phoneState?.starting != null) "Cloud · starting…" else "Cloud", { cloudOpen = true },
+                        kind = HudButtonKind.SMALL, modifier = Modifier.padding(end = 6.dp))
+                }
                 HudButton("Sync now", { vm.syncNow() }, kind = HudButtonKind.SMALL)
             }
-        }
-        if (phone != null) {
-            item(key = "phone-h") {
-                HudSection("This phone", Modifier.padding(top = 8.dp)) {
-                    HudLabel(if (phoneState?.ready == true) "bridge ready" else "bridge")
-                }
-            }
-            item(key = "phone") { PhoneCloudPanel(phone, onSetUpPhone) }
         }
         if (s.devices.isEmpty()) {
             item {
