@@ -1,5 +1,9 @@
 package io.github.sebbejohansson.yggdrasil.parts
 
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import io.github.sebbejohansson.yggdrasil.core.AppUse
+import io.github.sebbejohansson.yggdrasil.core.PhoneUse
+import io.github.sebbejohansson.yggdrasil.core.PhoneNow
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -102,6 +106,24 @@ fun PerformanceScreen(c: AppContainer, onBack: () -> Unit) {
             delay(5_000)
         }
     }
+    val phone by produceState<PhoneNow?>(null) {
+        while (true) {
+            value = withContext(Dispatchers.IO) { runCatching { PhoneNow.read(context) }.getOrNull() }
+            delay(5_000)
+        }
+    }
+    // Usage access is granted in Android's settings: looked at again whenever the screen comes back.
+    var usageAccess by remember { mutableStateOf(PhoneUse.hasUsageAccess(context)) }
+    LifecycleResumeEffect(Unit) {
+        usageAccess = PhoneUse.hasUsageAccess(context)
+        onPauseOrDispose { }
+    }
+    val apps by produceState(emptyList<AppUse>(), usageAccess, week) {
+        if (!usageAccess) { value = emptyList(); return@produceState }
+        val to = System.currentTimeMillis()
+        value = withContext(Dispatchers.IO) { PhoneUse.apps(context, to - if (week) 7 * 86_400_000L else 86_400_000L, to) }
+    }
+    var appStorage by remember { mutableStateOf<List<AppUse>?>(null) }
     var disk by remember { mutableStateOf<List<DiskItem>?>(null) }
     var measuring by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -176,6 +198,61 @@ fun PerformanceScreen(c: AppContainer, onBack: () -> Unit) {
                 RowView(title = d.label, share = d.bytes.toFloat() / all, right = PerfMath.bytes(d.bytes), line = d.note ?: "", warn = false)
             }
             HudButton("Measure again", { disk = null }, kind = HudButtonKind.SMALL)
+        }
+
+        HudSection("The phone", Modifier.padding(top = 6.dp))
+        Column(Modifier.fillMaxWidth().hudPanel().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            phone?.let { p ->
+                Fact("Memory", "${PerfMath.bytes(p.ramTotal - p.ramAvailable)} of ${PerfMath.bytes(p.ramTotal)} in use",
+                    if (p.lowMemory) "low: Android is closing apps to make room" else "${PerfMath.bytes(p.ramAvailable)} free")
+                Fact("Storage", "${PerfMath.bytes(p.storageTotal - p.storageFree)} of ${PerfMath.bytes(p.storageTotal)} used", "${PerfMath.bytes(p.storageFree)} free")
+                Fact("Heat", p.thermalWords, p.thermalHeadroom.takeIf { !it.isNaN() }?.let { "%.0f%% of the way to slowing down".format(it * 100) })
+            } ?: Text("Reading…", style = HudText.meta)
+        }
+        HudButton("Battery by app (Android)", { runCatching { context.startActivity(PhoneUse.batteryIntent()) } }, kind = HudButtonKind.SMALL)
+        if (!usageAccess) {
+            Text(
+                "Other apps' screen time, data and storage need Usage access, which you grant in Android's settings. " +
+                    "It lets Ygg see which apps you use and when; it stays on the phone. CPU, memory and battery per app Android keeps to itself.",
+                style = HudText.meta,
+            )
+            HudButton("Allow usage access", { runCatching { context.startActivity(PhoneUse.usageAccessIntent(context)) } }, kind = HudButtonKind.SMALL)
+        } else {
+            val shown = apps.take(12)
+            val topTime = shown.maxOfOrNull { it.foregroundMs }?.coerceAtLeast(1) ?: 1
+            HudLabel(if (week) "apps this week" else "apps today")
+            if (shown.isEmpty()) Text("Reading…", style = HudText.meta)
+            shown.forEach { a ->
+                RowView(
+                    title = a.label,
+                    share = a.foregroundMs.toFloat() / topTime,
+                    right = if (a.foregroundMs > 0) PerfMath.time(a.foregroundMs) else PerfMath.bytes(a.dataBytes),
+                    line = listOfNotNull(
+                        a.foregroundMs.takeIf { it > 0 }?.let { "${PerfMath.time(it)} on screen" },
+                        a.mobileBytes.takeIf { it > 0 }?.let { "${PerfMath.bytes(it)} mobile" },
+                        a.wifiBytes.takeIf { it > 0 }?.let { "${PerfMath.bytes(it)} Wi-Fi" },
+                    ).joinToString(" · "),
+                    warn = false,
+                )
+            }
+            val byData = apps.filter { it.dataBytes > 0 }.sortedByDescending { it.dataBytes }.take(5)
+            if (byData.isNotEmpty()) {
+                HudLabel("most data")
+                byData.forEach { a -> Fact(a.label, PerfMath.bytes(a.dataBytes), "${PerfMath.bytes(a.mobileBytes)} mobile · ${PerfMath.bytes(a.wifiBytes)} Wi-Fi") }
+            }
+            if (appStorage == null) {
+                HudButton("Measure apps' storage", {
+                    scope.launch { appStorage = withContext(Dispatchers.IO) { PhoneUse.storage(context) } }
+                }, kind = HudButtonKind.SMALL)
+            }
+            appStorage?.let { list ->
+                HudLabel("largest apps")
+                val top = list.firstOrNull()?.storageBytes?.coerceAtLeast(1) ?: 1
+                list.take(10).forEach { a ->
+                    RowView(title = a.label, share = (a.storageBytes ?: 0).toFloat() / top, right = PerfMath.bytes(a.storageBytes ?: 0),
+                        line = "cache ${PerfMath.bytes(a.cacheBytes ?: 0)}", warn = false)
+                }
+            }
         }
 
         val rows = PerfMath.rows(steps)
