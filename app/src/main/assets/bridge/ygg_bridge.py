@@ -45,6 +45,8 @@ CLAUDE = os.environ.get("CLAUDE_BIN", "claude")
 START_WAIT = int(os.environ.get("YGG_BRIDGE_START_WAIT", "180"))
 # Where repos are cloned from; a test points it at local ones.
 GIT_BASE = os.environ.get("YGG_BRIDGE_GIT_BASE", "https://github.com")
+# Start from a stub with no files first (YGG_BRIDGE_STUB=0: always a full checkout).
+STUB = os.environ.get("YGG_BRIDGE_STUB", "1") != "0"
 
 CLOUD_URL = re.compile(r"https://claude\.ai/code/(session_[A-Za-z0-9_-]+)")
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -209,6 +211,39 @@ def fresh_clone(url: str, path: Path, branch: str) -> None:
     tmp.rename(path)
 
 
+def default_branch(url: str) -> str:
+    out = git(["ls-remote", "--symref", url, "HEAD"])
+    m = re.search(r"^ref: refs/heads/(\S+)\s+HEAD", out, re.M)
+    if not m:
+        raise Refused(502, "couldn't tell the repo's default branch")
+    return m.group(1)
+
+
+def stub(repo: str, branch: str = "") -> Path:
+    """The least of a checkout that tells `claude --cloud` the repo and branch:
+    a git folder with origin set, the branch's newest commit and its trees but
+    no file contents (--depth 1 --filter=blob:none), and no files checked out
+    (a sparse checkout that matches nothing, so git sees no changes). A few
+    hundred KB where a clone is the whole repo. Made afresh each time."""
+    if not REPO.match(repo):
+        raise Refused(400, "a repo is owner/name, like SebbeJohansson/yggdrasil")
+    url = f"{GIT_BASE}/{repo}.git"
+    branch = branch or default_branch(url)
+    path = home() / "stubs" / repo
+    shutil.rmtree(path, ignore_errors=True)
+    path.mkdir(parents=True)
+    git(["init", "-q", "-b", branch, str(path)])
+    git(["remote", "add", "origin", url], cwd=path)
+    git(["config", "remote.origin.promisor", "true"], cwd=path)
+    git(["config", "remote.origin.partialclonefilter", "blob:none"], cwd=path)
+    git(["sparse-checkout", "set", "--no-cone", "/.ygg-stub-nothing"], cwd=path)
+    git(["fetch", "-q", "--depth", "1", "--filter=blob:none", "origin",
+         f"+refs/heads/{branch}:refs/remotes/origin/{branch}"], cwd=path)
+    git(["checkout", "-q", "-B", branch, "--track", f"origin/{branch}"], cwd=path)
+    plain_git_files(path)
+    return path
+
+
 def checkout(repo: str, branch: str = "") -> Path:
     """A checkout of the repo at the branch (its default when none), as GitHub
     has it: `claude --cloud` starts the session from the GitHub remote at the
@@ -277,31 +312,25 @@ def prepare_claude(cwd: Path) -> None:
         os.chmod(tmp, 0o600)
         tmp.replace(path)
 
-def start_cloud(repo: str, task: str, branch: str = "") -> dict:
-    """`claude --cloud` in the repo. It wants a terminal, so util-linux's
-    `script` gives it one; the session exists once its link is printed."""
-    need_claude()
-    task = task.strip()
-    if not task:
-        raise Refused(400, "the task is empty")
-    cwd = checkout(repo, branch)
+def run_cloud(cwd: Path, task: str):
+    """`claude --cloud <task>` in [cwd], under util-linux's `script` (it wants a
+    terminal). Gives (url, id) once it prints the session's link, else
+    (None, all it printed)."""
     prepare_claude(cwd)
     command = f"{shlex.quote(CLAUDE)} --cloud {shlex.quote(task)}"
     argv = ["script", "-qfec", command, "/dev/null"] if shutil.which("script") else [CLAUDE, "--cloud", task]
     proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     seen = []
-    found = None
     deadline = time.time() + START_WAIT
     timer = threading.Timer(START_WAIT, proc.kill)
     timer.start()
     try:
         for raw in iter(proc.stdout.readline, b""):
-            line = ANSI.sub("", raw.decode(errors="replace"))
-            seen.append(line)
-            m = CLOUD_URL.search(line)
+            text = raw.decode(errors="replace")
+            seen.append(text)
+            m = CLOUD_URL.search(ANSI.sub("", text))
             if m:
-                found = (m.group(0), m.group(1))
-                break
+                return (m.group(0), m.group(1)), ""
             if time.time() > deadline:
                 break
     finally:
@@ -310,13 +339,38 @@ def start_cloud(repo: str, task: str, branch: str = "") -> dict:
         proc.wait()
         proc.stdin.close()
         proc.stdout.close()
+    return None, "".join(seen)
+
+
+# What claude says when it won't take a working tree as it is, rather than
+# for a reason no checkout would change (sign-in, network, limits).
+REFUSED_TREE = re.compile(r"Not uploading|working tree|shallow|bundle|fresh clone|retry there", re.I)
+
+
+def start_cloud(repo: str, task: str, branch: str = "") -> dict:
+    """Starts a cloud session for the repo. `claude --cloud` takes the repo and
+    branch from the folder it runs in, so it needs a checkout to stand in:
+    first a stub with no files ([stub]), and when claude won't take that, a
+    full checkout ([checkout])."""
+    need_claude()
+    task = task.strip()
+    if not task:
+        raise Refused(400, "the task is empty")
+    if not REPO.match(repo):
+        raise Refused(400, "a repo is owner/name, like SebbeJohansson/yggdrasil")
+    found, out = (None, "")
+    tried_stub = STUB
+    if STUB:
+        # A git error here (no such repo, no access, no network) stands: a full clone would meet it too.
+        found, out = run_cloud(stub(repo, branch), task)
+    if not found and (not tried_stub or REFUSED_TREE.search(reason(out))):
+        found, out = run_cloud(checkout(repo, branch), task)
     if not found:
-        text = "".join(seen)
         try:
-            (home() / "last-start.log").write_text(ANSI.sub("", text))
+            (home() / "last-start.log").write_text(ANSI.sub("", CURSOR_RIGHT.sub(" ", out)))
         except OSError:
             pass
-        raise Refused(502, "claude --cloud made no session: " + reason(text) + " (all of it: ~/.ygg-bridge/last-start.log)")
+        raise Refused(502, "claude --cloud made no session: " + reason(out) + " (all of it: ~/.ygg-bridge/last-start.log)")
     url, sid = found
     session = {"id": sid, "url": url, "repo": repo, "branch": branch, "task": task, "at": int(time.time() * 1000)}
     with lock:

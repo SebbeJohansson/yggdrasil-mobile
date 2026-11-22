@@ -18,6 +18,10 @@ a = sys.argv[1:]
 if a == ["--version"]:
     print("2.9.0 (Claude Code)"); sys.exit(0)
 if a[:1] == ["--cloud"]:
+    import os
+    if os.environ.get("FAKE_REFUSE_STUB") and os.path.exists(".git/info/sparse-checkout"):
+        print("Not uploading this working tree: its index is a link. Use a fresh clone.", flush=True)
+        sys.exit(1)
     print("\x1b[1mSetting up the cloud session…\x1b[0m", flush=True)
     time.sleep(0.2)
     print("Started: https://claude.ai/code/session_01AbC-xyz", flush=True)
@@ -50,6 +54,8 @@ class BridgeTest(unittest.TestCase):
         subprocess.run(["git", "-C", str(work), "-c", "user.email=t@t", "-c", "user.name=t", "add", "."], check=True)
         subprocess.run(["git", "-C", str(work), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "one"], check=True)
         subprocess.run(["git", "clone", "-q", "--bare", str(work), str(origin)], check=True)
+        # As GitHub does: partial clones (--filter=blob:none) are served.
+        subprocess.run(["git", "-C", str(origin), "config", "uploadpack.allowFilter", "true"], check=True)
         os.environ.update(YGG_BRIDGE_HOME=str(tmp / "home"), CLAUDE_BIN=str(fake), YGG_BRIDGE_GIT_BASE="file://" + str(tmp / "gh"),
                           YGG_BRIDGE_START_WAIT="20", CLAUDE_CONFIG_DIR=str(tmp / "claude-config"))
         (tmp / "claude-config").mkdir()
@@ -91,11 +97,18 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(200, status, s)
         self.assertEqual("session_01AbC-xyz", s["id"])
         self.assertEqual("https://claude.ai/code/session_01AbC-xyz", s["url"])
-        self.assertTrue((Path(self.tmp) / "home" / "repos" / "me" / "app" / "README.md").exists())
+        # It started from a stub: origin and branch set, no files, nothing for git to report.
+        stub = Path(self.tmp) / "home" / "stubs" / "me" / "app"
+        run = lambda *a: subprocess.run(["git", *a], cwd=stub, capture_output=True, text=True).stdout.strip()
+        self.assertEqual("file://" + str(Path(self.tmp) / "gh" / "me" / "app.git"), run("remote", "get-url", "origin"))
+        self.assertEqual("main", run("branch", "--show-current"))
+        self.assertEqual("origin/main", run("rev-parse", "--abbrev-ref", "@{upstream}"))
+        self.assertEqual("", run("status", "--porcelain"))
+        self.assertFalse((stub / "README.md").exists())
         # claude's first-run questions are answered, so it doesn't wait for nobody.
         config = json.loads((Path(self.tmp) / "claude-config" / ".claude.json").read_text())
         self.assertTrue(config["hasCompletedOnboarding"])
-        self.assertTrue(config["projects"][str(Path(self.tmp) / "home" / "repos" / "me" / "app")]["hasTrustDialogAccepted"])
+        self.assertTrue(config["projects"][str(stub)]["hasTrustDialogAccepted"])
         _, listed = self.call("GET", "/v1/cloud")
         self.assertEqual("Fix the README", listed["sessions"][0]["task"])
         _, rs = self.call("GET", "/v1/repos")
@@ -106,7 +119,7 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(400, self.call("POST", "/v1/cloud", {"repo": "me/app", "task": "  "})[0])
         status, body = self.call("POST", "/v1/cloud", {"repo": "me/missing", "task": "x"})
         self.assertEqual(502, status)
-        self.assertIn("git clone failed", body["error"])
+        self.assertIn("git ls-remote failed", body["error"])
 
     def test_github_token_is_kept_and_forgotten(self):
         self.assertEqual(400, self.call("POST", "/v1/github", {"token": "not a token!"})[0])
@@ -114,6 +127,15 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual((200, True), (status, body["github"]))
         status, body = self.call("POST", "/v1/github", {"token": ""})
         self.assertEqual((200, False), (status, body["github"]))
+
+    def test_a_refused_stub_falls_back_to_a_full_checkout(self):
+        os.environ["FAKE_REFUSE_STUB"] = "1"
+        try:
+            status, s = self.call("POST", "/v1/cloud", {"repo": "me/app", "task": "Again"})
+        finally:
+            del os.environ["FAKE_REFUSE_STUB"]
+        self.assertEqual(200, status, s)
+        self.assertTrue((Path(self.tmp) / "home" / "repos" / "me" / "app" / "README.md").exists())
 
     def test_checkout_is_full_plain_and_kept_up_to_date(self):
         b = self.b

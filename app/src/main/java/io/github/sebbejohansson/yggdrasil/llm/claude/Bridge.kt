@@ -113,18 +113,18 @@ class BridgeClient(
     }
 
     /**
-     * Starts a cloud session for [repo] (owner/name). Takes a minute or two: it clones, then waits for the link.
+     * Starts a cloud session for [repo] (owner/name). Takes a minute or two: it readies the repo, then waits for the link.
      * When GitHub refuses the clone and the bridge has no token, Ygg's own is handed over and it tries once more.
      */
     suspend fun start(repo: String, task: String, branch: String? = null): BridgeSession = withContext(Dispatchers.IO) {
         val body = JSONObject().put("repo", repo).put("task", task).put("branch", branch ?: "")
         val s = try {
-            call("POST", "/v1/cloud", body, timeoutMs = 240_000)
+            call("POST", "/v1/cloud", body, timeoutMs = 420_000)
         } catch (e: BridgeException) {
             val token = githubToken()
             if (token == null || e.message?.contains("no GitHub token") != true) throw e
             call("POST", "/v1/github", JSONObject().put("token", token))
-            call("POST", "/v1/cloud", body, timeoutMs = 240_000)
+            call("POST", "/v1/cloud", body, timeoutMs = 420_000)
         }
         session(s).also { changes.bump() }
     }
