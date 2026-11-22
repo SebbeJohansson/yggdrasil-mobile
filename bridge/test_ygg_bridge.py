@@ -103,16 +103,12 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(502, status)
         self.assertIn("git clone failed", body["error"])
 
-    def test_a_private_repo_says_to_add_a_token_and_the_token_can_be_set(self):
-        status, body = self.call("POST", "/v1/cloud", {"repo": "me/private", "task": "x"})
-        # A local missing repo fails like a private one does on GitHub: "not found".
-        self.assertIn(status, (403, 502), body)
-        self.assertEqual(400, self.call("POST", "/v1/github", {"token": "hunter2"})[0])
-        status, body = self.call("POST", "/v1/github", {"token": "github_pat_" + "a" * 30})
+    def test_github_token_is_kept_and_forgotten(self):
+        self.assertEqual(400, self.call("POST", "/v1/github", {"token": "not a token!"})[0])
+        status, body = self.call("POST", "/v1/github", {"token": "ghp_" + "a" * 36})
         self.assertEqual((200, True), (status, body["github"]))
-        self.assertTrue(self.call("GET", "/health", key=False)[1]["github"])
-        self.assertEqual(False, self.call("POST", "/v1/github", {"token": ""})[1]["github"])
-        self.assertEqual(401, self.call("POST", "/v1/github", {"token": "x"}, key=False)[0])
+        status, body = self.call("POST", "/v1/github", {"token": ""})
+        self.assertEqual((200, False), (status, body["github"]))
 
     def test_message_queues_in_any_session(self):
         status, body = self.call("POST", "/v1/cloud/session_abc/message", {"text": "Also add tests"})

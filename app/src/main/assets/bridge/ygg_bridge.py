@@ -75,6 +75,22 @@ def key() -> str:
     return secret("key", make=True)
 
 
+GITHUB_TOKEN = re.compile(r"^[A-Za-z0-9_]{20,255}$")
+
+
+def keep_github(token: str) -> None:
+    """Keeps the GitHub token for cloning private repos; an empty one forgets it."""
+    token = token.strip()
+    path = home() / "github"
+    if not token:
+        path.unlink(missing_ok=True)
+        return
+    if not GITHUB_TOKEN.match(token):
+        raise Refused(400, "that doesn't look like a GitHub token")
+    path.write_text(token + "\n")
+    os.chmod(path, 0o600)
+
+
 def state() -> dict:
     path = home() / "sessions.json"
     try:
@@ -133,12 +149,12 @@ def git(args: list, cwd: Path = None, timeout: int = 300) -> str:
         extra = ["-c", f"http.https://github.com/.extraheader=Authorization: Basic {basic}"]
     out = subprocess.run(["git", *extra, *args], cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
     if out.returncode != 0:
-        text = out.stderr or out.stdout
-        if "could not read Username" in text or "Authentication failed" in text or "Repository not found" in text:
-            if secret("github"):
-                raise Refused(403, "GitHub refused the token for this repo: it needs Contents: read on it (or the repo name is wrong)")
-            raise Refused(403, "this repo is private (or doesn't exist): add a GitHub token that can read it, in Ygg: Settings → Claude bridge")
-        raise Refused(502, "git " + args[0] + " failed: " + last_lines(text))
+        why = last_lines(out.stderr or out.stdout)
+        if "could not read Username" in why or "Authentication failed" in why or "Repository not found" in why:
+            why = ("GitHub refused it (private repo or a token without access to it). "
+                   + ("Give the bridge a token that can read it. " if token else "The bridge has no GitHub token: add one in Settings > Claude bridge. ")
+                   + why)
+        raise Refused(502, "git " + args[0] + " failed: " + why)
     return out.stdout
 
 
@@ -332,16 +348,8 @@ class Handler(BaseHTTPRequestHandler):
             if method == "POST" and m:
                 return self.answer(200, message_cloud(m.group(1), str(self.body().get("text", ""))))
             if method == "POST" and path == "/v1/github":
-                token = str(self.body().get("token", "")).strip()
-                path_ = home() / "github"
-                if not token:
-                    path_.unlink(missing_ok=True)
-                    return self.answer(200, {"github": False})
-                if not re.match(r"^(github_pat_|gh[pousr]_)[A-Za-z0-9_]{20,}$", token):
-                    raise Refused(400, "that doesn't look like a GitHub token (github_pat_… or ghp_…)")
-                path_.write_text(token + "\n")
-                os.chmod(path_, 0o600)
-                return self.answer(200, {"github": True})
+                keep_github(str(self.body().get("token", "")))
+                return self.answer(200, {"ok": True, "github": bool(secret("github"))})
             if method == "POST" and path == "/v1/complete":
                 return self.answer(200, complete(self.body()))
             return self.answer(404, {"error": "no such thing"})
@@ -373,9 +381,11 @@ def main(argv: list) -> int:
     elif command == "key":
         print(key())
     elif command == "github" and len(argv) > 2:
-        path = home() / "github"
-        path.write_text(argv[2].strip() + "\n")
-        os.chmod(path, 0o600)
+        try:
+            keep_github(argv[2])
+        except Refused as e:
+            print(e)
+            return 2
         print("GitHub token kept for cloning.")
     else:
         print(__doc__)
