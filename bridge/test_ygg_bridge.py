@@ -156,11 +156,32 @@ class BridgeTest(unittest.TestCase):
         real = path / ".git" / ".l2s.index0001"
         index.rename(real)
         index.symlink_to(real.name)
+        data = real.read_bytes()
         self.b.plain_git_files(path)
         self.assertFalse(index.is_symlink())
-        self.assertEqual(real.read_bytes(), index.read_bytes())
+        self.assertFalse(real.exists())
+        self.assertEqual(data, index.read_bytes())
         ok = subprocess.run(["git", "status", "--porcelain"], cwd=path, capture_output=True, text=True)
         self.assertEqual(0, ok.returncode, ok.stderr)
+
+    def test_links_in_objects_become_plain_files(self):
+        path = self.b.checkout("me/app")
+        objects = path / ".git" / "objects"
+        f = next(p for p in objects.rglob("*") if p.is_file() and p.parent.name != "info")
+        hidden = f.with_name(".l2s." + f.name + "0001")
+        f.rename(hidden)
+        f.symlink_to(hidden.name)
+        (objects / ".l2s.orphan0002").write_text("x")
+        self.b.plain_git_files(path)
+        self.assertFalse(f.is_symlink())
+        self.assertEqual([], [p for p in path.joinpath(".git").rglob(".l2s.*")])
+        self.assertEqual([], [p for p in path.joinpath(".git").rglob("*") if p.is_symlink()])
+        ok = subprocess.run(["git", "fsck", "--no-progress"], cwd=path, capture_output=True, text=True)
+        self.assertEqual(0, ok.returncode, ok.stdout + ok.stderr)
+
+    def test_reason_reads_cursor_moves_as_spaces(self):
+        out = "\x1b[2;1HError:\x1b[1CNot\x1b[1Cuploading\x1b[12Gthis working tree.\r\n"
+        self.assertEqual("Error: Not uploading this working tree.", self.b.reason(out))
 
     def test_reason_finds_the_error_line(self):
         out = "\x1b7\x1b[?25l\x1b(B\x1b[>4m\x1b]0;claude\x1b\\Working\x1b8\r\nNot\x1b[1Cuploading this working tree: its index is a link.\r\nUse a fresh clone.\r\n\x1b[<u"

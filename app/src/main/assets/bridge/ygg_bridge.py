@@ -52,7 +52,8 @@ CLOUD_URL = re.compile(r"https://claude\.ai/code/(session_[A-Za-z0-9_-]+)")
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[A-Za-z~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[78=>]")
 # A terminal program moves the cursor right instead of printing spaces.
-CURSOR_RIGHT = re.compile(r"\x1b\[\d*C")
+# Moves and erases (forward, to a column, to a place) stand for spaces.
+CURSOR_RIGHT = re.compile(r"\x1b\[[\d;]*[CGHfX]")
 
 lock = threading.Lock()
 
@@ -119,6 +120,7 @@ def reason(text: str) -> str:
     """The line that says why, from a terminal program's output: its first
     error line, else its last lines. Cursor moves and bare control bytes go."""
     clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", ANSI.sub("", CURSOR_RIGHT.sub(" ", text)))
+    clean = re.sub(r"[ \t]{2,}", " ", clean)
     lines = [l.strip() for l in clean.replace("\r", "\n").splitlines() if l.strip()]
     for i, l in enumerate(lines):
         if re.match(r"(Error\b|error:|Not uploading|Cloud agents require)", l):
@@ -162,6 +164,11 @@ def git(args: list, cwd: Path = None, timeout: int = 300) -> str:
         import base64
         basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
         extra = ["-c", f"http.https://github.com/.extraheader=Authorization: Basic {basic}"]
+    # Git saves objects by hard-linking a temp file into place. Under proot's
+    # --link2symlink (Ygg's own Linux) each becomes a symlink, and
+    # `claude --cloud` won't upload a tree whose .git/objects holds links. Renaming
+    # into place makes plain files. Only for the bridge's own git runs.
+    extra = ["-c", "core.createObject=rename", *extra]
     out = subprocess.run(["git", *extra, *args], cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
     if out.returncode != 0:
         why = last_lines(out.stderr or out.stdout)
@@ -174,26 +181,42 @@ def git(args: list, cwd: Path = None, timeout: int = 300) -> str:
 
 
 def plain_git_files(path: Path) -> None:
-    """`claude --cloud` refuses a checkout whose index (or shallow list or
-    split-index file) is a link or has a second name: git never makes them so.
-    proot's --link2symlink, which Ygg's own Linux needs for dpkg, turns hard
-    links into symlinks, so here they can be. Each becomes a plain file with
-    the same bytes, which is all git wrote there."""
+    """`claude --cloud` refuses a checkout with a link or a file with a second
+    name anywhere git keeps its own files (.git/index, .git/shallow, .git/objects,
+    ...): git never makes them so. Under proot's --link2symlink they can be
+    (hard links become symlinks to hidden .l2s.* files). Each such file becomes a
+    plain one with the same bytes, and the .l2s.* leftovers go."""
     gitdir = path / ".git"
-    names = [gitdir / "index", gitdir / "shallow", *gitdir.glob("sharedindex.*")]
-    for f in names:
+    if not gitdir.is_dir():
+        return
+    leftovers = []
+    for root, dirs, files in os.walk(gitdir):
+        for name in files + [d for d in dirs if (Path(root) / d).is_symlink()]:
+            f = Path(root) / name
+            if name.startswith(".l2s."):
+                leftovers.append(f)
+                continue
+            try:
+                st = f.lstat()
+            except OSError:
+                continue
+            if not f.is_symlink() and st.st_nlink == 1:
+                continue
+            if f.is_symlink() and not f.is_file():
+                f.unlink()  # A link to nothing, or to a folder: git made neither.
+                continue
+            data = f.read_bytes()  # Through the link, if it is one.
+            mode = f.stat().st_mode & 0o777
+            tmp = f.with_name(f.name + ".ygg-plain")
+            tmp.write_bytes(data)
+            os.chmod(tmp, mode)
+            f.unlink()
+            tmp.rename(f)
+    for f in leftovers:
         try:
-            st = f.lstat()
+            f.unlink()
         except OSError:
-            continue
-        if not f.is_symlink() and st.st_nlink == 1:
-            continue
-        data = f.read_bytes()  # Through the link, if it is one.
-        tmp = f.with_name(f.name + ".ygg-plain")
-        tmp.write_bytes(data)
-        os.chmod(tmp, 0o644)
-        f.unlink()
-        tmp.rename(f)
+            pass
 
 
 def fresh_clone(url: str, path: Path, branch: str) -> None:
@@ -319,7 +342,10 @@ def run_cloud(cwd: Path, task: str):
     prepare_claude(cwd)
     command = f"{shlex.quote(CLAUDE)} --cloud {shlex.quote(task)}"
     argv = ["script", "-qfec", command, "/dev/null"] if shutil.which("script") else [CLAUDE, "--cloud", task]
-    proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    # claude's own git runs, too, save objects by renaming, not hard-linking (see git()).
+    n = int(os.environ.get("GIT_CONFIG_COUNT", "0") or 0)
+    env = dict(os.environ, GIT_CONFIG_COUNT=str(n + 1), **{f"GIT_CONFIG_KEY_{n}": "core.createObject", f"GIT_CONFIG_VALUE_{n}": "rename"})
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     seen = []
     deadline = time.time() + START_WAIT
     timer = threading.Timer(START_WAIT, proc.kill)
@@ -367,7 +393,8 @@ def start_cloud(repo: str, task: str, branch: str = "") -> dict:
         found, out = run_cloud(checkout(repo, branch), task)
     if not found:
         try:
-            (home() / "last-start.log").write_text(ANSI.sub("", CURSOR_RIGHT.sub(" ", out)))
+            # Readable first, then all of it as printed, for when the reading is wrong.
+            (home() / "last-start.log").write_text(reason(out) + "\n\n--- as printed ---\n" + repr(out))
         except OSError:
             pass
         raise Refused(502, "claude --cloud made no session: " + reason(out) + " (all of it: ~/.ygg-bridge/last-start.log)")
