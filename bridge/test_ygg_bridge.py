@@ -62,6 +62,8 @@ class BridgeTest(unittest.TestCase):
         os.environ.update(YGG_BRIDGE_HOME=str(tmp / "home"), CLAUDE_BIN=str(fake), YGG_BRIDGE_GIT_BASE="file://" + str(tmp / "gh"),
                           YGG_BRIDGE_START_WAIT="20", CLAUDE_CONFIG_DIR=str(tmp / "claude-config"))
         (tmp / "claude-config").mkdir()
+        # No __pycache__ beside the bridge: the assets folder goes into the APK as it is.
+        sys.dont_write_bytecode = True
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app/src/main/assets/bridge"))
         import ygg_bridge
         cls.b = ygg_bridge
