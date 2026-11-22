@@ -86,8 +86,37 @@ packages in one app, not processes talking HTTP.
 | **Huginn** | reacts to what just happened: messages, meetings, alerts | working |
 | **Veðrfölnir** | the phone itself: battery, storage, memory, heat | working |
 | **Sága** | keeps the phone's alerts and the desktop's in step, through Mímir | working (alerts) |
+| **Ratatoskr** | the watchdog: is each part up, do its loops run; and your own rhythm | working |
+| **Munin** | does what the phone depends on answer: Mímir, GitHub, Hugging Face, Anthropic | working |
+| **Heimdall** | the security watchman: the repo's findings (a GitHub Action) and the phone's own | working |
+| **Loki** | tests the watchers: blind spots, and tricks to see who notices | working |
 
-Sindri, Heimdall, Munin and Ratatoskr are desktop jobs and have no phone part.
+Sindri is a desktop job; the phone starts and answers Claude Code sessions of
+its own instead (the Code tab).
+
+## The watchers: Ratatoskr, Munin, Heimdall, Loki
+
+Ported from the desktop's, and on **System → Watchers**. What they find goes
+to Gjallar; they fix nothing.
+
+- **Ratatoskr's watchdog:** `down:<part>` (critical) when a part can't do
+  its job, `stalled:` and `failing:<part>:<loop>` (warning) for its loops, a
+  check down after two looks in a row and up after two. When its own round
+  comes late (Android held Ygg back), Gjallar raises `silent:ratatoskr`.
+- **Munin:** `down:<name>` when Mímir, GitHub, Hugging Face or (with the
+  bridge) Anthropic don't answer, and `incident:` from GitHub's and
+  Anthropic's status pages. Offline, the internet's checks wait and nothing
+  is raised.
+- **Heimdall:** a GitHub Action (`.github/workflows/heimdall.yml`) checks
+  the repo nightly (vulnerable dependencies with OSV, keys in commits with
+  gitleaks, the app's settings) into one issue labelled `heimdall`; the app
+  reads it and adds the phone's own: USB debugging, an old security patch,
+  no screen lock, the Claude bridge answering beyond the phone, and its key
+  files' permissions. Findings that matter raise `<check>:summary`.
+- **Loki:** blind spots, and strikes: a part reads as down, or one of its
+  loops fails, for 1 to 10 minutes; Loki checks whether Ratatoskr and Gjallar
+  notice, and raises `missed:<part>:<kind>` when they don't. Every trick ends
+  on time. It leaves Gjallar and Ratatoskr alone on the phone.
 
 ## Alerts and messages
 

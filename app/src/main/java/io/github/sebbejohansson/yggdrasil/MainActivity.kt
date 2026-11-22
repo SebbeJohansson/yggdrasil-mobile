@@ -394,6 +394,7 @@ private fun Root(
                     partReports(
                         chatState, messageState, container.hermodr.focusNow(), jobsState, huginnState, readings, phoneFailing,
                         alertState, container.you, container.updater, container.loops, now,
+                        munin = container.munin, heimdall = container.heimdall, loki = container.loki,
                     ),
                     all, container.loops.startedAt, now,
                 )
@@ -414,7 +415,8 @@ private fun Root(
                     MainActivity.TAB_CODE -> CodeScreen(codeVm, phone = bridgeVm, local = localVm, onSetUpPhone = ::openSettings)
                     MainActivity.TAB_SYSTEM -> SystemScreen(systemPage, { systemPage = it }, phone, jobs, huginnVm, historyVm,
                         health = { healthPage({ systemPage = 0 }, { systemPage = 6 }) },
-                        performance = { PerformanceScreen(container, onBack = { systemPage = 5 }) })
+                        performance = { PerformanceScreen(container, onBack = { systemPage = 5 }) },
+                        watchers = { io.github.sebbejohansson.yggdrasil.parts.WatchersScreen(container) })
                     MainActivity.TAB_HEALTH -> healthPage({ tab = beforeSettings }, { tab = MainActivity.TAB_PERF })
                     MainActivity.TAB_PERF -> PerformanceScreen(container, onBack = { tab = MainActivity.TAB_HEALTH })
                     MainActivity.TAB_SETTINGS -> SettingsScreen(
@@ -645,9 +647,11 @@ private fun SystemScreen(
     health: @Composable () -> Unit,
     /** What pulls on what: processes, battery, storage, the phone, the model. */
     performance: @Composable () -> Unit,
+    /** Ratatoskr, Munin, Heimdall and Loki: who notices when something breaks. */
+    watchers: @Composable () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
-        PageTabs(listOf("Phone", "Jobs", "Huginn", "Tree", "Runes", "Health", "Performance"), selected = page, onSelect = onPage)
+        PageTabs(listOf("Phone", "Jobs", "Huginn", "Tree", "Runes", "Health", "Performance", "Watchers"), selected = page, onSelect = onPage)
         Box(Modifier.weight(1f)) {
             when (page) {
                 0 -> PhoneScreen(phone)
@@ -656,7 +660,8 @@ private fun SystemScreen(
                 3 -> TreeScreen(history)
                 4 -> RunesScreen(history)
                 5 -> health()
-                else -> performance()
+                6 -> performance()
+                else -> watchers()
             }
         }
     }

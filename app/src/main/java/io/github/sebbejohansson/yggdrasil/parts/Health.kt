@@ -54,6 +54,9 @@ object Parts {
         Triple("claude", "Claude", "the optional bridge to Claude Code, for bigger questions"),
         Triple("gjallar", "Gjallar", "alerts and warnings from every part, in one place"),
         Triple("ratatoskr", "Ratatoskr", "the watchdog: the parts' loops, and your own rhythm"),
+        Triple("munin", "Munin", "checks what the parts depend on outside the phone: Mímir, GitHub, Anthropic"),
+        Triple("heimdall", "Heimdall", "the security watchman: the repo's findings and the phone's own"),
+        Triple("loki", "Loki", "tests the watchers: blind spots, and tricks to see who notices"),
     )
 
     /** An alert belongs to a part when it raised it or names it in its key. */
@@ -104,4 +107,14 @@ object Parts {
     val SAGA_SYNC = "saga.sync" to Duration.ofMinutes(15)
     val UPDATES_CHECK = "updates.check" to Duration.ofHours(6)
     val NORN_PROMISES = "norn.promises" to Duration.ofMinutes(15)
+    val RATATOSKR_CHECK = "ratatoskr.check" to Duration.ofMinutes(15)
+    val MUNIN_CHECK = "munin.check" to Duration.ofMinutes(15)
+    val HEIMDALL_WATCH = "heimdall.watch" to Duration.ofMinutes(15)
+    val LOKI_PLAN = "loki.plan" to Duration.ofHours(1)
+
+    /** Every loop the parts run, for Ratatoskr to watch: name and interval. */
+    fun allLoops(devBuild: Boolean) = listOfNotNull(
+        VEDRFOLNIR_CHECK, DELLINGR_TICK, HUGINN_CALENDAR, RATATOSKR_YOU, SAGA_SYNC, NORN_PROMISES,
+        UPDATES_CHECK.takeIf { !devBuild }, RATATOSKR_CHECK, MUNIN_CHECK, HEIMDALL_WATCH, LOKI_PLAN,
+    )
 }

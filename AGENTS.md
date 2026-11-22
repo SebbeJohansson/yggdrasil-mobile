@@ -21,7 +21,8 @@ directly. Parts keep their desktop names and jobs.
 | `huginn/` | rules reacting to notifications, meetings, alerts |
 | `vedrfolnir/` | the phone's health: battery, storage, heat |
 | `saga/` | sync with the desktop through Mímir; the Code tab |
-| `ratatoskr/` | "Watching you": the rhythm notes |
+| `ratatoskr/` | the watchdog over the parts (`Watchdog.kt`) and "Watching you", the rhythm notes (both Ratatoskr's on the desktop too) |
+| `munin/`, `heimdall/`, `loki/` | the other watchers: outside systems, security, testing the watchers |
 | `history/`, `today/`, `home/`, `boot/` | world tree, Today, launcher mode, boot sequence |
 | `update/` | self-update from GitHub releases |
 | `parts/` | Health and Performance screens |
@@ -115,6 +116,11 @@ Each of these cost a release. Keep them when changing the bridge.
 | Cloud starts | in your real checkout | in a stub, or a full clone | the phone has no checkout |
 | Sága's session list | publishes this machine's sessions to Mímir | reads other devices' and sends them requests; the phone's own sessions are **not published** | not ported yet |
 | Model | the desktop's own | Gemma 4 on the phone (LiteRT-LM); Claude through the bridge if set up | no server to call |
+| Watchers | Ratatoskr, Munin, Loki, Heimdall as processes; a part is "down" when its `/health` doesn't answer | the same checks, keys and titles in one process (`core/Watch.kt` is the desktop's watch: 2 fails down, 2 passes up); "down" is what a part can tell itself (the bridge answering); Ratatoskr every 15 min, not 30 s | one process; Android's background limits |
+| Ratatoskr's heartbeat | Gjallar raises `silent:ratatoskr` when it stops beating | Ratatoskr's round, late by its own clock, has Gjallar raise it | no separate process to beat |
+| Munin offline | raises `offline` | waits, raises nothing | a phone is offline often and on purpose |
+| Heimdall | five checks on the machine and repos, nightly | a GitHub Action on the repo into an issue the app reads, plus phone checks | the app ships from the repo; the phone has no repos or ports to scan |
+| Loki | switch, proxy and freeze tricks, passive strikes, tales | the switch's health and loop tricks only, manual; during a strike it asks Ratatoskr for a round every 30 s | proxy and freeze need processes; not ported yet: passive strikes, tales |
 | Performance | `perf.vue` | Perf steps, plus `/proc` processes, battery, storage, and other apps via Usage access | proot's processes are invisible to Android's per-app numbers |
 
 For parity work, the desktop's sources: `sindri/conduit_claude.go`

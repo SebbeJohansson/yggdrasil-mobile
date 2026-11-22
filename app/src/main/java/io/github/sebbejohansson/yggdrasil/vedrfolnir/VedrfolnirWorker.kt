@@ -25,6 +25,8 @@ class VedrfolnirWorker(context: Context, params: WorkerParameters) : CoroutineWo
         c.loops.run(Parts.RATATOSKR_YOU.first, Parts.RATATOSKR_YOU.second) { c.you.round() }
         // Sága catches up with Mímir at least this often while the app is closed.
         c.loops.run(Parts.SAGA_SYNC.first, Parts.SAGA_SYNC.second) { if (!c.saga.sync() && c.saga.status.value.configured) error(c.saga.status.value.lastError ?: "sync failed") }
+        // The watchers: Munin, Heimdall, Loki's plan, and Ratatoskr's watchdog last.
+        c.watchRounds()
         return Result.success()
     }
 

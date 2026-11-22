@@ -38,6 +38,10 @@ fun partReports(
     updater: Updater,
     loops: Loops,
     now: Instant,
+    /** The watchers, when the container has them. */
+    munin: io.github.sebbejohansson.yggdrasil.munin.Munin? = null,
+    heimdall: io.github.sebbejohansson.yggdrasil.heimdall.Heimdall? = null,
+    loki: io.github.sebbejohansson.yggdrasil.loki.Loki? = null,
 ): List<PartReport> {
     fun loop(l: Pair<String, Duration>) = loops.get(l.first, l.second)
 
@@ -159,7 +163,40 @@ fun partReports(
             ),
             troubled = updater.state.value is UpdateState.Failed,
             problem = (updater.state.value as? UpdateState.Failed)?.message,
-            loops = listOfNotNull(loop(Parts.RATATOSKR_YOU), loop(Parts.UPDATES_CHECK).takeIf { updater.state.value !is UpdateState.DevBuild }),
+            loops = listOfNotNull(loop(Parts.RATATOSKR_YOU), loop(Parts.RATATOSKR_CHECK), loop(Parts.UPDATES_CHECK).takeIf { updater.state.value !is UpdateState.DevBuild }),
         ),
+    ) + listOfNotNull(
+        munin?.status?.value?.let { m ->
+            PartReport(
+                "munin",
+                facts = listOfNotNull(
+                    if (m.online) null else "the phone is offline: the internet's checks wait",
+                    "${m.targets.count { it.up }} of ${m.targets.size} answer",
+                    m.targets.filter { !it.up && it.detail != "offline" }.joinToString(", ") { it.target.name }.ifEmpty { null }?.let { "not answering: $it" },
+                ),
+                loops = listOf(loop(Parts.MUNIN_CHECK)),
+            )
+        },
+        heimdall?.status?.value?.let { h ->
+            val serious = h.findings.count { it.severity == "high" || it.severity == "critical" }
+            PartReport(
+                "heimdall",
+                troubled = serious > 0,
+                problem = h.repoError?.let { "can't read the repo's findings: $it" },
+                facts = listOf("${h.findings.size} findings", "$serious that matter"),
+                loops = listOf(loop(Parts.HEIMDALL_WATCH)),
+            )
+        },
+        loki?.status?.value?.let { l ->
+            PartReport(
+                "loki",
+                facts = listOfNotNull(
+                    "${l.blindSpots.size} blind spots",
+                    l.running?.let { "tricking ${it.trick.part} now" },
+                    l.strikes.firstOrNull()?.let { "last strike: ${it.trick.part}, ${it.state}" },
+                ),
+                loops = listOf(loop(Parts.LOKI_PLAN)),
+            )
+        },
     )
 }

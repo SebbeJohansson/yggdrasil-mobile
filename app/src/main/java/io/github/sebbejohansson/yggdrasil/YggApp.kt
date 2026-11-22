@@ -1,5 +1,10 @@
 package io.github.sebbejohansson.yggdrasil
 
+import io.github.sebbejohansson.yggdrasil.loki.Loki
+import io.github.sebbejohansson.yggdrasil.heimdall.Heimdall
+import io.github.sebbejohansson.yggdrasil.munin.Munin
+import io.github.sebbejohansson.yggdrasil.ratatoskr.Watchdog
+import io.github.sebbejohansson.yggdrasil.core.Watch
 import io.github.sebbejohansson.yggdrasil.linux.LinuxLogin
 import io.github.sebbejohansson.yggdrasil.linux.LinuxShell
 import io.github.sebbejohansson.yggdrasil.linux.OwnLinux
@@ -255,6 +260,49 @@ class AppContainer(private val app: Application) {
     /** Mímir on the VPS, set up under Settings → Connection. */
     val sagaSettings = SagaSettings(app)
 
+    // The watchers, as the desktop's: Ratatoskr's watchdog over the parts, Munin over what's
+    // outside the phone, Heimdall the security watchman, Loki testing them all.
+    private fun mine(source: String): suspend () -> Set<String> = { gjallar.active(1000).filter { it.source == source }.map { it.key }.toSet() }
+    val ratatoskrWatch = Watch(app, "ratatoskr", gjallar, mine("ratatoskr"))
+    // The Claude bridge, while it's meant to run: it answers, with Claude Code in it.
+    private val claudeProbe: suspend () -> String? = probe@{
+        val on = app.getSharedPreferences("linux_bridge", android.content.Context.MODE_PRIVATE).getBoolean("always_on", false)
+        if (!on || !bridge.hasKey) return@probe null
+        val h = bridge.health() ?: return@probe "the bridge doesn't answer on 127.0.0.1:8765"
+        if (h.claude.isEmpty()) "Claude Code isn't installed in the bridge's Linux" else null
+    }
+    val watchdog: Watchdog by lazy {
+        Watchdog(ratatoskrWatch, gjallar, loops::get, loops.startedAt, devBuild = BuildConfig.DEBUG, probes = mapOf("claude" to claudeProbe))
+    }
+    val munin: Munin by lazy {
+        Munin(
+            Watch(app, "munin", gjallar, mine("munin")),
+            targets = { Munin.targets(sagaSettings.url.takeIf { sagaSettings.client() != null }, claude = bridge.hasKey) },
+            online = {
+                val cm = app.getSystemService(android.net.ConnectivityManager::class.java)
+                cm.getNetworkCapabilities(cm.activeNetwork)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+            },
+        )
+    }
+    val heimdall: Heimdall by lazy {
+        Heimdall(app, gjallar, token = { KeystoreTokenVault(app).get() }, repo = io.github.sebbejohansson.yggdrasil.update.Updates.REPO, rootfs = ownLinux.rootfs)
+    }
+    val loki: Loki by lazy {
+        Loki(app, gjallar, loops, watchdog = { watchdog }, ratatoskrChecks = { ratatoskrWatch.states() }, scope = appScope, devBuild = BuildConfig.DEBUG)
+    }
+
+    /** One round of every watcher, after the parts' own rounds; Loki's plan hourly. */
+    suspend fun watchRounds() {
+        loops.run(Parts.MUNIN_CHECK.first, Parts.MUNIN_CHECK.second) { munin.round() }
+        loops.run(Parts.HEIMDALL_WATCH.first, Parts.HEIMDALL_WATCH.second) { heimdall.round() }
+        val plan = loops.get(Parts.LOKI_PLAN.first, Parts.LOKI_PLAN.second)
+        if (plan.lastRunAt == null || java.time.Duration.between(plan.lastRunAt, java.time.Instant.now()) >= Parts.LOKI_PLAN.second) {
+            loops.run(Parts.LOKI_PLAN.first, Parts.LOKI_PLAN.second) { loki.plan() }
+        }
+        // Ratatoskr last, so it sees this round's loops.
+        loops.run(Parts.RATATOSKR_CHECK.first, Parts.RATATOSKR_CHECK.second) { watchdog.round() }
+    }
+
     /** Keeps the phone's alerts and the desktop's in step through Mímir. */
     val saga = SagaService(db.saga, gjallar, mimir = { sagaSettings.client() }, device = { sagaSettings.device })
 
@@ -293,6 +341,7 @@ class AppContainer(private val app: Application) {
             loops.run(Parts.RATATOSKR_YOU.first, Parts.RATATOSKR_YOU.second) { you.round() }
             loops.run(Parts.NORN_PROMISES.first, Parts.NORN_PROMISES.second) { promises.remind() }
             saga.prune()
+            watchRounds()
         }
         // Sync a moment after any alert changes here (and once now, on start).
         appScope.launch {

@@ -62,6 +62,14 @@ class Loops(
         changes.bump()
     }
 
+    /** When Loki's loop trick ends, its error goes too (as the desktop's /health stops showing it). */
+    fun clearTrick(name: String) {
+        if (prefs.getString("$name.error", null) == Tricks.LOOP_ERROR) {
+            prefs.edit { remove("$name.error") }
+            changes.bump()
+        }
+    }
+
     fun get(name: String, every: Duration): LoopRun = LoopRun(
         name,
         Duration.ofSeconds(prefs.getLong("$name.every", every.seconds)),
@@ -71,6 +79,11 @@ class Loops(
 
     /** Runs one round of a loop and records it; a failure is recorded, never thrown. */
     suspend fun run(name: String, every: Duration, block: suspend () -> Unit) {
+        // Loki's loop trick: the round is skipped and recorded as failed, as on the desktop.
+        if (Tricks.loopTricked(name)) {
+            record(name, every, Tricks.LOOP_ERROR)
+            return
+        }
         try {
             val p = perf()
             if (p != null) p.time(name.substringBefore('.'), name.substringAfter('.')) { block() } else block()
