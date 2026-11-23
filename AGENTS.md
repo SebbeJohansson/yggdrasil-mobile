@@ -54,6 +54,14 @@ it (`MainActivity.kt`).
   as the existing ones do: a subject that says what changed for the user,
   a body with the reason and what was tried. Keep pure logic (parsers,
   ranking, state) apart from Android calls so it gets a unit test.
+- **Docs move with the code.** When a change alters what a doc describes,
+  update that doc in the same commit:
+  - **README.md:** what the user sees (tabs, pages, settings, how a part behaves).
+  - **AGENTS.md:** how it's built, traps, the desktop table.
+  - **[docs/claude-bridge.md](docs/claude-bridge.md):** the bridge's routes.
+  - **[docs/desktop-parity.md](docs/desktop-parity.md):** a part ported, a
+    desktop change carried over, or a new difference found.
+  - **Screenshots under `docs/screenshots`:** when the look changes.
 
 ## The Claude bridge
 
