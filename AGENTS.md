@@ -114,7 +114,7 @@ Each of these cost a release. Keep them when changing the bridge.
 | herdr | your own server, default socket | one headless server per account, short socket | accounts; the socket path limit |
 | Claude accounts | one | several, by `CLAUDE_CONFIG_DIR` | personal and work on one phone |
 | Cloud starts | in your real checkout | in a stub, or a full clone | the phone has no checkout |
-| Sága's session list | publishes this machine's sessions to Mímir | reads other devices' and sends them requests; the phone's own sessions are **not published** | not ported yet |
+| Sága's session list | publishes this machine's sessions to Mímir and carries out requests from `SAGA_DRIVE_FROM` | the same: the phone's local sessions as `sindri.sessions` (every 30 s while the bridge is set up, on change or every 5 min), and prompt, choose and resume from the devices in *Take requests from* (default: none) | so the desktop sees and answers the phone's sessions |
 | Model | the desktop's own | Gemma 4 on the phone (LiteRT-LM); Claude through the bridge if set up | no server to call |
 | Watchers | Ratatoskr, Munin, Loki, Heimdall as processes; a part is "down" when its `/health` doesn't answer | the same checks, keys and titles in one process (`core/Watch.kt` is the desktop's watch: 2 fails down, 2 passes up); "down" is what a part can tell itself (the bridge answering); Ratatoskr every 15 min, not 30 s | one process; Android's background limits |
 | Ratatoskr's heartbeat | Gjallar raises `silent:ratatoskr` when it stops beating | Ratatoskr's round, late by its own clock, has Gjallar raise it | no separate process to beat |

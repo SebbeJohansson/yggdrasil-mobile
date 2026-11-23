@@ -47,7 +47,45 @@ data class RemoteSession(
     val working: Boolean get() = !waiting && phase == "busy"
     val claudeLink: String? get() = bridgeSessionId?.let { "https://claude.ai/code/$it" }
     val folder: String get() = directory?.trimEnd('/')?.substringAfterLast('/') ?: ""
+
+    /** As the desktop sends it (saga's RemoteSession), clipped as it clips. */
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("kind", kind)
+        put("name", name)
+        directory?.let { put("directory", it) }
+        lastActivity?.let { put("lastActivity", it.toEpochMilli()) }
+        phase?.let { put("phase", it) }
+        tool?.let { put("tool", it) }
+        lastText?.let { put("lastText", clip(it, 600)) }
+        permission?.let { put("permission", it) }
+        bridgeSessionId?.let { put("bridgeSessionId", it) }
+        pane?.let { put("pane", it) }
+        dialog?.let { d ->
+            put("dialog", JSONObject().put("question", clip(d.question, 300)).apply {
+                d.detail?.let { put("detail", clip(it, 600)) }
+                put("choices", JSONArray(d.choices.map { c -> JSONObject().put("key", c.key).put("label", clip(c.label, 120)) }))
+            })
+        }
+    }
 }
+
+/** Keeps the head and marks the cut, as the desktop's clip. */
+internal fun clip(s: String, max: Int): String = if (s.length <= max) s else s.take(max - 1) + "…"
+
+/**
+ * The phone's own sessions as Sága publishes them, for the desktop and other
+ * devices: Claude Code on the phone, in herdr. Null from [now] while there's
+ * nothing to tell (the bridge isn't set up).
+ */
+interface PhoneSessionsHost {
+    suspend fun now(): PhoneSessionsNow?
+    suspend fun prompt(session: String, text: String): Result<Unit>
+    suspend fun choose(session: String, question: String, key: String, label: String): Result<Unit>
+    suspend fun resume(session: String): Result<Unit>
+}
+
+data class PhoneSessionsNow(val sessions: List<RemoteSession>, val herdr: Boolean, val errors: Map<String, String> = emptyMap())
 
 data class RemoteCloud(
     val id: String,
@@ -80,6 +118,25 @@ data class DeviceSessions(
 
     companion object {
         val QUIET_AFTER: Duration = Duration.ofMinutes(12)
+
+        /** A `sindri.sessions` body, as the desktop's: what this device runs, and who may drive it. */
+        fun body(now: PhoneSessionsNow, driveFrom: List<String>, at: Long): JSONObject = JSONObject().apply {
+            put("at", at)
+            put("sessions", JSONArray(now.sessions.sortedByDescending { it.lastActivity }.map { it.toJson() }))
+            put("cloud", JSONArray())
+            put("projects", JSONArray())
+            put("driveFrom", JSONArray(driveFrom))
+            put("herdr", now.herdr)
+            put("errors", JSONObject(now.errors))
+        }
+
+        /** The body without its times, so a beat with nothing new isn't a change. */
+        fun fingerprint(body: JSONObject): String {
+            val o = JSONObject(body.toString())
+            o.remove("at")
+            o.optJSONArray("sessions")?.let { a -> (0 until a.length()).forEach { a.getJSONObject(it).remove("lastActivity") } }
+            return o.toString()
+        }
 
         /** Null when it isn't a body this app understands. */
         fun parse(device: String, json: String, eventAt: Long): DeviceSessions? = runCatching {
@@ -217,6 +274,11 @@ data class Asked(
 
 /** The body of `sindri.request.done`, sent by the origin to [to]. */
 data class RequestDone(val id: String, val to: String, val ok: Boolean, val error: String?, val url: String?) {
+    fun toJson(): JSONObject = JSONObject().put("id", id).put("to", to).put("ok", ok).apply {
+        error?.let { put("error", it) }
+        url?.let { put("url", it) }
+    }
+
     companion object {
         fun parse(json: String): RequestDone? = runCatching {
             val o = JSONObject(json)

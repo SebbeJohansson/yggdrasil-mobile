@@ -368,3 +368,26 @@ class BridgeSettings(context: Context) {
         get() = runCatching { BridgePlace.valueOf(prefs.getString("place", null) ?: "") }.getOrDefault(BridgePlace.OWN_LINUX)
         set(v) = prefs.edit { putString("place", v.name) }
 }
+
+/**
+ * A local session as the desktop's Sága shows a session: the same phases
+ * (busy, turn-ended, blocked), its last words and a question it asks. One
+ * that ended has no pane, so the desktop offers to resume it instead.
+ */
+fun LocalSession.remote(): io.github.sebbejohansson.yggdrasil.saga.RemoteSession = io.github.sebbejohansson.yggdrasil.saga.RemoteSession(
+    id = name,
+    kind = "claude",
+    name = title.ifEmpty { task.ifEmpty { repo.substringAfter('/') } },
+    directory = "/root/.ygg-bridge/work/$repo",
+    lastActivity = lastActivity ?: at,
+    phase = when (phase) { "ended" -> null; "starting" -> "busy"; else -> phase },
+    tool = tool.ifEmpty { null },
+    lastText = lastText.ifEmpty { null },
+    permission = null,
+    bridgeSessionId = null,
+    pane = if (phase == "ended") null else "herdr:$name",
+    dialog = dialog?.let { d ->
+        io.github.sebbejohansson.yggdrasil.saga.RemoteDialog(d.question, d.detail.ifEmpty { null },
+            d.choices.map { io.github.sebbejohansson.yggdrasil.saga.RemoteChoice(it.key, it.label) })
+    },
+)

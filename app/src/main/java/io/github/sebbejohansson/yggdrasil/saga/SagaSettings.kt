@@ -20,6 +20,17 @@ class SagaSettings(context: Context) {
         get() = prefs.getString("device", "phone")?.ifBlank { "phone" } ?: "phone"
         set(v) = prefs.edit { putString("device", v.trim()) }
 
+    /**
+     * The devices that may type into this phone's Claude sessions, answer
+     * their questions and resume them (as the desktop's SAGA_DRIVE_FROM).
+     * Empty: look only. Comma-separated names, as at Mímir.
+     */
+    var driveFrom: String
+        get() = prefs.getString("driveFrom", "") ?: ""
+        set(v) = prefs.edit { putString("driveFrom", v.trim()) }
+
+    fun driveFromList(): List<String> = driveFrom.split(',', ' ').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
     /** Mímir, or null while the URL or token is missing. Only HTTPS: Android refuses plain HTTP. */
     fun client(): MimirClient? {
         val u = url

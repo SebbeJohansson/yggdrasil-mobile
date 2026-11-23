@@ -66,7 +66,7 @@ data class AlertsUiState(
 )
 
 /** What is set up for Mímir, for the form. */
-data class MimirForm(val url: String, val token: String, val device: String)
+data class MimirForm(val url: String, val token: String, val device: String, val driveFrom: String = "")
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AlertsViewModel(
@@ -84,12 +84,13 @@ class AlertsViewModel(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AlertsUiState())
 
-    fun form() = MimirForm(settings.url, settings.token, settings.device)
+    fun form() = MimirForm(settings.url, settings.token, settings.device, settings.driveFrom)
 
     fun saveMimir(form: MimirForm) {
         settings.url = form.url
         settings.token = form.token
         settings.device = form.device
+        settings.driveFrom = form.driveFrom
         syncNow()
     }
 
@@ -284,6 +285,7 @@ fun MimirSettings(vm: AlertsViewModel) {
     var url by remember { mutableStateOf(saved.url) }
     var token by remember { mutableStateOf(saved.token) }
     var device by remember { mutableStateOf(saved.device) }
+    var driveFrom by remember { mutableStateOf(saved.driveFrom) }
     Column(
         Modifier.fillMaxWidth().hudPanel(warn = sync.lastError != null).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -300,8 +302,11 @@ fun MimirSettings(vm: AlertsViewModel) {
         HudTextField(url, { url = it }, placeholder = "https://vps.tailnet.ts.net", maxLines = 1)
         HudTextField(token, { token = it }, placeholder = "This phone's token", maxLines = 1)
         HudTextField(device, { device = it }, placeholder = "Name at Mímir (phone)", maxLines = 1)
+        HudTextField(driveFrom, { driveFrom = it }, placeholder = "Take requests from (e.g. desktop)", maxLines = 1)
+        Text("The devices that may type into this phone's Claude sessions, answer their questions and resume them. Empty: they can only look.",
+            style = HudText.meta)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            HudButton("Save", { vm.saveMimir(MimirForm(url, token, device)) }, kind = HudButtonKind.SMALL)
+            HudButton("Save", { vm.saveMimir(MimirForm(url, token, device, driveFrom)) }, kind = HudButtonKind.SMALL)
             HudButton("Sync now", vm::syncNow, kind = HudButtonKind.SMALL)
         }
     }

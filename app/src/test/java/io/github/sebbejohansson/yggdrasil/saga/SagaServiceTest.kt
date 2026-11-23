@@ -257,6 +257,60 @@ class SagaServiceTest {
         assertEquals(2, saga.devices().single().sessions.size)
     }
 
+    private class FakePhone : PhoneSessionsHost {
+        var sessions = listOf(
+            RemoteSession("app-1a2b", "claude", "Fix the README", "/root/.ygg-bridge/work/me/app", Instant.ofEpochMilli(5_000),
+                "turn-ended", null, "Done.", null, null, "herdr:app-1a2b", null),
+        )
+        val did = mutableListOf<String>()
+        override suspend fun now() = PhoneSessionsNow(sessions, herdr = true)
+        override suspend fun prompt(session: String, text: String): Result<Unit> { did += "prompt $session $text"; return Result.success(Unit) }
+        override suspend fun choose(session: String, question: String, key: String, label: String): Result<Unit> {
+            did += "choose $session $key"; return Result.success(Unit)
+        }
+        override suspend fun resume(session: String): Result<Unit> { did += "resume $session"; return Result.failure(IllegalStateException("no conversation")) }
+    }
+
+    @Test fun publishesThePhonesSessionsAndDoesWhatTrustedDevicesAsk() = runTest {
+        val phone = FakePhone()
+        val withPhone = SagaService(InMemorySagaStore(), gjallar, { mimir }, { "phone" }, clock, Dispatchers.Unconfined,
+            phone = phone, driveFrom = { listOf("desktop") })
+        assertTrue(withPhone.sync())
+        val sent = mimir.sent(SessionKinds.SESSIONS).single()
+        assertEquals(listOf("desktop"), (0 until sent.getJSONArray("driveFrom").length()).map { sent.getJSONArray("driveFrom").getString(it) })
+        // What the desktop reads back is what it would read from a machine of its own.
+        val read = DeviceSessions.parse("phone", sent.toString(), 0)!!
+        assertEquals("Fix the README", read.sessions.single().name)
+        assertEquals("herdr:app-1a2b", read.sessions.single().pane)
+        assertTrue(read.herdr)
+        // Nothing new: nothing sent again until the 5-minute beat.
+        assertTrue(withPhone.sync())
+        assertEquals(1, mimir.sent(SessionKinds.SESSIONS).size)
+
+        mimir.fromDesktop(SessionKinds.PROMPT, JSONObject().put("id", "r1").put("origin", "phone").put("session", "app-1a2b").put("text", "add a test"))
+        mimir.fromDesktop(SessionKinds.RESUME, JSONObject().put("id", "r2").put("origin", "phone").put("session", "app-old"))
+        mimir.fromDesktop(SessionKinds.PROMPT, JSONObject().put("id", "r3").put("origin", "laptop").put("session", "x").put("text", "not ours"))
+        assertTrue(withPhone.sync())
+        assertEquals(listOf("prompt app-1a2b add a test", "resume app-old"), phone.did)
+        val done = mimir.sent(SessionKinds.DONE).associateBy { it.getString("id") }
+        assertEquals(setOf("r1", "r2"), done.keys)
+        assertEquals(true, done.getValue("r1").getBoolean("ok"))
+        assertEquals("desktop", done.getValue("r1").getString("to"))
+        assertEquals(false, done.getValue("r2").getBoolean("ok"))
+        assertEquals("no conversation", done.getValue("r2").getString("error"))
+    }
+
+    @Test fun refusesDevicesItDoesntTrust() = runTest {
+        val phone = FakePhone()
+        val lookOnly = SagaService(InMemorySagaStore(), gjallar, { mimir }, { "phone" }, clock, Dispatchers.Unconfined, phone = phone)
+        mimir.fromDesktop(SessionKinds.PROMPT, JSONObject().put("id", "r9").put("origin", "phone").put("session", "app-1a2b").put("text", "hi"))
+        assertTrue(lookOnly.sync())
+        assertEquals(emptyList<String>(), phone.did)
+        val done = mimir.sent(SessionKinds.DONE).single()
+        assertEquals(false, done.getBoolean("ok"))
+        assertTrue(done.getString("error").contains("doesn't take requests from desktop"))
+    }
+
     @Test fun whatYouAskGoesToTheMachineAndItsAnswerComesBack() = runTest {
         mimir.fromDesktop(SessionKinds.SESSIONS, laptopSessions())
         syncOk()

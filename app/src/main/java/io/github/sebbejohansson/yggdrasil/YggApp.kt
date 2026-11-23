@@ -304,7 +304,28 @@ class AppContainer(private val app: Application) {
     }
 
     /** Keeps the phone's alerts and the desktop's in step through Mímir. */
-    val saga = SagaService(db.saga, gjallar, mimir = { sagaSettings.client() }, device = { sagaSettings.device })
+    /** The phone's own Claude sessions (in herdr, through the bridge), as Sága tells other devices of them. */
+    private val phoneSessions = object : io.github.sebbejohansson.yggdrasil.saga.PhoneSessionsHost {
+        override suspend fun now(): io.github.sebbejohansson.yggdrasil.saga.PhoneSessionsNow? {
+            if (!bridge.hasKey) return null
+            val health = runCatching { bridge.health() }.getOrNull()
+                ?: return io.github.sebbejohansson.yggdrasil.saga.PhoneSessionsNow(emptyList(), false, mapOf("claude" to "the bridge isn't running"))
+            val list = runCatching { bridge.localSessions() }.getOrElse {
+                return io.github.sebbejohansson.yggdrasil.saga.PhoneSessionsNow(emptyList(), health.herdr, mapOf("claude" to (it.message ?: "the bridge didn't answer")))
+            }
+            return io.github.sebbejohansson.yggdrasil.saga.PhoneSessionsNow(list.map { it.remote() }, health.herdr)
+        }
+        override suspend fun prompt(session: String, text: String) = runCatching { bridge.promptLocal(session, text); Unit }
+        override suspend fun choose(session: String, question: String, key: String, label: String) = runCatching {
+            bridge.chooseLocal(session, io.github.sebbejohansson.yggdrasil.llm.claude.LocalDialog(question, "", emptyList()),
+                io.github.sebbejohansson.yggdrasil.llm.claude.LocalChoice(key, label, false)); Unit
+        }
+        override suspend fun resume(session: String) = runCatching { bridge.resumeLocal(session); Unit }
+    }
+    val saga = SagaService(
+        db.saga, gjallar, mimir = { sagaSettings.client() }, device = { sagaSettings.device },
+        phone = phoneSessions, driveFrom = { sagaSettings.driveFromList() },
+    )
 
     @OptIn(FlowPreview::class)
     fun start() {
@@ -342,6 +363,14 @@ class AppContainer(private val app: Application) {
             loops.run(Parts.NORN_PROMISES.first, Parts.NORN_PROMISES.second) { promises.remind() }
             saga.prune()
             watchRounds()
+        }
+        // While the bridge is set up, Sága syncs every 30 s: the phone's sessions go out as they
+        // change, and what another device asks of them comes in (as the desktop's 30 s rounds).
+        appScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(30_000)
+                if (sagaSettings.client() != null && bridge.hasKey) runCatching { saga.sync() }
+            }
         }
         // Sync a moment after any alert changes here (and once now, on start).
         appScope.launch {

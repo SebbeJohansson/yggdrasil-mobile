@@ -46,6 +46,10 @@ class SagaService(
     private val device: () -> String,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** The phone's own Claude sessions, to publish and to answer for; null: none. */
+    private val phone: PhoneSessionsHost? = null,
+    /** The devices that may drive them (Settings: Take requests from). */
+    private val driveFrom: () -> List<String> = { emptyList() },
 ) {
     /** Bumped when the mirrors change, so the Alerts tab reloads. */
     val changes = Changes()
@@ -90,6 +94,7 @@ class SagaService(
         // Read first, so the mirrors are current; a failure still lets ours go out.
         val readError = runCatching { pull(client) }.exceptionOrNull()
         publish()
+        runCatching { publishSessions() }
         push(client)
         readError?.let { throw it }
     }
@@ -135,6 +140,12 @@ class SagaService(
                     store.putDeviceSessions(d, e.body)
                     sessionsChanged = true
                 }
+                SessionKinds.PROMPT, SessionKinds.CHOOSE, SessionKinds.RESUME,
+                SessionKinds.CLOUD_START, SessionKinds.CLOUD_MESSAGE, SessionKinds.CLOUD_TELEPORT -> {
+                    if (e.device == me) continue
+                    val ask = SessionAsk.parse(e.kind, e.body) ?: continue
+                    if (ask.origin == me) carryOut(e, ask)
+                }
                 SessionKinds.DONE -> {
                     val done = RequestDone.parse(e.body) ?: continue
                     if (done.to != me) continue
@@ -165,6 +176,52 @@ class SagaService(
                 if (a.state != AlertState.RESOLVED && until.isAfter(clock.instant())) gjallar.snooze(a.id, until)
             }
         }
+    }
+
+    /**
+     * Does what another device asked of one of the phone's sessions, as the
+     * desktop's Sága: only for the devices allowed to drive it, only within
+     * 30 minutes of the asking, and answered either way.
+     */
+    private suspend fun carryOut(e: MimirEvent, ask: SessionAsk) {
+        val host = phone
+        val now = clock.instant()
+        val result: Result<Unit> = when {
+            host == null -> Result.failure(IllegalStateException("this phone runs no Claude sessions"))
+            e.device !in driveFrom() -> Result.failure(IllegalStateException("${device()} doesn't take requests from ${e.device} (its Sága settings)"))
+            e.at > 0 && Duration.between(Instant.ofEpochMilli(e.at), now) > REQUEST_TTL -> Result.failure(IllegalStateException("asked over 30 minutes ago"))
+            else -> when (ask.kind) {
+                SessionKinds.PROMPT -> if (ask.session != null && !ask.text.isNullOrBlank()) host.prompt(ask.session, ask.text)
+                    else Result.failure(IllegalArgumentException("a session and text are needed"))
+                SessionKinds.CHOOSE -> if (ask.session != null && ask.question != null && ask.key != null && ask.label != null)
+                    host.choose(ask.session, ask.question, ask.key, ask.label)
+                    else Result.failure(IllegalArgumentException("a session, question, key and label are needed"))
+                SessionKinds.RESUME -> if (ask.session != null) host.resume(ask.session)
+                    else Result.failure(IllegalArgumentException("a session is needed"))
+                else -> Result.failure(IllegalStateException("the phone starts no cloud sessions for others"))
+            }
+        }
+        val done = RequestDone(ask.id, e.device, result.isSuccess, result.exceptionOrNull()?.let { it.message ?: it.javaClass.simpleName }, null)
+        store.enqueue(now, SessionKinds.DONE, done.toJson().toString())
+        // What changed is published with this round.
+        lastSessionsAt = 0
+    }
+
+    private var lastSessionsAt = 0L
+
+    /** The phone's sessions, when they changed or every 5 minutes (as the desktop's sessionsBeat). */
+    private suspend fun publishSessions() {
+        val host = phone ?: return
+        val now = host.now() ?: return
+        val at = clock.instant().toEpochMilli()
+        val body = DeviceSessions.body(now, driveFrom(), at)
+        val fingerprint = DeviceSessions.fingerprint(body)
+        if (store.published(SessionKinds.SESSIONS, "phone") == fingerprint && at - lastSessionsAt < SESSIONS_BEAT.toMillis()) return
+        store.transaction {
+            store.enqueue(clock.instant(), SessionKinds.SESSIONS, body.toString())
+            store.setPublished(SessionKinds.SESSIONS, "phone", fingerprint)
+        }
+        lastSessionsAt = at
     }
 
     /** Queues each of the phone's alerts whose state changed since it was last sent. */
@@ -240,6 +297,11 @@ class SagaService(
             }
         }
         sessionChanges.bump()
+    }
+
+    companion object {
+        val REQUEST_TTL: Duration = Duration.ofMinutes(30)
+        val SESSIONS_BEAT: Duration = Duration.ofMinutes(5)
     }
 
     /** Forgets resolved mirrors after [keep]. */
