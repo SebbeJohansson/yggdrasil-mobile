@@ -257,7 +257,7 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
     var branch by remember { mutableStateOf("") }
     if (repo.isEmpty() && b.repos.isNotEmpty()) repo = b.repos.first()
     // The most recently used first (the bridge orders them); a handful, then the field.
-    val shown = (listOf(repo).filter { it in b.repos } + b.repos).distinct().take(8)
+    val shown = repoChips(b.repos, repo)
     val ownerRepo = Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
     HudLabel("claude code in herdr · this phone's checkout")
     Column(Modifier.fillMaxWidth().hudPanel().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -277,7 +277,7 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
         HudTextField(repo, { repo = it.trim() }, placeholder = "owner/repo", maxLines = 1, modifier = Modifier.fillMaxWidth())
         // Several repos in one session, as a desktop goal spans them: each its own worktree, one branch name.
         HudLabel(if (also.isEmpty()) "Also in (optional)" else "Also in: Claude may work in these too", modifier = Modifier.padding(top = 2.dp))
-        val choices = (b.repos.take(8) + also).distinct().filter { it != repo }
+        val choices = (also + repoChips(b.repos, adding)).distinct().filter { it != repo }
         if (choices.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 choices.forEach { r ->
