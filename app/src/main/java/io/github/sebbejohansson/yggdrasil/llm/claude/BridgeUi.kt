@@ -3,6 +3,7 @@ package io.github.sebbejohansson.yggdrasil.llm.claude
 import android.annotation.SuppressLint
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import io.github.sebbejohansson.yggdrasil.ui.RepoPicker
 import io.github.sebbejohansson.yggdrasil.ui.HudToggle
 import io.github.sebbejohansson.yggdrasil.linux.OwnLinux
 import io.github.sebbejohansson.yggdrasil.linux.LinuxState
@@ -203,7 +204,8 @@ fun PhoneCloudPanel(vm: BridgeViewModel, onSetUp: () -> Unit) {
     val now = Instant.now()
     var repo by remember { mutableStateOf("") }
     var task by remember { mutableStateOf("") }
-    if (repo.isEmpty() && s.repos.isNotEmpty()) repo = s.repos.first()
+    var seeded by remember { mutableStateOf(false) }
+    if (!seeded && s.repos.isNotEmpty()) { repo = s.repos.first(); seeded = true }
     Column(Modifier.fillMaxWidth().hudPanel(warn = s.error != null).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         when {
             !s.checked -> Text("Looking for the bridge…", style = HudText.meta)
@@ -231,12 +233,7 @@ fun PhoneCloudPanel(vm: BridgeViewModel, onSetUp: () -> Unit) {
                         }
                     }
                 }
-                if (s.repos.isNotEmpty()) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        repoChips(s.repos, repo).forEach { r -> HudButton(r.substringAfter('/'), { repo = r }, kind = if (r == repo) HudButtonKind.PRIMARY else HudButtonKind.SMALL) }
-                    }
-                }
-                HudTextField(repo, { repo = it.trim() }, placeholder = "owner/repo", maxLines = 1, modifier = Modifier.fillMaxWidth())
+                RepoPicker(s.repos, listOfNotNull(repo.ifEmpty { null }), { repo = it.firstOrNull().orEmpty() }, modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     HudTextField(task, { task = it }, placeholder = "What the cloud session should do", maxLines = 4, modifier = Modifier.weight(1f))
                     HudButton(

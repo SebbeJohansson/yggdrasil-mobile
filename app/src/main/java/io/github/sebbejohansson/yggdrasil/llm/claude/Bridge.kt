@@ -366,17 +366,6 @@ class BridgeClient(
     }
 }
 
-/**
- * Every known repo as a chip, filtered by what's typed: all of them while
- * nothing is (or a whole known name is), else those whose name holds the
- * text. With a GitHub token that's every repo it can read, so many.
- */
-internal fun repoChips(all: List<String>, typed: String): List<String> {
-    val q = typed.trim()
-    if (q.isEmpty() || all.any { it.equals(q, ignoreCase = true) }) return all
-    return all.filter { it.contains(q, ignoreCase = true) }
-}
-
 /** Where the bridge runs, and how it's installed there. */
 enum class BridgePlace(val label: String, val installer: String?, val app: String?) {
     /** Ygg's own Linux: Ubuntu under proot inside Ygg, always on with Ygg's service. The default. */

@@ -3,6 +3,7 @@ package io.github.sebbejohansson.yggdrasil.llm.claude
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.size
+import io.github.sebbejohansson.yggdrasil.ui.RepoPicker
 import io.github.sebbejohansson.yggdrasil.ui.Markdown
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
@@ -250,15 +251,12 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
     val usable = b.accounts.filter { it.signedIn }
     var account by remember { mutableStateOf("") }
     if (usable.none { it.id == account }) account = usable.firstOrNull()?.id ?: "default"
-    var repo by remember { mutableStateOf("") }
+    var picked by remember { mutableStateOf(listOf<String>()) }
+    var seeded by remember { mutableStateOf(false) }
     var task by remember { mutableStateOf("") }
-    var also by remember { mutableStateOf(listOf<String>()) }
-    var adding by remember { mutableStateOf("") }
     var branch by remember { mutableStateOf("") }
-    if (repo.isEmpty() && b.repos.isNotEmpty()) repo = b.repos.first()
-    // The most recently used first (the bridge orders them); a handful, then the field.
-    val shown = repoChips(b.repos, repo)
-    val ownerRepo = Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+    // The most recently used to start with (the bridge orders them), once: clearing it stays cleared.
+    if (!seeded && b.repos.isNotEmpty()) { picked = listOf(b.repos.first()); seeded = true }
     HudLabel("claude code in herdr · this phone's checkout")
     Column(Modifier.fillMaxWidth().hudPanel().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         HudLabel("New session")
@@ -269,36 +267,16 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
                 }
             }
         }
-        if (b.repos.isNotEmpty()) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                shown.forEach { r -> HudButton(r.substringAfter('/'), { repo = r; also = also - r }, kind = if (r == repo) HudButtonKind.PRIMARY else HudButtonKind.SMALL) }
-            }
-        }
-        HudTextField(repo, { repo = it.trim() }, placeholder = "owner/repo", maxLines = 1, modifier = Modifier.fillMaxWidth())
         // Several repos in one session, as a desktop goal spans them: each its own worktree, one branch name.
-        HudLabel(if (also.isEmpty()) "Also in (optional)" else "Also in: Claude may work in these too", modifier = Modifier.padding(top = 2.dp))
-        val choices = (also + repoChips(b.repos, adding)).distinct().filter { it != repo }
-        if (choices.isNotEmpty()) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                choices.forEach { r ->
-                    val on = r in also
-                    HudButton((if (on) "✓ " else "+ ") + r.substringAfter('/'), { also = if (on) also - r else also + r },
-                        kind = if (on) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
-                }
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            HudTextField(adding, { adding = it.trim() }, placeholder = "another owner/repo", maxLines = 1, modifier = Modifier.weight(1f))
-            HudButton("Add", { also = (also + adding).distinct(); adding = "" }, kind = HudButtonKind.SMALL,
-                enabled = adding.matches(ownerRepo) && adding != repo)
-        }
+        RepoPicker(b.repos, picked, { picked = it }, max = 6, placeholder = "Pick repos", firstNote = "starts here")
+        if (picked.size > 1) Text("Claude starts in the first; tap another to start there instead.", style = HudText.meta)
         HudTextField(branch, { branch = it.trim() }, placeholder = "From branch (default: the repo's default)", maxLines = 1, modifier = Modifier.fillMaxWidth())
         HudTextField(task, { task = it }, placeholder = "What Claude should do (or leave empty)", maxLines = 4, modifier = Modifier.fillMaxWidth())
         HudButton(
-            if (s.starting != null) "Starting…" else if (also.isEmpty()) "Start" else "Start in ${also.size + 1} repos",
-            { vm.start(repo, task.trim(), account, also.filter { it != repo }, branch); task = ""; also = emptyList(); branch = "" },
+            if (s.starting != null) "Starting…" else if (picked.size < 2) "Start" else "Start in ${picked.size} repos",
+            { vm.start(picked.first(), task.trim(), account, picked.drop(1), branch); task = ""; branch = "" },
             kind = HudButtonKind.PRIMARY,
-            enabled = s.starting == null && repo.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")),
+            enabled = s.starting == null && picked.isNotEmpty(),
         )
         if (s.starting != null) Text("Getting ${s.starting} onto the phone (the first time it's cloned) and Claude started.", style = HudText.meta)
     }

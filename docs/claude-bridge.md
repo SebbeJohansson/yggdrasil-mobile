@@ -165,9 +165,10 @@ Accounts: each Claude account has its own claude config folder
 work account each keep their own sign-in. `default` is claude's own
 (`~/.claude`). Results stay in Claude: Ygg opens a session there.
 
-The New session forms show every repo `/v1/repos` gives as a chip, most recently used
-first; typing in the repo field (or *Also in*'s) narrows them to those
-whose name holds the text.
+The New session forms pick repos as desktop Yggdrasil's ProjectPicker
+does: a dropdown of every repo `/v1/repos` gives, picked ones first, with a
+search box (a whole `owner/repo` nobody knows yet is offered too). A local
+session takes up to six; the first is where Claude starts.
 
 `claude --cloud` clones the GitHub remote at the checkout's branch, so the
 bridge needs only a shallow checkout, and the Claude GitHub App must be on
