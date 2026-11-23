@@ -345,6 +345,70 @@ class BridgeTest(unittest.TestCase):
         finally:
             b.save_local([])
 
+    def _second_repo(self):
+        """me/api on "GitHub", beside me/app."""
+        origin = Path(self.tmp) / "gh" / "me" / "api.git"
+        if origin.exists():
+            return
+        work = Path(self.tmp) / "api-work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(work)], check=True)
+        (work / "server.py").write_text("print('api')\n")
+        self._git("add", ".", cwd=work)
+        self._git("commit", "-qm", "api", cwd=work)
+        subprocess.run(["git", "clone", "-q", "--bare", str(work), str(origin)], check=True)
+
+    def test_one_session_over_several_repos(self):
+        b = self.b
+        self._second_repo()
+        started = {}
+
+        def fake_open(aid, cwd, name, args):
+            started.update(cwd=str(cwd), args=args)
+            return "w7:p1", "w7"
+        saved = (b.open_claude, b.need_herdr, b.agent_info)
+        b.open_claude, b.need_herdr, b.agent_info = fake_open, (lambda aid: None), (lambda s: {})
+        try:
+            v = b.start_local("me/app", "", also=["me/api", "me/app", " "])
+            self.assertEqual(["me/app", "me/api"], v["repos"])
+            s = b.local(v["name"])
+            app, api = (Path(w["path"]) for w in s["worktrees"])
+            # One branch name in both, each its own worktree; Claude starts in the first and may work in the other.
+            self.assertEqual({f"ygg/{v['name']}"}, {w["branch"] for w in s["worktrees"]})
+            self.assertEqual(str(app), started["cwd"])
+            self.assertEqual(["--add-dir", str(api)], started["args"][:2])
+            note = started["args"][started["args"].index("--append-system-prompt") + 1]
+            self.assertIn(f"me/api: {api}", note)
+            self.assertIn("commit in each one", note)
+            self.assertIn("api:", v["refreshed"])
+            # The repo view, a diff and a push, per repo.
+            (api / "server.py").write_text("print('api v2')\n")
+            r = self.call("GET", f"/v1/local/{v['name']}/repo?repo=me/api")[1]
+            self.assertEqual(("me/api", ["server.py"]), (r["repo"], [f["path"] for f in r["files"]]))
+            self.assertEqual([], self.call("GET", f"/v1/local/{v['name']}/repo")[1]["files"])
+            self.assertIn("api v2", self.call("GET", f"/v1/local/{v['name']}/diff?path=server.py&repo=me/api")[1]["diff"])
+            self.assertEqual(404, self.call("GET", f"/v1/local/{v['name']}/repo?repo=me/other")[0])
+            # Not removed while either repo would lose work.
+            self._git("commit", "-qam", "v2", cwd=api)
+            status, out = self.call("POST", f"/v1/local/{v['name']}/remove")
+            self.assertEqual(409, status)
+            self.assertIn("1 commit not pushed in me/api", out["error"])
+            self.assertEqual(200, self.call("POST", f"/v1/local/{v['name']}/git", {"action": "push", "repo": "me/api"})[0])
+            self.assertEqual(200, self.call("POST", f"/v1/local/{v['name']}/remove")[0])
+            self.assertFalse(app.exists() or api.exists())
+            # Claude never starting leaves no worktree behind.
+            def broken(*a):
+                raise b.Refused(503, "herdr didn't start")
+            b.open_claude = broken
+            folders = lambda: {p for p in (Path(self.tmp) / "home" / "worktrees").glob("me/*/*")}
+            before = folders()
+            with self.assertRaises(b.Refused):
+                b.start_local("me/app", "", also=["me/api"])
+            self.assertEqual(before, folders())
+            self.assertEqual(400, self.call("POST", "/v1/local", {"repo": "me/app", "repos": ["not a repo"]})[0])
+        finally:
+            b.open_claude, b.need_herdr, b.agent_info = saved
+            b.save_local([])
+
     def test_local_repo_changes_diff_and_push(self):
         """A session from before worktrees, in the shared checkout: still works."""
         b = self.b

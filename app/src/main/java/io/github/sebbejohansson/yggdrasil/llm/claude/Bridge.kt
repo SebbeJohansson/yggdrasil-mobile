@@ -72,6 +72,8 @@ data class LocalSession(
     val resumable: Boolean = false,
     /** How the checkout was brought up to date when the session started: "pulled 3 new commits from origin/main", or why not. */
     val refreshed: String = "",
+    /** Every repo the session spans, its first (where Claude starts) first. */
+    val repos: List<String> = emptyList(),
     /** The chat, when asked for one session; and its screen while there's no chat to show. */
     val messages: List<ChatLine> = emptyList(),
     val screen: String = "",
@@ -197,8 +199,9 @@ class BridgeClient(
     }
 
     /** Claude Code on the phone for [repo], as [account], with [task] typed in. Cloning first time takes a while. */
-    suspend fun startLocal(repo: String, task: String, account: String = "default"): LocalSession = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("repo", repo).put("task", task).put("account", account)
+    suspend fun startLocal(repo: String, task: String, account: String = "default", also: List<String> = emptyList()): LocalSession = withContext(Dispatchers.IO) {
+        // [also]: one session over several repos, each its own worktree on the same branch; Claude starts in [repo]'s.
+        val body = JSONObject().put("repo", repo).put("task", task).put("account", account).put("repos", JSONArray(also))
         local(call("POST", "/v1/local", body, timeoutMs = 300_000)).also { changes.bump() }
     }
 
@@ -219,8 +222,8 @@ class BridgeClient(
         call("POST", "/v1/local/$name/keys", JSONObject().put("keys", JSONArray(keys.toList())))
     }
 
-    suspend fun repoLocal(name: String): RepoState = withContext(Dispatchers.IO) {
-        val o = call("GET", "/v1/local/$name/repo")
+    suspend fun repoLocal(name: String, repo: String? = null): RepoState = withContext(Dispatchers.IO) {
+        val o = call("GET", "/v1/local/$name/repo" + (repo?.let { "?repo=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: ""))
         val files = o.optJSONArray("files") ?: JSONArray()
         val log = o.optJSONArray("log") ?: JSONArray()
         RepoState(
@@ -234,13 +237,13 @@ class BridgeClient(
     }
 
     /** One file's diff against HEAD. */
-    suspend fun diffLocal(name: String, path: String): String = withContext(Dispatchers.IO) {
-        call("GET", "/v1/local/$name/diff?path=" + java.net.URLEncoder.encode(path, "UTF-8")).optString("diff")
+    suspend fun diffLocal(name: String, path: String, repo: String? = null): String = withContext(Dispatchers.IO) {
+        call("GET", "/v1/local/$name/diff?path=" + java.net.URLEncoder.encode(path, "UTF-8") + (repo?.let { "&repo=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: "")).optString("diff")
     }
 
     /** pull (fast-forward only) or push the checkout's branch; git's last words. */
-    suspend fun gitLocal(name: String, action: String): String = withContext(Dispatchers.IO) {
-        call("POST", "/v1/local/$name/git", JSONObject().put("action", action), timeoutMs = 120_000).optString("output")
+    suspend fun gitLocal(name: String, action: String, repo: String? = null): String = withContext(Dispatchers.IO) {
+        call("POST", "/v1/local/$name/git", JSONObject().put("action", action).put("repo", repo ?: ""), timeoutMs = 120_000).optString("output")
     }
 
     /** An ended session again, with its conversation: claude --resume in a new herdr workspace. */
@@ -329,6 +332,7 @@ class BridgeClient(
             lastActivity = o.optLong("lastActivity").takeIf { it > 0 }?.let(Instant::ofEpochMilli),
             resumable = o.optBoolean("resumable"),
             refreshed = o.optString("refreshed"),
+            repos = o.optJSONArray("repos")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotEmpty() } }.orEmpty(),
             messages = (0 until msgs.length()).map { msgs.getJSONObject(it).let { m -> ChatLine(m.optString("role"), m.optString("text")) } },
             screen = o.optString("screen"),
         )

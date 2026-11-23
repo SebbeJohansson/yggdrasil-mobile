@@ -73,6 +73,8 @@ data class LocalUiState(
     val diff: String = "",
     /** What a pull or push said. */
     val gitNote: String? = null,
+    /** Which of the open session's repos the changes show; null: its first. */
+    val repoOf: String? = null,
 )
 
 /** Claude Code on this phone, in herdr: the sessions, and the one open as a chat. */
@@ -93,20 +95,28 @@ class LocalViewModel(private val bridge: BridgeClient) : ViewModel() {
     }
 
     fun open(s: LocalSession?) {
-        _state.update { it.copy(chat = s, error = null, repo = null, diffPath = null, diff = "", gitNote = null) }
+        _state.update { it.copy(chat = s, error = null, repo = null, diffPath = null, diff = "", gitNote = null, repoOf = null) }
         if (s != null) { refreshChat(); refreshRepo() }
     }
 
     fun refreshRepo() = viewModelScope.launch {
         val name = _state.value.chat?.name ?: return@launch
-        runCatching { bridge.repoLocal(name) }.onSuccess { r -> _state.update { if (it.chat?.name == name) it.copy(repo = r) else it } }
+        val which = _state.value.repoOf
+        runCatching { bridge.repoLocal(name, which) }
+            .onSuccess { r -> _state.update { if (it.chat?.name == name && it.repoOf == which) it.copy(repo = r) else it } }
+    }
+
+    /** Shows another of the session's repos in its changes. */
+    fun pickRepo(repo: String) {
+        _state.update { it.copy(repoOf = repo, repo = null, diffPath = null, diff = "", gitNote = null) }
+        refreshRepo()
     }
 
     fun openDiff(path: String?) = viewModelScope.launch {
         val name = _state.value.chat?.name ?: return@launch
         _state.update { it.copy(diffPath = path, diff = "") }
         if (path == null) return@launch
-        runCatching { bridge.diffLocal(name, path) }
+        runCatching { bridge.diffLocal(name, path, _state.value.repoOf) }
             .onSuccess { d -> _state.update { if (it.diffPath == path) it.copy(diff = d) else it } }
             .onFailure { e -> _state.update { it.copy(error = e.message) } }
     }
@@ -115,16 +125,16 @@ class LocalViewModel(private val bridge: BridgeClient) : ViewModel() {
     fun git(action: String) = viewModelScope.launch {
         val name = _state.value.chat?.name ?: return@launch
         _state.update { it.copy(sending = true, gitNote = null, error = null) }
-        runCatching { bridge.gitLocal(name, action) }
+        runCatching { bridge.gitLocal(name, action, _state.value.repoOf) }
             .onSuccess { out -> _state.update { it.copy(gitNote = "${action.replaceFirstChar { c -> c.uppercase() }}: $out") } }
             .onFailure { e -> _state.update { it.copy(error = e.message) } }
         _state.update { it.copy(sending = false) }
         refreshRepo()
     }
 
-    fun start(repo: String, task: String, account: String) = viewModelScope.launch {
-        _state.update { it.copy(starting = repo, error = null) }
-        runCatching { bridge.startLocal(repo, task, account) }
+    fun start(repo: String, task: String, account: String, also: List<String> = emptyList()) = viewModelScope.launch {
+        _state.update { it.copy(starting = (listOf(repo) + also).joinToString(", "), error = null) }
+        runCatching { bridge.startLocal(repo, task, account, also) }
             .onSuccess { s ->
                 // How the checkout was brought up to date, once, under the session.
                 _state.update {
@@ -242,7 +252,10 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
     if (usable.none { it.id == account }) account = usable.firstOrNull()?.id ?: "default"
     var repo by remember { mutableStateOf("") }
     var task by remember { mutableStateOf("") }
+    var also by remember { mutableStateOf(listOf<String>()) }
+    var adding by remember { mutableStateOf("") }
     if (repo.isEmpty() && b.repos.isNotEmpty()) repo = b.repos.first()
+    val ownerRepo = Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
     HudLabel("claude code in herdr · this phone's checkout")
     Column(Modifier.fillMaxWidth().hudPanel().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         HudLabel("New session")
@@ -259,10 +272,27 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
             }
         }
         HudTextField(repo, { repo = it.trim() }, placeholder = "owner/repo", maxLines = 1, modifier = Modifier.fillMaxWidth())
+        // Several repos in one session, as a desktop goal spans them: each its own worktree, one branch name.
+        HudLabel(if (also.isEmpty()) "Also in (optional)" else "Also in: Claude may work in these too", modifier = Modifier.padding(top = 2.dp))
+        val choices = (b.repos + also).distinct().filter { it != repo }
+        if (choices.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                choices.forEach { r ->
+                    val on = r in also
+                    HudButton((if (on) "✓ " else "+ ") + r.substringAfter('/'), { also = if (on) also - r else also + r },
+                        kind = if (on) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+                }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudTextField(adding, { adding = it.trim() }, placeholder = "another owner/repo", maxLines = 1, modifier = Modifier.weight(1f))
+            HudButton("Add", { also = (also + adding).distinct(); adding = "" }, kind = HudButtonKind.SMALL,
+                enabled = adding.matches(ownerRepo) && adding != repo)
+        }
         HudTextField(task, { task = it }, placeholder = "What Claude should do (or leave empty)", maxLines = 4, modifier = Modifier.fillMaxWidth())
         HudButton(
-            if (s.starting != null) "Starting…" else "Start",
-            { vm.start(repo, task.trim(), account); task = "" },
+            if (s.starting != null) "Starting…" else if (also.isEmpty()) "Start" else "Start in ${also.size + 1} repos",
+            { vm.start(repo, task.trim(), account, also.filter { it != repo }); task = ""; also = emptyList() },
             kind = HudButtonKind.PRIMARY,
             enabled = s.starting == null && repo.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")),
         )
@@ -305,7 +335,7 @@ private fun PhoneSessionItem(c: LocalSession, s: LocalUiState, vm: LocalViewMode
             Box(Modifier.size(7.dp).background(color, CircleShape))
             Text(c.title.ifEmpty { c.task.ifEmpty { c.repo.substringAfter('/') } }, style = HudText.small.copy(color = Hud.text),
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text(listOfNotNull(c.repo.substringAfter('/'), c.lastActivity?.let { agoShort(it, now) }).joinToString(" · "), style = HudText.meta)
+            Text(listOfNotNull(c.repos.ifEmpty { listOf(c.repo) }.joinToString(" + ") { it.substringAfter('/') }, c.lastActivity?.let { agoShort(it, now) }).joinToString(" · "), style = HudText.meta)
         }
         Text(phaseText(c), style = HudText.meta.copy(color = color))
         if (c.phase != "busy" && c.lastText.isNotBlank()) {
@@ -455,10 +485,19 @@ private fun ToolRun(lines: List<String>) {
 }
 
 /** The checkout: what changed (a file opens as its diff), the last commits, and pull and push. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LocalChanges(c: LocalSession, s: LocalUiState, vm: LocalViewModel, modifier: Modifier) {
     val r = s.repo
     Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (c.repos.size > 1) {
+            val shown = s.repoOf ?: c.repos.first()
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                c.repos.forEach { repo ->
+                    HudButton(repo.substringAfter('/'), { vm.pickRepo(repo) }, kind = if (repo == shown) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+                }
+            }
+        }
         if (r == null) { Text("Looking…", style = HudText.meta); return@Column }
         Text(
             "${r.branch.ifEmpty { "detached" }} → ${r.upstream.ifEmpty { "no upstream yet" }}" +

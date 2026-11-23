@@ -722,14 +722,16 @@ def remove_local(name: str) -> dict:
     s = local(name)
     if agent_info(s):
         raise Refused(409, "it's still running: stop it first")
-    wt = s.get("worktree")
-    if wt:
+    wts = s.get("worktrees") or ([dict(s["worktree"], repo=s["repo"])] if s.get("worktree") else [])
+    for wt in wts:
         path = Path(wt["path"])
-        root = workdir_path(s["repo"])
+        why = unpushed(path) if path.is_dir() else ""
+        if why:
+            where = f" in {wt['repo']}" if len(wts) > 1 else ""
+            raise Refused(409, f"{why}{where}: push or commit first, or open it in Claude")
+    for wt in wts:
+        path, root = Path(wt["path"]), workdir_path(wt["repo"])
         if path.is_dir():
-            why = unpushed(path)
-            if why:
-                raise Refused(409, f"{why}: push or commit first, or open it in Claude")
             git(["worktree", "remove", "--force", str(path)], cwd=root)
         git(["worktree", "prune"], cwd=root)
         try:
@@ -792,31 +794,79 @@ def open_claude(aid: str, cwd: Path, name: str, args: list):
             raise
 
 
-def start_local(repo: str, task: str, aid: str = "default", branch: str = "") -> dict:
+MAX_REPOS = 6
+
+
+def parts_args(s: dict) -> list:
+    """What claude gets for a session over several repos: the other repos'
+    worktrees it may work in (--add-dir), and a note on where each is."""
+    others = [w for w in s.get("worktrees", []) if w["path"] != s["cwd"]]
+    if not others:
+        return []
+    args = []
+    for w in others:
+        args += ["--add-dir", w["path"]]
+    lines = [f"- {s['repo']}: {s['cwd']} (where you start)"] + [f"- {w['repo']}: {w['path']}" for w in others]
+    note = ("This session spans several repositories, each its own git worktree on branch "
+            f"{s['worktree']['branch']}:\n" + "\n".join(lines) +
+            "\nWork in whichever the task needs. Each is its own repository: commit in each one "
+            "separately, with git -C <its folder>, and never copy a repository's .git between them.")
+    return args + ["--append-system-prompt", note]
+
+
+def start_local(repo: str, task: str, aid: str = "default", branch: str = "", also: list = ()) -> dict:
     """Claude Code in herdr, in the phone's checkout of the repo, as the account;
-    then the task typed in, as you would."""
+    then the task typed in, as you would. With [also], one session over several
+    repos, as a desktop goal spans them: each gets its own worktree on the same
+    branch ygg/<name> from its newest commit; Claude starts in [repo]'s and may
+    work in the others (--add-dir)."""
     need_claude()
     aid = account(aid)["id"]
+    repos = [repo] + [r for r in dict.fromkeys(str(x).strip() for x in also) if r and r != repo]
+    if len(repos) > MAX_REPOS:
+        raise Refused(400, f"at most {MAX_REPOS} repos in one session")
+    for r in repos:
+        if not REPO.match(r):
+            raise Refused(400, f"{r}: a repo is owner/name, like SebbeJohansson/yggdrasil")
     name = local_name(repo)
-    # Its own worktree, from the newest commit on GitHub: sessions can't touch each other's work.
-    wt = worktree(repo, name, branch)
-    cwd = Path(wt["path"])
-    prepare_claude(cwd, aid)
-    need_herdr(aid)
+    # Each its own worktree, from the newest commit on GitHub: sessions can't touch each other's work.
+    made = []
     try:
-        pane, workspace = open_claude(aid, cwd, name, [])
+        for r in repos:
+            made.append(dict(worktree(r, name, branch if r == repo else ""), repo=r))
+        cwd = Path(made[0]["path"])
+        session = {"name": name, "herdrName": name, "account": aid, "repo": repo, "cwd": str(cwd), "task": task.strip(),
+                   "at": int(time.time() * 1000), "worktree": made[0], "worktrees": made}
+        for w in made:
+            prepare_claude(Path(w["path"]), aid)
+        need_herdr(aid)
+        session["pane"], session["workspace"] = open_claude(aid, cwd, name, parts_args(session))
     except Exception:
-        # Claude never started there: nothing to keep.
-        git(["worktree", "remove", "--force", str(cwd)], cwd=workdir_path(repo))
-        git(["branch", "-D", wt["branch"]], cwd=workdir_path(repo))
+        # Claude never started: nothing to keep.
+        for w in made:
+            root = workdir_path(w["repo"])
+            for args in (["worktree", "remove", "--force", w["path"]], ["branch", "-D", w["branch"]]):
+                try:
+                    git(args, cwd=root)
+                except Refused:
+                    pass
         raise
-    session = {"name": name, "herdrName": name, "account": aid, "repo": repo, "cwd": str(cwd), "workspace": workspace, "pane": pane,
-               "task": task.strip(), "at": int(time.time() * 1000), "worktree": wt,
-               "refreshed": f"own worktree on {wt['branch']}, from origin/{wt['base']} at {wt['commit']} (the newest)"}
+    session["refreshed"] = "; ".join(
+        f"{w['repo'].split('/')[-1]}: own worktree on {w['branch']}, from origin/{w['base']} at {w['commit']} (the newest)" for w in made)
     save_local([session] + local_sessions())
     if task.strip():
         prompt_local(name, task)
     return local_view(session)
+
+
+def session_cwd(s: dict, repo: str = "") -> Path:
+    """The folder of one of the session's repos; its first when none is named."""
+    if not repo or repo == s["repo"]:
+        return Path(s["cwd"])
+    for w in s.get("worktrees", []):
+        if w["repo"] == repo:
+            return Path(w["path"])
+    raise Refused(404, f"{repo} isn't one of this session's repos")
 
 
 SESSION_ID = re.compile(r"^\w[\w-]{0,127}$")
@@ -834,10 +884,11 @@ def resume_local(name: str) -> dict:
     if not SESSION_ID.match(sid):
         raise Refused(409, "it ended before Claude kept a conversation: start a new session")
     need_claude()
-    prepare_claude(Path(s["cwd"]), s["account"])
+    for w in s.get("worktrees") or [{"path": s["cwd"]}]:
+        prepare_claude(Path(w["path"]), s["account"])
     need_herdr(s["account"])
     herdr_name = re.sub(r"-[0-9a-f]{4}$", "", s["name"])[:26] + "-" + secrets.token_hex(2)
-    s["pane"], s["workspace"] = open_claude(s["account"], Path(s["cwd"]), herdr_name, ["--resume", sid])
+    s["pane"], s["workspace"] = open_claude(s["account"], Path(s["cwd"]), herdr_name, ["--resume", sid] + parts_args(s))
     s["herdrName"] = herdr_name
     s["resumedAt"] = int(time.time() * 1000)
     save_local([s if x["name"] == name else x for x in local_sessions()])
@@ -1075,6 +1126,7 @@ def local_view(s: dict, chat: bool = False) -> dict:
     state = transcript_state(path)
     view = {k: s.get(k) for k in ("name", "account", "repo", "task", "at", "cwd")}
     view["refreshed"] = s.get("refreshed", "")
+    view["repos"] = [w["repo"] for w in s.get("worktrees", [])] or [s.get("repo")]
     view.update(status=status, dialog=None, tool="", lastText="", title=transcript_title(path),
                 resumable=bool(SESSION_ID.match(s.get("sessionId", ""))))
     try:
@@ -1128,13 +1180,15 @@ def keys_local(name: str, keys: list) -> dict:
     return {"ok": True}
 
 
-def repo_local(name: str) -> dict:
+def repo_local(name: str, repo: str = "") -> dict:
     """Where the session's checkout stands: branch, ahead/behind its upstream,
-    the changed files with lines added and removed, and the last commits."""
-    cwd = Path(local(name)["cwd"])
+    the changed files with lines added and removed, and the last commits.
+    [repo] picks one of a session's several repos."""
+    s = local(name)
+    cwd = session_cwd(s, repo)
     branch = git(["branch", "--show-current"], cwd=cwd).strip()
     upstream, ahead, behind = "", 0, 0
-    base = (local(name).get("worktree") or {}).get("base", "")
+    base = next((w["base"] for w in s.get("worktrees") or [s.get("worktree") or {}] if w.get("path") == str(cwd)), "")
     try:
         upstream = git(["rev-parse", "--abbrev-ref", "@{upstream}"], cwd=cwd).strip()
     except Refused:
@@ -1161,13 +1215,13 @@ def repo_local(name: str) -> dict:
     for line in git(["log", "-8", "--format=%h%x09%ct%x09%s"], cwd=cwd).splitlines():
         h, t, subject = (line.split("\t", 2) + ["", ""])[:3]
         log.append({"hash": h, "at": int(t or 0) * 1000, "subject": subject})
-    return {"branch": branch, "upstream": upstream, "ahead": ahead, "behind": behind,
+    return {"repo": repo or s["repo"], "branch": branch, "upstream": upstream, "ahead": ahead, "behind": behind,
             "files": sorted(files.values(), key=lambda f: f["path"]), "log": log}
 
 
-def diff_local(name: str, path: str) -> dict:
+def diff_local(name: str, path: str, repo: str = "") -> dict:
     """One file's changes against HEAD (a new file: all of it), at most 200 KB."""
-    cwd = Path(local(name)["cwd"])
+    cwd = session_cwd(local(name), repo)
     if not path or path.startswith("-"):
         raise Refused(400, "which file?")
     text = git(["diff", "HEAD", "--", path], cwd=cwd)
@@ -1179,13 +1233,13 @@ def diff_local(name: str, path: str) -> dict:
     return {"path": path, "diff": text[:200_000], "cut": len(text) > 200_000}
 
 
-def git_local(name: str, action: str) -> dict:
+def git_local(name: str, action: str, repo: str = "") -> dict:
     """Pull (fast-forward only) or push the checkout's branch, with the bridge's
     GitHub token. A session's own branch that isn't on GitHub yet pulls from
     its base (origin/<base>): the new commits there, when it has none of its own."""
     s = local(name)
-    cwd = Path(s["cwd"])
-    base = (s.get("worktree") or {}).get("base", "")
+    cwd = session_cwd(s, repo)
+    base = next((w["base"] for w in s.get("worktrees") or [s.get("worktree") or {}] if w.get("path") == str(cwd)), "")
     if action == "pull":
         try:
             git(["rev-parse", "--abbrev-ref", "@{upstream}"], cwd=cwd)
@@ -1315,16 +1369,18 @@ class Handler(BaseHTTPRequestHandler):
             if method == "POST" and path == "/v1/local":
                 b = self.body()
                 return self.answer(200, start_local(str(b.get("repo", "")), str(b.get("task", "")),
-                                                    str(b.get("account") or "default"), str(b.get("branch") or "")))
+                                                    str(b.get("account") or "default"), str(b.get("branch") or ""),
+                                                    [str(r) for r in b.get("repos") or [] if isinstance(r, str)]))
             m = re.match(r"^/v1/local/([a-z][a-z0-9_-]{0,31})(?:/(prompt|choose|keys|stop|remove|repo|diff|git|resume))?$", path)
             if m and method == "GET" and not m.group(2):
                 return self.answer(200, local_view(local(m.group(1)), chat=True))
-            if m and method == "GET" and m.group(2) == "repo":
-                return self.answer(200, repo_local(m.group(1)))
-            if m and method == "GET" and m.group(2) == "diff":
+            if m and method == "GET" and m.group(2) in ("repo", "diff"):
                 from urllib.parse import parse_qs, urlparse
                 q = parse_qs(urlparse(self.path).query)
-                return self.answer(200, diff_local(m.group(1), (q.get("path") or [""])[0]))
+                which = (q.get("repo") or [""])[0]
+                if m.group(2) == "repo":
+                    return self.answer(200, repo_local(m.group(1), which))
+                return self.answer(200, diff_local(m.group(1), (q.get("path") or [""])[0], which))
             if m and method == "POST" and m.group(2):
                 b = self.body()
                 name, what = m.group(1), m.group(2)
@@ -1335,7 +1391,7 @@ class Handler(BaseHTTPRequestHandler):
                 if what == "keys":
                     return self.answer(200, keys_local(name, [str(k) for k in b.get("keys") or []]))
                 if what == "git":
-                    return self.answer(200, git_local(name, str(b.get("action", ""))))
+                    return self.answer(200, git_local(name, str(b.get("action", "")), str(b.get("repo") or "")))
                 if what == "resume":
                     return self.answer(200, resume_local(name))
                 if what == "stop":

@@ -102,7 +102,7 @@ is `401`. Errors are `{ "error": "…" }` with a non-2xx code.
 | `POST /v1/accounts/{id} {name}` / `POST /v1/accounts/{id}/remove` | renames / forgets an account and its sign-in | |
 
 | `GET /v1/local` | the local sessions: Claude Code on the phone, in herdr | `{sessions: [{name, account, repo, task, at, status, dialog}]}` |
-| `POST /v1/local {repo, task?, account?, branch?}` | clones the repo once into `~/.ygg-bridge/work` (then fetches), makes the session its own worktree from the newest `origin/<branch>` (see below), starts `claude` in a herdr workspace there as the account, and types the task | a session, with `refreshed`: its branch and the commit it started from |
+| `POST /v1/local {repo, repos?, task?, account?, branch?}` | clones the repo once into `~/.ygg-bridge/work` (then fetches), makes the session its own worktree from the newest `origin/<branch>` (see below), starts `claude` in a herdr workspace there as the account, and types the task | a session, with `refreshed`: its branch and the commit it started from |
 | `GET /v1/local/{name}` | the session with its chat (from Claude's transcript) and, while there's none, its screen | a session with `messages`, `screen` |
 | `GET /v1/local/{name}/repo` / `GET …/diff?path=` / `POST …/git {action: pull\|push}` | the checkout's branch, ahead/behind, changed files (+/−) and last commits; one file's diff; a fast-forward pull or a push of its branch, with the bridge's GitHub token | |
 | `POST /v1/local/{name}/prompt {text}` / `choose {question, key, label}` / `keys {keys}` / `stop` | types a message; picks a dialog's choice while that dialog still shows; presses esc etc.; closes the workspace (the session stays, ended, with its worktree) | `{ok}` |
@@ -137,6 +137,27 @@ agent one, so two sessions never touch each other's work:
     commits not pushed.
 - **Older sessions:** sessions started before worktrees keep running in
   the shared checkout. Removing one only takes it off the list.
+
+**Several repos in one session**, as a desktop goal spans them, but one
+Claude and one conversation rather than an agent per repo:
+
+- **Start:** `repos` lists the others besides `repo`. Each gets its own
+  worktree from its newest `origin/<default branch>`, all on the same
+  branch `ygg/<name>`.
+- **Where Claude works:**
+  - It starts in `repo`'s worktree and gets `--add-dir` for the others
+    (again on resume).
+  - A note in its system prompt lists each repo's folder and asks it to
+    commit in each one separately.
+- **In Ygg:**
+  - The session's Changes has a chip per repo.
+  - `GET …/repo?repo=`, `…/diff?…&repo=` and `POST …/git {action, repo}`
+    act on the chosen one; without `repo`, the first.
+- **Remove:**
+  - It's refused while any of the repos would lose work, and the error
+    names the repo.
+  - Otherwise it removes every worktree.
+- **If Claude doesn't start:** none of the worktrees are kept.
 
 Accounts: each Claude account has its own claude config folder
 (`CLAUDE_CONFIG_DIR`, in `~/.ygg-bridge/accounts/<id>`), so a personal and a
