@@ -60,8 +60,10 @@ jobs:
           cat > "$RUNNER_TEMP/lock.gradle" <<'EOF'
           allprojects { dependencyLocking { lockAllConfigurations() } }
           EOF
-          ./gradlew --init-script "$RUNNER_TEMP/lock.gradle" :app:dependencies --write-locks --console=plain -q > /dev/null
-          ls -la app/gradle.lockfile
+          # Only what the release APK ships: resolving one configuration writes only its locks,
+          # leaving out the build's own tools (the Android plugin, lint, tests).
+          ./gradlew --init-script "$RUNNER_TEMP/lock.gradle" :app:dependencies --configuration releaseRuntimeClasspath --write-locks --console=plain -q > /dev/null
+          grep -c "releaseRuntimeClasspath" app/gradle.lockfile
 
       - name: Dependencies with known vulnerabilities
         run: osv-scanner --lockfile=app/gradle.lockfile --format json --output osv.json || true
