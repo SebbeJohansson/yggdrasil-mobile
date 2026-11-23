@@ -672,6 +672,41 @@ def workdir(repo: str, branch: str = "") -> Path:
     return path
 
 
+def refresh(path: Path) -> dict:
+    """Brings the checkout up to date with its upstream before a new session,
+    so Claude starts on what's on GitHub now: a fast-forward only, and only
+    when nothing of yours is in the way. Uncommitted changes or commits not
+    pushed leave it as it is, and say so. The fetch is workdir's.
+
+    Gives {pulled, behind, branch, note}: pulled is how many commits came in,
+    behind how many it's still behind when it couldn't, note one line for you."""
+    branch = git(["branch", "--show-current"], cwd=path).strip()
+    try:
+        upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], cwd=path).strip()
+    except Refused:
+        return {"pulled": 0, "behind": 0, "branch": branch,
+                "note": f"{branch or 'a detached HEAD'} has no branch on GitHub to follow: left as it is"}
+    behind = int(git(["rev-list", "--count", "HEAD..@{u}"], cwd=path).strip() or 0)
+    ahead = int(git(["rev-list", "--count", "@{u}..HEAD"], cwd=path).strip() or 0)
+    if behind == 0:
+        return {"pulled": 0, "behind": 0, "branch": branch, "note": f"{branch} is up to date with {upstream}"}
+    commits = "commit" if behind == 1 else "commits"
+    # Untracked files don't stop a fast-forward; git refuses on its own if one would be overwritten.
+    dirty = git(["status", "--porcelain", "--untracked-files=no"], cwd=path).strip()
+    if dirty:
+        return {"pulled": 0, "behind": behind, "branch": branch,
+                "note": f"{behind} new {commits} on {upstream} not pulled: {branch} has uncommitted changes"}
+    if ahead:
+        return {"pulled": 0, "behind": behind, "branch": branch,
+                "note": f"{behind} new {commits} on {upstream} not pulled: {branch} has {ahead} of its own not pushed"}
+    try:
+        git(["merge", "-q", "--ff-only", "@{u}"], cwd=path)
+    except Refused as e:
+        return {"pulled": 0, "behind": behind, "branch": branch, "note": f"{behind} new {commits} on {upstream} not pulled: {e}"}
+    plain_git_files(path)
+    return {"pulled": behind, "behind": 0, "branch": branch, "note": f"pulled {behind} new {commits} from {upstream}"}
+
+
 def local_sessions() -> list:
     return state().get("local", [])
 
@@ -729,12 +764,14 @@ def start_local(repo: str, task: str, aid: str = "default", branch: str = "") ->
     need_claude()
     aid = account(aid)["id"]
     cwd = workdir(repo, branch)
+    # A new session starts on what's on GitHub now (a resumed one is left alone).
+    fresh = refresh(cwd)
     prepare_claude(cwd, aid)
     need_herdr(aid)
     name = local_name(repo)
     pane, workspace = open_claude(aid, cwd, name, [])
     session = {"name": name, "herdrName": name, "account": aid, "repo": repo, "cwd": str(cwd), "workspace": workspace, "pane": pane,
-               "task": task.strip(), "at": int(time.time() * 1000)}
+               "task": task.strip(), "at": int(time.time() * 1000), "refreshed": fresh["note"]}
     save_local([session] + local_sessions())
     if task.strip():
         prompt_local(name, task)
@@ -996,6 +1033,7 @@ def local_view(s: dict, chat: bool = False) -> dict:
     path = transcript(s)
     state = transcript_state(path)
     view = {k: s.get(k) for k in ("name", "account", "repo", "task", "at", "cwd")}
+    view["refreshed"] = s.get("refreshed", "")
     view.update(status=status, dialog=None, tool="", lastText="", title=transcript_title(path),
                 resumable=bool(SESSION_ID.match(s.get("sessionId", ""))))
     try:

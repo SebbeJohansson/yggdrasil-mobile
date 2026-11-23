@@ -125,7 +125,13 @@ class LocalViewModel(private val bridge: BridgeClient) : ViewModel() {
     fun start(repo: String, task: String, account: String) = viewModelScope.launch {
         _state.update { it.copy(starting = repo, error = null) }
         runCatching { bridge.startLocal(repo, task, account) }
-            .onSuccess { s -> _state.update { it.copy(sessions = listOf(s) + it.sessions.filter { x -> x.name != s.name }, chat = s) } }
+            .onSuccess { s ->
+                // How the checkout was brought up to date, once, under the session.
+                _state.update {
+                    it.copy(sessions = listOf(s) + it.sessions.filter { x -> x.name != s.name }, chat = s,
+                        gitNote = s.refreshed.ifEmpty { null }?.let { n -> "Repo: $n" })
+                }
+            }
             .onFailure { e -> _state.update { it.copy(error = "Couldn't start: ${e.message}") } }
         _state.update { it.copy(starting = null) }
         refreshChat()
@@ -463,7 +469,11 @@ private fun LocalChanges(c: LocalSession, s: LocalUiState, vm: LocalViewModel, m
                 vm.send(c.name, "Commit the current changes with a clear, conventional commit message. Don't push.")
             }, kind = HudButtonKind.SMALL, enabled = !s.sending && c.phase != "busy" && c.phase != "blocked")
         }
-        s.gitNote?.let { Text(it, style = HudText.meta.copy(color = Hud.green, fontFamily = HudFonts.mono)) }
+        s.gitNote?.let {
+            // A pull the bridge had to skip is worth noticing; the rest is just news.
+            val held = "not pulled" in it || "left as it is" in it
+            Text(it, style = HudText.meta.copy(color = if (held) Hud.amber else Hud.green, fontFamily = HudFonts.mono))
+        }
         HudLabel(if (r.files.isEmpty()) "no changes" else "${r.files.size} changed")
         r.files.forEach { f ->
             val openFile = s.diffPath == f.path

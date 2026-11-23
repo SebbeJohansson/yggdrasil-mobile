@@ -70,6 +70,8 @@ data class LocalSession(
     val lastActivity: Instant? = null,
     /** An ended session with a conversation to go on with. */
     val resumable: Boolean = false,
+    /** How the checkout was brought up to date when the session started: "pulled 3 new commits from origin/main", or why not. */
+    val refreshed: String = "",
     /** The chat, when asked for one session; and its screen while there's no chat to show. */
     val messages: List<ChatLine> = emptyList(),
     val screen: String = "",
@@ -316,6 +318,7 @@ class BridgeClient(
             title = o.optString("title"),
             lastActivity = o.optLong("lastActivity").takeIf { it > 0 }?.let(Instant::ofEpochMilli),
             resumable = o.optBoolean("resumable"),
+            refreshed = o.optString("refreshed"),
             messages = (0 until msgs.length()).map { msgs.getJSONObject(it).let { m -> ChatLine(m.optString("role"), m.optString("text")) } },
             screen = o.optString("screen"),
         )

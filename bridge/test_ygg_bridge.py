@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -260,6 +261,52 @@ class BridgeTest(unittest.TestCase):
         f.write_text("\n".join(json.dumps(l) for l in lines) + "\nnot json\n")
         self.assertEqual([("user", "Add a README"), ("assistant", "Sure."), ("tool", "Write: /root/app/README.md"), ("assistant", "Done.")],
                          [(m["role"], m["text"]) for m in self.b.messages(f)])
+
+    def test_refresh_fast_forwards_only_when_nothing_of_yours_is_in_the_way(self):
+        b = self.b
+        cwd = b.workdir("me/app")
+        origin = Path(self.tmp) / "gh" / "me" / "app.git"
+        other = Path(self.tmp) / "other-clone"
+        git = lambda *a, cwd: subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=cwd, check=True,
+                                             capture_output=True, text=True).stdout
+
+        def push_upstream(n):
+            if not other.exists():
+                git("clone", "-q", str(origin), str(other), cwd=self.tmp)
+            git("pull", "-q", cwd=other)
+            for i in range(n):
+                (other / f"up{i}-{time.time()}.txt").write_text("x")
+                git("add", ".", cwd=other)
+                git("commit", "-qm", f"upstream {i}", cwd=other)
+            git("push", "-q", cwd=other)
+
+        self.assertIn("up to date", b.refresh(cwd)["note"])
+        # Clean and behind: pulled.
+        push_upstream(2)
+        b.workdir("me/app")
+        r = b.refresh(cwd)
+        self.assertEqual((2, 0), (r["pulled"], r["behind"]), r)
+        self.assertIn("pulled 2 new commits from origin/main", r["note"])
+        # Uncommitted changes: left alone, and said so.
+        push_upstream(1)
+        b.workdir("me/app")
+        (cwd / "README.md").write_text("mine\n")
+        r = b.refresh(cwd)
+        self.assertEqual((0, 1), (r["pulled"], r["behind"]))
+        self.assertIn("uncommitted changes", r["note"])
+        self.assertEqual("mine\n", (cwd / "README.md").read_text())
+        # A commit of your own not pushed: diverged, left alone.
+        git("commit", "-qam", "mine", cwd=cwd)
+        r = b.refresh(cwd)
+        self.assertEqual(0, r["pulled"])
+        self.assertIn("1 of its own not pushed", r["note"])
+        # No upstream to follow.
+        git("checkout", "-qb", "local-only", cwd=cwd)
+        self.assertIn("no branch on GitHub", b.refresh(cwd)["note"])
+        # Back to a clean main, as other tests expect.
+        git("checkout", "-q", "main", cwd=cwd)
+        git("reset", "-q", "--hard", "origin/main", cwd=cwd)
+        git("branch", "-qD", "local-only", cwd=cwd)
 
     def test_local_repo_changes_diff_and_push(self):
         b = self.b
