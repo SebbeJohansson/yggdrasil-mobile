@@ -15,6 +15,7 @@ so other apps on the phone can't use your Claude account through it.
     python3 ygg_bridge.py key          print the key to paste into Ygg
     python3 ygg_bridge.py github TOKEN keep a GitHub token for cloning private repos
     python3 ygg_bridge.py accounts     list the Claude accounts and who is signed in
+    python3 ygg_bridge.py keep-herdr   keep each account's herdr up, apart from the bridge (Ygg's own Linux)
     python3 ygg_bridge.py login [ID]   sign in to Claude for an account (default: the first)
 
 Standard library only. Kept in ~/.ygg-bridge: the key, the GitHub token, the
@@ -618,15 +619,16 @@ def herdr(aid: str, method: str, params: dict = None, timeout: float = 10) -> di
     return reply.get("result", {})
 
 
-def need_herdr(aid: str) -> None:
-    """Starts the account's headless herdr server unless it answers already."""
+def herdr_up(aid: str) -> bool:
     try:
-        herdr(aid, "ping", timeout=3)
-        return
+        herdr(aid, "ping", timeout=2)
+        return True
     except Refused:
-        pass
-    if not shutil.which(HERDR):
-        raise Refused(503, "herdr isn't installed here: update Ygg's Linux (Settings > Claude bridge > Update)")
+        return False
+
+
+def spawn_herdr(aid: str) -> None:
+    """Starts the account's headless herdr server, a child of whoever calls this."""
     env = claude_env(aid)
     env["HERDR_SOCKET_PATH"] = str(herdr_socket(aid))
     env.setdefault("SHELL", "/bin/bash")
@@ -637,15 +639,66 @@ def need_herdr(aid: str) -> None:
     log = open(home() / f"herdr-{account(aid)['id']}.log", "ab")
     subprocess.Popen([HERDR, "server"], env=env, stdin=subprocess.DEVNULL,
                      stdout=log, stderr=subprocess.STDOUT, start_new_session=True, cwd=str(Path.home()))
-    deadline = time.time() + 15
+
+
+# The herdr keeper (keep_herdr): in Ygg's own Linux the bridge runs under a proot
+# that ends everything it started when it exits (--kill-on-exit), herdr and its
+# panes too. So herdr belongs to a keeper in a proot of its own: the bridge asks
+# for an account's herdr with a file in herdr-want/, and the keeper starts it and
+# keeps it up. The bridge can then restart while sessions go on. Without a keeper
+# (Termux, UserLAnd), the bridge starts herdr itself, as before.
+KEEPER_BEAT = 15
+
+
+def keeper_alive() -> bool:
+    beat = home() / "herdr-keeper.beat"
+    try:
+        return time.time() - beat.stat().st_mtime < KEEPER_BEAT
+    except OSError:
+        return False
+
+
+def need_herdr(aid: str) -> None:
+    """The account's headless herdr server, started unless it answers already:
+    by the keeper when one runs, else here."""
+    if herdr_up(aid):
+        return
+    if not shutil.which(HERDR):
+        raise Refused(503, "herdr isn't installed here: update Ygg's Linux (Settings > Claude bridge > Update)")
+    aid = account(aid)["id"]
+    if keeper_alive():
+        want = home() / "herdr-want"
+        want.mkdir(exist_ok=True)
+        (want / aid).write_text(str(time.time()))
+    else:
+        spawn_herdr(aid)
+    deadline = time.time() + 20
     while time.time() < deadline:
         time.sleep(0.3)
-        try:
-            herdr(aid, "ping", timeout=2)
+        if herdr_up(aid):
             return
-        except Refused:
-            continue
-    raise Refused(503, f"herdr didn't start (see ~/.ygg-bridge/herdr-{account(aid)['id']}.log)")
+    raise Refused(503, f"herdr didn't start (see ~/.ygg-bridge/herdr-{aid}.log)")
+
+
+def keep_herdr(rounds: int = 0) -> None:
+    """The keeper's loop: every 2 s, an up herdr for each account asked for or
+    with local sessions, and a beat the bridge reads. [rounds] > 0 stops after
+    that many (for tests)."""
+    n = 0
+    while True:
+        (home() / "herdr-keeper.beat").write_text(str(time.time()))
+        wanted = {p.name for p in (home() / "herdr-want").glob("*")} if (home() / "herdr-want").is_dir() else set()
+        wanted |= {s.get("account", "default") for s in local_sessions()}
+        for aid in sorted(wanted):
+            try:
+                if ACCOUNT_ID.match(aid) and not herdr_up(aid) and shutil.which(HERDR):
+                    spawn_herdr(aid)
+            except Refused:
+                pass  # An account since removed.
+        n += 1
+        if rounds and n >= rounds:
+            return
+        time.sleep(2)
 
 
 def workdir(repo: str, branch: str = "") -> Path:
@@ -1281,6 +1334,8 @@ def main(argv: list) -> int:
         serve()
     elif command == "key":
         print(key())
+    elif command == "keep-herdr":
+        keep_herdr()
     elif command == "accounts":
         for a in accounts():
             i = account_info(a)

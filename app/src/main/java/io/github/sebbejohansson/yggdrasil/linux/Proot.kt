@@ -100,6 +100,9 @@ object GuestSetup {
     val BRIDGE = listOf("python3", "/root/ygg-bridge/ygg_bridge.py", "serve")
     val BRIDGE_ENV = mapOf("YGG_BRIDGE_HOST" to "127.0.0.1")
 
+    /** The herdr keeper, in a proot of its own so the bridge can restart while herdr goes on. */
+    val KEEPER = listOf("python3", "/root/ygg-bridge/ygg_bridge.py", "keep-herdr")
+
     /** `claude auth login` wants a terminal: util-linux's `script` gives it one, and passes your code through. */
     val LOGIN = listOf("script", "-qfec", "stty cols 4000 rows 50 2>/dev/null; claude auth login", "/dev/null")
 }

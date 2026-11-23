@@ -44,6 +44,7 @@ class LinuxBridgeSettings(context: Context) {
 class LinuxBridgeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var process: Process? = null
+    private var keeper: Process? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -56,6 +57,7 @@ class LinuxBridgeService : Service() {
         ServiceCompat.startForeground(this, NOTIFICATION, notification("Starting…"), type)
         running.value = true
         scope.launch { keepRunning() }
+        scope.launch { keepHerdr() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -94,6 +96,31 @@ class LinuxBridgeService : Service() {
         }
     }
 
+    /**
+     * The herdr keeper, in a proot of its own beside the bridge's: the bridge's
+     * proot ends everything it started when it exits (--kill-on-exit), so herdr
+     * (and the Claude sessions in it) lives here instead and goes on while the
+     * bridge restarts. Started again if it stops, after the bridge has its copy
+     * of the script in place.
+     */
+    private suspend fun keepHerdr() {
+        val linux = (application as YggApp).container.ownLinux
+        delay(3_000)
+        while (scope.isActive) {
+            if (!linux.installed) {
+                delay(60_000)
+                continue
+            }
+            val p = runCatching { linux.start(GuestSetup.KEEPER, GuestSetup.BRIDGE_ENV) }.getOrNull()
+            keeper = p
+            if (p != null) {
+                p.inputStream.bufferedReader().forEachLine { }
+                p.waitFor()
+            }
+            delay(10_000)
+        }
+    }
+
     private fun notification(text: String): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, LinuxBridgeService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
@@ -117,6 +144,7 @@ class LinuxBridgeService : Service() {
         running.value = false
         status.value = "Off"
         process?.destroy()
+        keeper?.destroy()
         scope.cancel()
         super.onDestroy()
     }

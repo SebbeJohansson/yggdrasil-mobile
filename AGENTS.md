@@ -96,7 +96,7 @@ Each of these cost a release. Keep them when changing the bridge.
 | Interactive claude stops at the theme picker and "trust this folder?" with nobody to answer | `prepare_claude()` writes `hasCompletedOnboarding` and the folder's trust into the account's `.claude.json` first |
 | Claude's installer and auto-updater copy the binary over itself, which fails | `setup.sh` places the binary by hand; `DISABLE_AUTOUPDATER=1` |
 | An app update brings a new bridge, but the guest kept the old copy | `LinuxBridgeService` calls `OwnLinux.refreshBridge()` before each start |
-| `--kill-on-exit`: when the bridge restarts, herdr and every pane go with it | sessions keep their claude session id; a message to an ended one resumes it (`claude --resume`) |
+| `--kill-on-exit`: when the bridge restarts, herdr and every pane go with it | herdr runs under a keeper in its own proot (`ygg_bridge.py keep-herdr`, started by `LinuxBridgeService`); the bridge asks for it through `herdr-want/`. An app update still ends everything: sessions keep their claude session id, and a message to an ended one resumes it |
 | Android's per-app memory and CPU leave out child processes (all of Linux) | `core/Procs.kt` reads `/proc` for the app's uid |
 | Tests importing the bridge from `assets/` leave `__pycache__` there, which would go into the APK | the bridge test sets `sys.dont_write_bytecode` |
 
