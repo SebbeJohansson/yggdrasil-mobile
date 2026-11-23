@@ -102,10 +102,11 @@ is `401`. Errors are `{ "error": "…" }` with a non-2xx code.
 | `POST /v1/accounts/{id} {name}` / `POST /v1/accounts/{id}/remove` | renames / forgets an account and its sign-in | |
 
 | `GET /v1/local` | the local sessions: Claude Code on the phone, in herdr | `{sessions: [{name, account, repo, task, at, status, dialog}]}` |
-| `POST /v1/local {repo, task?, account?, branch?}` | clones the repo once into `~/.ygg-bridge/work`, later fetches and fast-forwards it (see below), starts `claude` in a herdr workspace there as the account, and types the task | a session, with `refreshed`: how the checkout was brought up to date |
+| `POST /v1/local {repo, task?, account?, branch?}` | clones the repo once into `~/.ygg-bridge/work` (then fetches), makes the session its own worktree from the newest `origin/<branch>` (see below), starts `claude` in a herdr workspace there as the account, and types the task | a session, with `refreshed`: its branch and the commit it started from |
 | `GET /v1/local/{name}` | the session with its chat (from Claude's transcript) and, while there's none, its screen | a session with `messages`, `screen` |
 | `GET /v1/local/{name}/repo` / `GET …/diff?path=` / `POST …/git {action: pull\|push}` | the checkout's branch, ahead/behind, changed files (+/−) and last commits; one file's diff; a fast-forward pull or a push of its branch, with the bridge's GitHub token | |
-| `POST /v1/local/{name}/prompt {text}` / `choose {question, key, label}` / `keys {keys}` / `stop` | types a message; picks a dialog's choice while that dialog still shows; presses esc etc.; closes the workspace (the checkout stays) | `{ok}` |
+| `POST /v1/local/{name}/prompt {text}` / `choose {question, key, label}` / `keys {keys}` / `stop` | types a message; picks a dialog's choice while that dialog still shows; presses esc etc.; closes the workspace (the session stays, ended, with its worktree) | `{ok}` |
+| `POST /v1/local/{name}/remove` | an ended session: removes its worktree and its local `ygg/` branch (never the branch on GitHub). 409 while that would lose work: changes not committed, or commits not pushed | `{ok}` |
 
 Local sessions run Claude Code interactively in herdr (https://herdr.dev), as
 the desktop's Sindri does: one headless `herdr server` per account (its socket at a short
@@ -114,21 +115,28 @@ whether Claude works, waits or shows a dialog, and types for you; what Claude
 said is read from its transcript (`sessions/<pid>.json` gives the session id).
 Setup installs herdr, pinned and checked against its sums.
 
-**Up to date before each new session:** a new local session starts on
-what's on GitHub now. The bridge fetches, then fast-forwards the checkout's
-branch to its upstream, but only when nothing of yours is in the way:
+**Each session its own worktree**, as the desktop's Sindri gives each
+agent one, so two sessions never touch each other's work:
 
-| Checkout | What happens |
-| --- | --- |
-| behind, clean, nothing unpushed | pulled (`git merge --ff-only`) |
-| up to date | nothing |
-| uncommitted changes | left as it is |
-| commits of yours not pushed (diverged) | left as it is |
-| a branch with no upstream | left as it is |
-
-When it's left as it is, the reason and the number of commits it skipped
-come back in `refreshed`, and Ygg shows them under the session in amber;
-*Pull* is there when you're ready. A resumed session is never touched.
+- **Where:** `~/.ygg-bridge/worktrees/<owner>/<repo>/<name>`, on a new
+  branch `ygg/<name>`. The shared checkout in `~/.ygg-bridge/work` only
+  holds the git data; nothing is checked out or changed there.
+- **From the newest commit:** each worktree is made from `origin/<branch>`
+  (the repo's default branch when none is asked) right after a fetch, so
+  a new session starts on what's on GitHub now.
+- **Pull** fast-forwards the session's branch: from its own branch on
+  GitHub once pushed, from `origin/<base>` before. When it has commits of
+  its own beside new ones there, it says to ask Claude to rebase.
+- **Push** puts `ygg/<name>` on GitHub. Ahead/behind count against
+  `origin/<base>` until then.
+- **Stop** ends Claude and keeps the session, ended, with its worktree:
+  resume it, or *Remove* it.
+- **Remove:**
+  - It deletes the worktree and the local branch.
+  - It's refused while that would lose work: changes not committed, or
+    commits not pushed.
+- **Older sessions:** sessions started before worktrees keep running in
+  the shared checkout. Removing one only takes it off the list.
 
 Accounts: each Claude account has its own claude config folder
 (`CLAUDE_CONFIG_DIR`, in `~/.ygg-bridge/accounts/<id>`), so a personal and a

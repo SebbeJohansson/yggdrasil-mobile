@@ -262,55 +262,94 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual([("user", "Add a README"), ("assistant", "Sure."), ("tool", "Write: /root/app/README.md"), ("assistant", "Done.")],
                          [(m["role"], m["text"]) for m in self.b.messages(f)])
 
-    def test_refresh_fast_forwards_only_when_nothing_of_yours_is_in_the_way(self):
-        b = self.b
-        cwd = b.workdir("me/app")
+    def _git(self, *a, cwd):
+        return subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=cwd, check=True,
+                              capture_output=True, text=True).stdout
+
+    def _push_upstream(self, n):
+        """n new commits on "GitHub" (the test's origin), from another clone."""
         origin = Path(self.tmp) / "gh" / "me" / "app.git"
         other = Path(self.tmp) / "other-clone"
-        git = lambda *a, cwd: subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=cwd, check=True,
-                                             capture_output=True, text=True).stdout
+        if not other.exists():
+            self._git("clone", "-q", str(origin), str(other), cwd=self.tmp)
+        self._git("pull", "-q", cwd=other)
+        for i in range(n):
+            (other / f"up{i}-{time.time()}.txt").write_text("x")
+            self._git("add", ".", cwd=other)
+            self._git("commit", "-qm", f"upstream {i}", cwd=other)
+        self._git("push", "-q", cwd=other)
 
-        def push_upstream(n):
-            if not other.exists():
-                git("clone", "-q", str(origin), str(other), cwd=self.tmp)
-            git("pull", "-q", cwd=other)
-            for i in range(n):
-                (other / f"up{i}-{time.time()}.txt").write_text("x")
-                git("add", ".", cwd=other)
-                git("commit", "-qm", f"upstream {i}", cwd=other)
-            git("push", "-q", cwd=other)
+    def test_each_session_has_its_own_worktree_from_the_newest_commit(self):
+        b = self.b
+        root = b.workdir("me/app")
+        self._push_upstream(1)
+        newest = self._git("ls-remote", str(Path(self.tmp) / "gh" / "me" / "app.git"), "refs/heads/main", cwd=self.tmp).split()[0]
+        one, two = b.worktree("me/app", "app-1111"), b.worktree("me/app", "app-2222")
+        a, c = Path(one["path"]), Path(two["path"])
+        self.assertEqual(("ygg/app-1111", "main"), (one["branch"], one["base"]))
+        # Each starts on the newest commit on GitHub, though the shared checkout wasn't pulled.
+        for wt in (a, c):
+            self.assertEqual(newest, self._git("rev-parse", "HEAD", cwd=wt).strip())
+        self.assertNotEqual(newest, self._git("rev-parse", "HEAD", cwd=root).strip())
+        # One's work isn't the other's, nor the shared checkout's.
+        (a / "README.md").write_text("one's\n")
+        self.assertEqual("hi", (c / "README.md").read_text())
+        self.assertEqual("", self._git("status", "--porcelain", cwd=c))
+        self.assertEqual("", self._git("status", "--porcelain", cwd=root))
+        self.assertEqual("ygg/app-2222", self._git("branch", "--show-current", cwd=c).strip())
+        with self.assertRaises(b.Refused):
+            b.worktree("me/app", "app-3333", "no-such-branch")
 
-        self.assertIn("up to date", b.refresh(cwd)["note"])
-        # Clean and behind: pulled.
-        push_upstream(2)
-        b.workdir("me/app")
-        r = b.refresh(cwd)
-        self.assertEqual((2, 0), (r["pulled"], r["behind"]), r)
-        self.assertIn("pulled 2 new commits from origin/main", r["note"])
-        # Uncommitted changes: left alone, and said so.
-        push_upstream(1)
-        b.workdir("me/app")
-        (cwd / "README.md").write_text("mine\n")
-        r = b.refresh(cwd)
-        self.assertEqual((0, 1), (r["pulled"], r["behind"]))
-        self.assertIn("uncommitted changes", r["note"])
-        self.assertEqual("mine\n", (cwd / "README.md").read_text())
-        # A commit of your own not pushed: diverged, left alone.
-        git("commit", "-qam", "mine", cwd=cwd)
-        r = b.refresh(cwd)
-        self.assertEqual(0, r["pulled"])
-        self.assertIn("1 of its own not pushed", r["note"])
-        # No upstream to follow.
-        git("checkout", "-qb", "local-only", cwd=cwd)
-        self.assertIn("no branch on GitHub", b.refresh(cwd)["note"])
-        # Back to a clean main, as other tests expect.
-        git("checkout", "-q", "main", cwd=cwd)
-        git("reset", "-q", "--hard", "origin/main", cwd=cwd)
-        git("branch", "-qD", "local-only", cwd=cwd)
+    def test_a_worktree_session_pulls_pushes_and_is_removed_only_without_losing_work(self):
+        b = self.b
+        wt = b.worktree("me/app", "app-4444")
+        cwd = Path(wt["path"])
+        b.save_local([{"name": "app-4444", "account": "default", "repo": "me/app", "cwd": str(cwd), "pane": "w9:p9",
+                       "task": "", "at": 0, "worktree": wt}])
+        try:
+            r = self.call("GET", "/v1/local/app-4444/repo")[1]
+            self.assertEqual(("ygg/app-4444", "origin/main", 0, 0), (r["branch"], r["upstream"], r["ahead"], r["behind"]))
+            # New on GitHub: Pull brings it, as the branch has nothing of its own.
+            self._push_upstream(1)
+            status, out = self.call("POST", "/v1/local/app-4444/git", {"action": "pull"})
+            self.assertEqual(200, status, out)
+            self.assertEqual(0, self.call("GET", "/v1/local/app-4444/repo")[1]["behind"])
+            # Uncommitted work: not removed.
+            (cwd / "README.md").write_text("work\n")
+            status, out = self.call("POST", "/v1/local/app-4444/remove")
+            self.assertEqual(409, status)
+            self.assertIn("not committed", out["error"])
+            # Committed, not pushed: still not.
+            self._git("commit", "-qam", "work", cwd=cwd)
+            self.assertEqual(1, self.call("GET", "/v1/local/app-4444/repo")[1]["ahead"])
+            status, out = self.call("POST", "/v1/local/app-4444/remove")
+            self.assertEqual(409, status)
+            self.assertIn("1 commit not pushed", out["error"])
+            # New on GitHub beside its own: Pull says to rebase, and changes nothing.
+            self._push_upstream(1)
+            status, out = self.call("POST", "/v1/local/app-4444/git", {"action": "pull"})
+            self.assertEqual(409, status)
+            self.assertIn("rebase", out["error"])
+            # Pushed: its branch is on GitHub, and then it can go.
+            self.assertEqual(200, self.call("POST", "/v1/local/app-4444/git", {"action": "push"})[0])
+            origin = Path(self.tmp) / "gh" / "me" / "app.git"
+            self.assertIn("refs/heads/ygg/app-4444", self._git("ls-remote", str(origin), cwd=self.tmp))
+            status, out = self.call("POST", "/v1/local/app-4444/remove")
+            self.assertEqual(200, status, out)
+            self.assertFalse(cwd.exists())
+            self.assertEqual([], b.local_sessions())
+            root = b.workdir_path("me/app")
+            self.assertNotIn("ygg/app-4444", self._git("branch", "--list", "ygg/*", cwd=root))
+            # GitHub keeps it.
+            self.assertIn("refs/heads/ygg/app-4444", self._git("ls-remote", str(origin), cwd=self.tmp))
+        finally:
+            b.save_local([])
 
     def test_local_repo_changes_diff_and_push(self):
+        """A session from before worktrees, in the shared checkout: still works."""
         b = self.b
         cwd = b.workdir("me/app")
+        self._git("merge", "-q", "--ff-only", "origin/main", cwd=cwd)  # Other tests push to "GitHub".
         b.save_local([{"name": "app-test", "account": "default", "repo": "me/app", "cwd": str(cwd), "pane": "w9:p1", "task": "", "at": 0}])
         try:
             (cwd / "README.md").write_text("hi\nmore\n")

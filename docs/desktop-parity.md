@@ -265,7 +265,7 @@ sessions through the bridge (Sindri's Path A), and has no agents of its
 own.
 
 **Not on the phone:**
-- Ask's agents, goals, worktrees, review, races, conduits and auto-allow
+- Ask's agents, goals, review, races, conduits and auto-allow (local sessions do get their own worktree, as Sindri's agents do)
 - agents ended by a restart counting as resumable (`5c16922`)
 - `/v1/complete` with privacy levels
 - your prompts, kept

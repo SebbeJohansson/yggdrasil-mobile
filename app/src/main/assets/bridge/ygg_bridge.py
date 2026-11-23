@@ -648,13 +648,17 @@ def need_herdr(aid: str) -> None:
     raise Refused(503, f"herdr didn't start (see ~/.ygg-bridge/herdr-{account(aid)['id']}.log)")
 
 
+def workdir_path(repo: str) -> Path:
+    return home() / "work" / repo
+
+
 def workdir(repo: str, branch: str = "") -> Path:
     """The phone's own checkout of a repo to work in: cloned once, then only
     fetched, so work in it is never thrown away. Git in it can push with the
     bridge's GitHub token, read when git needs it, never written into it."""
     if not REPO.match(repo):
         raise Refused(400, "a repo is owner/name, like SebbeJohansson/yggdrasil")
-    path = home() / "work" / repo
+    path = workdir_path(repo)
     url = f"{GIT_BASE}/{repo}.git"
     if not (path / ".git").is_dir():
         fresh_clone(url, path, branch)
@@ -672,39 +676,69 @@ def workdir(repo: str, branch: str = "") -> Path:
     return path
 
 
-def refresh(path: Path) -> dict:
-    """Brings the checkout up to date with its upstream before a new session,
-    so Claude starts on what's on GitHub now: a fast-forward only, and only
-    when nothing of yours is in the way. Uncommitted changes or commits not
-    pushed leave it as it is, and say so. The fetch is workdir's.
+def worktree(repo: str, name: str, base: str = "") -> dict:
+    """A session's own worktree, as the desktop's Sindri gives each agent one:
+    its own files, branch and index, so two sessions never touch each other's
+    work. Made from the newest origin/<base> (the repo's default branch when
+    none is asked), so it starts on what's on GitHub now, on a new branch
+    ygg/<name>. The shared checkout holds the git data; nothing is checked out
+    or changed there.
 
-    Gives {pulled, behind, branch, note}: pulled is how many commits came in,
-    behind how many it's still behind when it couldn't, note one line for you."""
-    branch = git(["branch", "--show-current"], cwd=path).strip()
+    Gives {path, branch, base, commit}."""
+    root = workdir(repo)  # Cloned once; fetched now.
+    base = base or default_branch(f"{GIT_BASE}/{repo}.git")
+    if not re.match(r"^[\w./-]+$", base) or ".." in base:
+        raise Refused(400, "that isn't a branch name")
     try:
-        upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], cwd=path).strip()
+        commit = git(["rev-parse", "--short", f"origin/{base}"], cwd=root).strip()
     except Refused:
-        return {"pulled": 0, "behind": 0, "branch": branch,
-                "note": f"{branch or 'a detached HEAD'} has no branch on GitHub to follow: left as it is"}
-    behind = int(git(["rev-list", "--count", "HEAD..@{u}"], cwd=path).strip() or 0)
-    ahead = int(git(["rev-list", "--count", "@{u}..HEAD"], cwd=path).strip() or 0)
-    if behind == 0:
-        return {"pulled": 0, "behind": 0, "branch": branch, "note": f"{branch} is up to date with {upstream}"}
-    commits = "commit" if behind == 1 else "commits"
-    # Untracked files don't stop a fast-forward; git refuses on its own if one would be overwritten.
-    dirty = git(["status", "--porcelain", "--untracked-files=no"], cwd=path).strip()
+        raise Refused(404, f"{repo} has no branch {base} on GitHub")
+    path = home() / "worktrees" / repo / name
+    branch = f"ygg/{name}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    git(["worktree", "prune"], cwd=root)
+    git(["worktree", "add", "-q", "--no-track", "-b", branch, str(path), f"origin/{base}"], cwd=root)
+    plain_git_files(root)
+    return {"path": str(path), "branch": branch, "base": base, "commit": commit}
+
+
+def unpushed(cwd: Path) -> str:
+    """Why removing this worktree would lose work, or "" when it wouldn't:
+    changes not committed, or commits on no branch on GitHub."""
+    dirty = [l for l in git(["status", "--porcelain=v1", "-uall"], cwd=cwd).splitlines() if l.strip()]
     if dirty:
-        return {"pulled": 0, "behind": behind, "branch": branch,
-                "note": f"{behind} new {commits} on {upstream} not pulled: {branch} has uncommitted changes"}
-    if ahead:
-        return {"pulled": 0, "behind": behind, "branch": branch,
-                "note": f"{behind} new {commits} on {upstream} not pulled: {branch} has {ahead} of its own not pushed"}
-    try:
-        git(["merge", "-q", "--ff-only", "@{u}"], cwd=path)
-    except Refused as e:
-        return {"pulled": 0, "behind": behind, "branch": branch, "note": f"{behind} new {commits} on {upstream} not pulled: {e}"}
-    plain_git_files(path)
-    return {"pulled": behind, "behind": 0, "branch": branch, "note": f"pulled {behind} new {commits} from {upstream}"}
+        return f"{len(dirty)} changed {'file' if len(dirty) == 1 else 'files'} not committed"
+    lost = [l for l in git(["rev-list", "HEAD", "--not", "--remotes=origin"], cwd=cwd).splitlines() if l.strip()]
+    if lost:
+        return f"{len(lost)} {'commit' if len(lost) == 1 else 'commits'} not pushed"
+    return ""
+
+
+def remove_local(name: str) -> dict:
+    """Removes an ended session: its worktree and its local ygg/ branch, never
+    a branch on GitHub. Refused (409) while that would lose work, or while it
+    still runs. A session from before worktrees (in the shared checkout) is only
+    taken off the list; the checkout is left as it is."""
+    s = local(name)
+    if agent_info(s):
+        raise Refused(409, "it's still running: stop it first")
+    wt = s.get("worktree")
+    if wt:
+        path = Path(wt["path"])
+        root = workdir_path(s["repo"])
+        if path.is_dir():
+            why = unpushed(path)
+            if why:
+                raise Refused(409, f"{why}: push or commit first, or open it in Claude")
+            git(["worktree", "remove", "--force", str(path)], cwd=root)
+        git(["worktree", "prune"], cwd=root)
+        try:
+            git(["branch", "-D", wt["branch"]], cwd=root)
+        except Refused:
+            pass
+        plain_git_files(root)
+    save_local([x for x in local_sessions() if x["name"] != name])
+    return {"ok": True}
 
 
 def local_sessions() -> list:
@@ -763,15 +797,22 @@ def start_local(repo: str, task: str, aid: str = "default", branch: str = "") ->
     then the task typed in, as you would."""
     need_claude()
     aid = account(aid)["id"]
-    cwd = workdir(repo, branch)
-    # A new session starts on what's on GitHub now (a resumed one is left alone).
-    fresh = refresh(cwd)
+    name = local_name(repo)
+    # Its own worktree, from the newest commit on GitHub: sessions can't touch each other's work.
+    wt = worktree(repo, name, branch)
+    cwd = Path(wt["path"])
     prepare_claude(cwd, aid)
     need_herdr(aid)
-    name = local_name(repo)
-    pane, workspace = open_claude(aid, cwd, name, [])
+    try:
+        pane, workspace = open_claude(aid, cwd, name, [])
+    except Exception:
+        # Claude never started there: nothing to keep.
+        git(["worktree", "remove", "--force", str(cwd)], cwd=workdir_path(repo))
+        git(["branch", "-D", wt["branch"]], cwd=workdir_path(repo))
+        raise
     session = {"name": name, "herdrName": name, "account": aid, "repo": repo, "cwd": str(cwd), "workspace": workspace, "pane": pane,
-               "task": task.strip(), "at": int(time.time() * 1000), "refreshed": fresh["note"]}
+               "task": task.strip(), "at": int(time.time() * 1000), "worktree": wt,
+               "refreshed": f"own worktree on {wt['branch']}, from origin/{wt['base']} at {wt['commit']} (the newest)"}
     save_local([session] + local_sessions())
     if task.strip():
         prompt_local(name, task)
@@ -1093,11 +1134,17 @@ def repo_local(name: str) -> dict:
     cwd = Path(local(name)["cwd"])
     branch = git(["branch", "--show-current"], cwd=cwd).strip()
     upstream, ahead, behind = "", 0, 0
+    base = (local(name).get("worktree") or {}).get("base", "")
     try:
         upstream = git(["rev-parse", "--abbrev-ref", "@{upstream}"], cwd=cwd).strip()
-        behind, ahead = (int(x) for x in git(["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], cwd=cwd).split())
     except Refused:
-        pass
+        # A session's own branch, not pushed yet: where it stands against its base.
+        upstream = f"origin/{base}" if base else ""
+    if upstream:
+        try:
+            behind, ahead = (int(x) for x in git(["rev-list", "--left-right", "--count", f"{upstream}...HEAD"], cwd=cwd).split())
+        except Refused:
+            pass
     files = {}
     for line in git(["status", "--porcelain=v1", "-uall"], cwd=cwd).splitlines():
         if len(line) > 3:
@@ -1133,10 +1180,24 @@ def diff_local(name: str, path: str) -> dict:
 
 
 def git_local(name: str, action: str) -> dict:
-    """Pull (fast-forward only) or push the checkout's branch, with the bridge's GitHub token."""
-    cwd = Path(local(name)["cwd"])
+    """Pull (fast-forward only) or push the checkout's branch, with the bridge's
+    GitHub token. A session's own branch that isn't on GitHub yet pulls from
+    its base (origin/<base>): the new commits there, when it has none of its own."""
+    s = local(name)
+    cwd = Path(s["cwd"])
+    base = (s.get("worktree") or {}).get("base", "")
     if action == "pull":
-        out = git(["pull", "--ff-only"], cwd=cwd)
+        try:
+            git(["rev-parse", "--abbrev-ref", "@{upstream}"], cwd=cwd)
+            out = git(["pull", "--ff-only"], cwd=cwd)
+        except Refused:
+            if not base:
+                raise Refused(409, "this branch follows nothing on GitHub: push it first")
+            git(["fetch", "-q", "origin", base], cwd=cwd)
+            try:
+                out = git(["merge", "--ff-only", f"origin/{base}"], cwd=cwd)
+            except Refused:
+                raise Refused(409, f"it has commits of its own beside origin/{base}'s new ones: ask Claude to rebase on origin/{base}")
     elif action == "push":
         branch = git(["branch", "--show-current"], cwd=cwd).strip()
         if not branch:
@@ -1149,13 +1210,16 @@ def git_local(name: str, action: str) -> dict:
 
 
 def stop_local(name: str) -> dict:
-    """Ends Claude there and closes its workspace; the checkout and its work stay."""
+    """Ends Claude there and closes its workspace. The session stays, ended,
+    with its worktree and work: resume it, or remove it (remove_local)."""
     s = local(name)
     try:
         herdr(s["account"], "workspace.close", {"workspace_id": s.get("workspace") or s["pane"].split(":")[0]})
     except Refused:
         pass
-    save_local([x for x in local_sessions() if x["name"] != name])
+    if not s.get("worktree"):
+        # From before worktrees: nothing of its own to keep, as before.
+        save_local([x for x in local_sessions() if x["name"] != name])
     return {"ok": True}
 
 
@@ -1252,7 +1316,7 @@ class Handler(BaseHTTPRequestHandler):
                 b = self.body()
                 return self.answer(200, start_local(str(b.get("repo", "")), str(b.get("task", "")),
                                                     str(b.get("account") or "default"), str(b.get("branch") or "")))
-            m = re.match(r"^/v1/local/([a-z][a-z0-9_-]{0,31})(?:/(prompt|choose|keys|stop|repo|diff|git|resume))?$", path)
+            m = re.match(r"^/v1/local/([a-z][a-z0-9_-]{0,31})(?:/(prompt|choose|keys|stop|remove|repo|diff|git|resume))?$", path)
             if m and method == "GET" and not m.group(2):
                 return self.answer(200, local_view(local(m.group(1)), chat=True))
             if m and method == "GET" and m.group(2) == "repo":
@@ -1276,6 +1340,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.answer(200, resume_local(name))
                 if what == "stop":
                     return self.answer(200, stop_local(name))
+                if what == "remove":
+                    return self.answer(200, remove_local(name))
             if method == "GET" and path == "/v1/accounts":
                 return self.answer(200, {"accounts": [account_info(a) for a in accounts()]})
             if method == "POST" and path == "/v1/accounts":

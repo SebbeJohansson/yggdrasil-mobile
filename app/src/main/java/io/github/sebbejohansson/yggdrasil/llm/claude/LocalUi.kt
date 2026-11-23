@@ -142,6 +142,14 @@ class LocalViewModel(private val bridge: BridgeClient) : ViewModel() {
     fun interrupt(name: String) = act { bridge.keysLocal(name, "esc") }
     fun resume(name: String) = act { bridge.resumeLocal(name) }
 
+    /** An ended session, and its worktree; the bridge refuses while that would lose work, and says why. */
+    fun remove(name: String) = viewModelScope.launch {
+        runCatching { bridge.removeLocal(name) }
+            .onSuccess { _state.update { it.copy(chat = null) } }
+            .onFailure { e -> _state.update { it.copy(error = "Not removed: ${e.message}") } }
+        refresh()
+    }
+
     fun stop(name: String) = viewModelScope.launch {
         runCatching { bridge.stopLocal(name) }.onFailure { e -> _state.update { it.copy(error = e.message) } }
         _state.update { it.copy(chat = null) }
@@ -429,7 +437,7 @@ private fun LocalChat(c: LocalSession, s: LocalUiState, vm: LocalViewModel, modi
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (c.phase == "busy") HudButton("Esc (interrupt)", { vm.interrupt(c.name) }, kind = HudButtonKind.SMALL)
             if (c.phase == "ended" && c.resumable) HudButton("Resume", { vm.resume(c.name) }, kind = HudButtonKind.SMALL, enabled = !s.sending)
-            HudButton(if (c.phase == "ended") "Remove" else "Stop", { vm.stop(c.name) }, kind = HudButtonKind.SMALL)
+            HudButton(if (c.phase == "ended") "Remove" else "Stop", { if (c.phase == "ended") vm.remove(c.name) else vm.stop(c.name) }, kind = HudButtonKind.SMALL)
         }
     }
 }

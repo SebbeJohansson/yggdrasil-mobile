@@ -249,6 +249,16 @@ class BridgeClient(
     }
 
     /** Ends it; the checkout and its work stay on the phone. */
+    /**
+     * Removes an ended session and its own worktree (its branch on GitHub
+     * stays). Refused while that would lose work: changes not committed, or
+     * commits not pushed; the reason says which.
+     */
+    suspend fun removeLocal(name: String) = withContext(Dispatchers.IO) {
+        call("POST", "/v1/local/$name/remove", JSONObject())
+        changes.bump()
+    }
+
     suspend fun stopLocal(name: String) = withContext(Dispatchers.IO) {
         call("POST", "/v1/local/$name/stop", JSONObject())
         changes.bump()
