@@ -163,7 +163,7 @@ Accounts: each Claude account has its own claude config folder
 (`CLAUDE_CONFIG_DIR`, in `~/.ygg-bridge/accounts/<id>`), so a personal and a
 work account each keep their own sign-in. `default` is claude's own
 (`~/.claude`). Results stay in Claude: Ygg opens a session there.
-| `GET /v1/repos` | its checkouts | `{repos: [{repo, branch}]}` |
+| `GET /v1/repos` | repos to offer when starting a session, most recently used first: those of your local and cloud sessions, the phone's checkouts, then (with a GitHub token) every repo it can read, from GitHub's `/user/repos`, kept 10 minutes | `{repos: [{repo, at, source, branch}]}` |
 | `POST /v1/complete {system, maxOutputTokens, messages}` | the messages as one prompt, `claude -p --output-format json` with no tools, in an empty folder | `{text}` |
 
 `claude --cloud` clones the GitHub remote at the checkout's branch, so the

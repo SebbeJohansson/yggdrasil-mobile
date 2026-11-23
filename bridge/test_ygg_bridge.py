@@ -118,7 +118,8 @@ class BridgeTest(unittest.TestCase):
         _, listed = self.call("GET", "/v1/cloud")
         self.assertEqual("Fix the README", listed["sessions"][0]["task"])
         _, rs = self.call("GET", "/v1/repos")
-        self.assertEqual([{"repo": "me/app", "branch": "main"}], rs["repos"])
+        # The repo a cloud session was started for is offered first next time.
+        self.assertEqual("me/app", rs["repos"][0]["repo"])
 
     def test_start_refuses_a_bad_repo_or_an_empty_task(self):
         self.assertEqual(400, self.call("POST", "/v1/cloud", {"repo": "not a repo", "task": "x"})[0])
@@ -407,6 +408,22 @@ class BridgeTest(unittest.TestCase):
             self.assertEqual(400, self.call("POST", "/v1/local", {"repo": "me/app", "repos": ["not a repo"]})[0])
         finally:
             b.open_claude, b.need_herdr, b.agent_info = saved
+            b.save_local([])
+
+    def test_repos_suggests_what_you_used_newest_first_then_github(self):
+        b = self.b
+        b.workdir("me/app")
+        saved = b.github_repos
+        b.github_repos = lambda: [{"repo": "me/gh-only", "branch": "trunk", "source": "github"}, {"repo": "me/app", "branch": "main"}]
+        try:
+            b.save_local([{"name": "x-1", "repo": "me/api", "at": 9_999_999_999_999, "worktrees": [{"repo": "me/api"}, {"repo": "me/lib"}]}])
+            listed = [r["repo"] for r in self.call("GET", "/v1/repos")[1]["repos"]]
+            self.assertEqual(["me/api", "me/lib"], listed[:2])
+            self.assertIn("me/app", listed)
+            self.assertEqual("me/gh-only", listed[-1])
+            self.assertEqual(len(listed), len({r.lower() for r in listed}))
+        finally:
+            b.github_repos = saved
             b.save_local([])
 
     def test_local_repo_changes_diff_and_push(self):

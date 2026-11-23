@@ -199,9 +199,9 @@ class BridgeClient(
     }
 
     /** Claude Code on the phone for [repo], as [account], with [task] typed in. Cloning first time takes a while. */
-    suspend fun startLocal(repo: String, task: String, account: String = "default", also: List<String> = emptyList()): LocalSession = withContext(Dispatchers.IO) {
+    suspend fun startLocal(repo: String, task: String, account: String = "default", also: List<String> = emptyList(), branch: String = ""): LocalSession = withContext(Dispatchers.IO) {
         // [also]: one session over several repos, each its own worktree on the same branch; Claude starts in [repo]'s.
-        val body = JSONObject().put("repo", repo).put("task", task).put("account", account).put("repos", JSONArray(also))
+        val body = JSONObject().put("repo", repo).put("task", task).put("account", account).put("repos", JSONArray(also)).put("branch", branch.trim())
         local(call("POST", "/v1/local", body, timeoutMs = 300_000)).also { changes.bump() }
     }
 

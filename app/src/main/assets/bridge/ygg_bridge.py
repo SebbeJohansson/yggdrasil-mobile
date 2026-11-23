@@ -299,16 +299,68 @@ def checkout(repo: str, branch: str = "") -> Path:
     return path
 
 
-def repos() -> list:
-    root = home() / "repos"
+GITHUB_API = os.environ.get("YGG_BRIDGE_GITHUB_API", "https://api.github.com")
+_github_cache = {"at": 0.0, "token": "", "repos": []}
+
+
+def github_repos() -> list:
+    """The repos the bridge's GitHub token can read, most recently pushed
+    first (GitHub's /user/repos), kept 10 minutes. None without a token, and
+    none when GitHub doesn't answer: suggestions only, never in the way."""
+    token = secret("github")
+    if not token:
+        return []
+    now = time.time()
+    if _github_cache["token"] == token and now - _github_cache["at"] < 600:
+        return _github_cache["repos"]
+    import urllib.request
     found = []
-    if root.exists():
-        for owner in sorted(root.iterdir()):
-            for name in sorted(owner.iterdir()) if owner.is_dir() else []:
-                if (name / ".git").exists():
-                    branch = subprocess.run(["git", "branch", "--show-current"], cwd=name, capture_output=True, text=True).stdout.strip()
-                    found.append({"repo": f"{owner.name}/{name.name}", "branch": branch})
+    try:
+        req = urllib.request.Request(f"{GITHUB_API}/user/repos?per_page=100&sort=pushed",
+                                     headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+                                              "User-Agent": "ygg-bridge"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            for item in json.loads(r.read()):
+                name = item.get("full_name", "")
+                if REPO.match(name):
+                    found.append({"repo": name, "branch": item.get("default_branch", ""), "source": "github"})
+    except Exception:
+        return _github_cache["repos"] if _github_cache["token"] == token else []
+    _github_cache.update(at=now, token=token, repos=found)
     return found
+
+
+def repos() -> list:
+    """Repos to offer when starting a session, most recently used first:
+    those of your local and cloud sessions, the phone's checkouts, then those
+    the GitHub token can read. Each once, with when it was last used (0: never)."""
+    seen = {}
+
+    def add(repo: str, at: int, source: str, branch: str = ""):
+        if not REPO.match(repo or ""):
+            return
+        key = repo.lower()
+        if key in seen:
+            seen[key]["at"] = max(seen[key]["at"], at)
+            return
+        seen[key] = {"repo": repo, "at": at, "source": source, "branch": branch}
+
+    data = state()
+    for item in data.get("local", []):
+        for r in [w.get("repo") for w in item.get("worktrees", [])] or [item.get("repo")]:
+            add(r, int(item.get("at", 0)), "session")
+    for item in data.get("sessions", []):
+        add(item.get("repo", ""), int(item.get("at", 0)), "cloud")
+    for folder in ("work", "repos"):
+        root = home() / folder
+        if root.is_dir():
+            for owner in sorted(root.iterdir()):
+                for name in sorted(owner.iterdir()) if owner.is_dir() else []:
+                    if (name / ".git").is_dir():
+                        add(f"{owner.name}/{name.name}", int((name / ".git").stat().st_mtime * 1000), "checkout")
+    for item in github_repos():
+        add(item["repo"], 0, "github", item.get("branch", ""))
+    return sorted(seen.values(), key=lambda r: -r["at"])
 
 
 # Cloud sessions --------------------------------------------------------------

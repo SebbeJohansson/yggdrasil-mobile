@@ -233,7 +233,7 @@ fun PhoneCloudPanel(vm: BridgeViewModel, onSetUp: () -> Unit) {
                 }
                 if (s.repos.isNotEmpty()) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        s.repos.forEach { r -> HudButton(r.substringAfter('/'), { repo = r }, kind = if (r == repo) HudButtonKind.GHOST else HudButtonKind.SMALL) }
+                        s.repos.take(8).forEach { r -> HudButton(r.substringAfter('/'), { repo = r }, kind = if (r == repo) HudButtonKind.PRIMARY else HudButtonKind.SMALL) }
                     }
                 }
                 HudTextField(repo, { repo = it.trim() }, placeholder = "owner/repo", maxLines = 1, modifier = Modifier.fillMaxWidth())

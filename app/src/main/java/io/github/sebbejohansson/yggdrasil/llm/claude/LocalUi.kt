@@ -132,9 +132,9 @@ class LocalViewModel(private val bridge: BridgeClient) : ViewModel() {
         refreshRepo()
     }
 
-    fun start(repo: String, task: String, account: String, also: List<String> = emptyList()) = viewModelScope.launch {
+    fun start(repo: String, task: String, account: String, also: List<String> = emptyList(), branch: String = "") = viewModelScope.launch {
         _state.update { it.copy(starting = (listOf(repo) + also).joinToString(", "), error = null) }
-        runCatching { bridge.startLocal(repo, task, account, also) }
+        runCatching { bridge.startLocal(repo, task, account, also, branch) }
             .onSuccess { s ->
                 // How the checkout was brought up to date, once, under the session.
                 _state.update {
@@ -254,7 +254,10 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
     var task by remember { mutableStateOf("") }
     var also by remember { mutableStateOf(listOf<String>()) }
     var adding by remember { mutableStateOf("") }
+    var branch by remember { mutableStateOf("") }
     if (repo.isEmpty() && b.repos.isNotEmpty()) repo = b.repos.first()
+    // The most recently used first (the bridge orders them); a handful, then the field.
+    val shown = (listOf(repo).filter { it in b.repos } + b.repos).distinct().take(8)
     val ownerRepo = Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
     HudLabel("claude code in herdr · this phone's checkout")
     Column(Modifier.fillMaxWidth().hudPanel().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -268,13 +271,13 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
         }
         if (b.repos.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                b.repos.forEach { r -> HudButton(r.substringAfter('/'), { repo = r }, kind = if (r == repo) HudButtonKind.GHOST else HudButtonKind.SMALL) }
+                shown.forEach { r -> HudButton(r.substringAfter('/'), { repo = r; also = also - r }, kind = if (r == repo) HudButtonKind.PRIMARY else HudButtonKind.SMALL) }
             }
         }
         HudTextField(repo, { repo = it.trim() }, placeholder = "owner/repo", maxLines = 1, modifier = Modifier.fillMaxWidth())
         // Several repos in one session, as a desktop goal spans them: each its own worktree, one branch name.
         HudLabel(if (also.isEmpty()) "Also in (optional)" else "Also in: Claude may work in these too", modifier = Modifier.padding(top = 2.dp))
-        val choices = (b.repos + also).distinct().filter { it != repo }
+        val choices = (b.repos.take(8) + also).distinct().filter { it != repo }
         if (choices.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 choices.forEach { r ->
@@ -289,10 +292,11 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
             HudButton("Add", { also = (also + adding).distinct(); adding = "" }, kind = HudButtonKind.SMALL,
                 enabled = adding.matches(ownerRepo) && adding != repo)
         }
+        HudTextField(branch, { branch = it.trim() }, placeholder = "From branch (default: the repo's default)", maxLines = 1, modifier = Modifier.fillMaxWidth())
         HudTextField(task, { task = it }, placeholder = "What Claude should do (or leave empty)", maxLines = 4, modifier = Modifier.fillMaxWidth())
         HudButton(
             if (s.starting != null) "Starting…" else if (also.isEmpty()) "Start" else "Start in ${also.size + 1} repos",
-            { vm.start(repo, task.trim(), account, also.filter { it != repo }); task = ""; also = emptyList() },
+            { vm.start(repo, task.trim(), account, also.filter { it != repo }, branch); task = ""; also = emptyList(); branch = "" },
             kind = HudButtonKind.PRIMARY,
             enabled = s.starting == null && repo.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")),
         )
