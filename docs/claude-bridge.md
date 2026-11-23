@@ -100,13 +100,14 @@ is `401`. Errors are `{ "error": "…" }` with a non-2xx code.
 | `GET /v1/accounts` | the Claude accounts and who each is signed in as | `{accounts: [{id, name, signedIn, email, configDir}]}` |
 | `POST /v1/accounts {name}` | adds an account; sign it in with `ygg_bridge.py login <id>` (or from the app, in Ygg's own Linux) | `{id, name, ...}` |
 | `POST /v1/accounts/{id} {name}` / `POST /v1/accounts/{id}/remove` | renames / forgets an account and its sign-in | |
-
 | `GET /v1/local` | the local sessions: Claude Code on the phone, in herdr | `{sessions: [{name, account, repo, task, at, status, dialog}]}` |
 | `POST /v1/local {repo, repos?, task?, account?, branch?}` | clones the repo once into `~/.ygg-bridge/work` (then fetches), makes the session its own worktree from the newest `origin/<branch>` (see below), starts `claude` in a herdr workspace there as the account, and types the task | a session, with `refreshed`: its branch and the commit it started from |
 | `GET /v1/local/{name}` | the session with its chat (from Claude's transcript) and, while there's none, its screen | a session with `messages`, `screen` |
 | `GET /v1/local/{name}/repo` / `GET …/diff?path=` / `POST …/git {action: pull\|push}` | the checkout's branch, ahead/behind, changed files (+/−) and last commits; one file's diff; a fast-forward pull or a push of its branch, with the bridge's GitHub token | |
 | `POST /v1/local/{name}/prompt {text}` / `choose {question, key, label}` / `keys {keys}` / `stop` | types a message; picks a dialog's choice while that dialog still shows; presses esc etc.; closes the workspace (the session stays, ended, with its worktree) | `{ok}` |
 | `POST /v1/local/{name}/remove` | an ended session: removes its worktree and its local `ygg/` branch (never the branch on GitHub). 409 while that would lose work: changes not committed, or commits not pushed | `{ok}` |
+| `GET /v1/repos` | repos to offer when starting a session, most recently used first: those of your local and cloud sessions, the phone's checkouts, then (with a GitHub token) every repo it can read, from GitHub's `/user/repos`, kept 10 minutes | `{repos: [{repo, at, source, branch}]}` |
+| `POST /v1/complete {system, maxOutputTokens, messages}` | the messages as one prompt, `claude -p --output-format json` with no tools, in an empty folder | `{text}` |
 
 Local sessions run Claude Code interactively in herdr (https://herdr.dev), as
 the desktop's Sindri does: one headless `herdr server` per account (its socket at a short
@@ -163,10 +164,8 @@ Accounts: each Claude account has its own claude config folder
 (`CLAUDE_CONFIG_DIR`, in `~/.ygg-bridge/accounts/<id>`), so a personal and a
 work account each keep their own sign-in. `default` is claude's own
 (`~/.claude`). Results stay in Claude: Ygg opens a session there.
-| `GET /v1/repos` | repos to offer when starting a session, most recently used first: those of your local and cloud sessions, the phone's checkouts, then (with a GitHub token) every repo it can read, from GitHub's `/user/repos`, kept 10 minutes | `{repos: [{repo, at, source, branch}]}` |
-| `POST /v1/complete {system, maxOutputTokens, messages}` | the messages as one prompt, `claude -p --output-format json` with no tools, in an empty folder | `{text}` |
 
-The New session forms show every one of them as a chip, most recently used
+The New session forms show every repo `/v1/repos` gives as a chip, most recently used
 first; typing in the repo field (or *Also in*'s) narrows them to those
 whose name holds the text.
 
