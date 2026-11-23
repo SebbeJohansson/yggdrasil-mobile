@@ -61,6 +61,8 @@ it (`MainActivity.kt`).
   - **[docs/claude-bridge.md](docs/claude-bridge.md):** the bridge's routes.
   - **[docs/desktop-parity.md](docs/desktop-parity.md):** a part ported, a
     desktop change carried over, or a new difference found.
+  - **[docs/claude-usage-ledger.md](docs/claude-usage-ledger.md):** the planned
+    usage page; update it when it is built.
   - **Screenshots under `docs/screenshots`:** when the look changes.
 
 ## The Claude bridge
