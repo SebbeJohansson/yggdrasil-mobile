@@ -3,7 +3,11 @@ package io.github.sebbejohansson.yggdrasil.munin
 import io.github.sebbejohansson.yggdrasil.gjallar.Severity
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+// Robolectric for Android's real org.json; plain unit tests get a stub.
+@RunWith(RobolectricTestRunner::class)
 class MuninTest {
     private val page = Target("github-status", "statuspage", "https://www.githubstatus.com/api/v2/status.json")
 

@@ -43,7 +43,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
+          # The pinned scanners' dependencies build with the Go of their time, not the newest.
+          go-version: "1.23"
           cache: false
 
       - name: Install the scanners (pinned)

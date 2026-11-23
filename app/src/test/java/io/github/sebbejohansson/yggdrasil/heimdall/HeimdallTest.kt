@@ -3,8 +3,12 @@ package io.github.sebbejohansson.yggdrasil.heimdall
 import io.github.sebbejohansson.yggdrasil.gjallar.Severity
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import java.time.LocalDate
 
+// Robolectric for Android's real org.json; plain unit tests get a stub.
+@RunWith(RobolectricTestRunner::class)
 class HeimdallTest {
     @Test fun readsTheIssuesBlock() {
         val body = """
