@@ -102,6 +102,11 @@ Each of these cost a release. Keep them when changing the bridge.
 
 ## Desktop and phone: what differs and why
 
+The big differences and their reasons. The full list (what isn't ported,
+every behaviour that differs, and desktop changes still to carry over) is
+[docs/desktop-parity.md](docs/desktop-parity.md); update it when you port
+something or find a new difference.
+
 | Area | Desktop | Phone | Why |
 | --- | --- | --- | --- |
 | Parts | one process each, HTTP between them | packages in one app | one APK, no server; Android kills stray processes |
