@@ -25,7 +25,7 @@ the desktop Yggdrasil's dashboard (`ui/`):
 - **Tabs:** Ask · Inbox (Alerts and Messages) · Code · System (Phone, Jobs,
   Huginn, Tree, Runes), with Apps first when Ygg is the home screen.
 - **Settings:** one page, as the dashboard's: Assistant (model, Claude,
-  memory), Connection (Mímir), Notifications (permission, quiet hours,
+  memory), Connection (Machines on the tailnet, Mímir), Notifications (permission, quiet hours,
   meetings), Boot sequence, Home screen, Updates, and Developer (test buttons).
 
   ![Settings](docs/screenshots/12-settings.png)
@@ -187,6 +187,21 @@ Set up under Settings → Connection: the URL (`https://<vps>.<tailnet>.ts.net`,
 HTTPS only: Android refuses plain HTTP) and this phone's token, both printed
 by Mímir's `deploy/install.sh`. Keep the name `phone` unless you gave the token
 another one. The phone needs Tailscale on.
+
+**Machines reached directly.** Under Settings → Connection → **Machines**,
+add each of your machines on the tailnet (the VPS, the home PC) with its
+tailnet name (`vps.<tailnet>.ts.net`) and its owner token
+(`~/.config/yggdrasil/owner.token` there). The Code tab then reads its coding
+sessions straight from its Sindri every 5 seconds ("live · over the
+tailnet"), and **Send**, a dialog's choices, **Resume there** and the cloud
+buttons are done on it at once, with no Mímir between and no
+`SAGA_DRIVE_FROM` to set: its token is the say-so. A machine reached this way
+shows once, live, instead of as it last sent through Mímir; one that doesn't
+answer is named at the top with why, and its Mímir copy shows again. The
+machine publishes its parts with Yggdrasil's `scripts/tailscale-serve.sh`
+(Yggdrasil's docs/tailscale.md). A machine whose `/health` says it is a work
+machine is never read or driven from the phone, and the tailnet's policy
+keeps the phone from reaching it in the first place.
 
 **Coding sessions (the Code tab).** Each machine that runs Sindri and Sága
 (the desktop, another laptop) sends its coding sessions through Mímir

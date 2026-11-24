@@ -313,6 +313,16 @@ own.
 **Phone only:** its own local sessions next to the other machines' in the
 Code tab.
 
+**Reached directly (`K/nodes/`):** a machine added under Settings →
+Connection → Machines is read from its own Sindri over the tailnet, mapped
+as Sága's `readSessions` maps it (`Machines.deviceSessions`), and driven as
+Sága's `carryOut` drives it (`Machines.call`), with no Mímir, no
+`SAGA_DRIVE_FROM` (its owner token drives it) and no 30-minute limit. Its
+Mímir copy is hidden while it answers. A machine whose `/health` says
+`work` (Yggdrasil's `YGG_WORK=on`) is never read or driven. Not yet: its
+goals, alerts (Gjallar) and transcripts, which the desktop widget reads from
+each node.
+
 ### Ratatoskr
 
 **Not on the phone:**

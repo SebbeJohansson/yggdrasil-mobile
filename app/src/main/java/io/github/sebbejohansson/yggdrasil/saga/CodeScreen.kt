@@ -44,6 +44,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.sebbejohansson.yggdrasil.AppContainer
+import io.github.sebbejohansson.yggdrasil.nodes.Machine
+import io.github.sebbejohansson.yggdrasil.nodes.MachineService
+import io.github.sebbejohansson.yggdrasil.nodes.MachineStatus
+import io.github.sebbejohansson.yggdrasil.nodes.Machines
 import io.github.sebbejohansson.yggdrasil.ui.Hud
 import io.github.sebbejohansson.yggdrasil.ui.HudButton
 import io.github.sebbejohansson.yggdrasil.ui.HudButtonKind
@@ -68,24 +72,74 @@ data class CodeUiState(
     val devices: List<DeviceSessions> = emptyList(),
     val asked: List<Asked> = emptyList(),
     val sync: SyncStatus = SyncStatus(),
+    /** The machines reached directly, and how each answered last. */
+    val machines: List<MachineStatus> = emptyList(),
 )
 
 /**
- * Your machines' coding sessions, as each last sent them through Mímir, and
- * what you can ask of them from the phone. Each ask goes with Sága's next sync
- * and is carried out by that machine, when it is on and trusts this phone.
+ * Your machines' coding sessions, and what you can ask of them from the
+ * phone. A machine reached directly over the tailnet (nodes/) is read now
+ * and does what you ask now; any other machine is shown as it last sent its
+ * sessions through Mímir, and what you ask goes with Sága's next sync, carried
+ * out when that machine is on and trusts this phone. A machine reached both
+ * ways shows once, directly.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class CodeViewModel(private val saga: SagaService, private val settings: SagaSettings) : ViewModel() {
-    val state = combine(saga.sessionChanges.flow, saga.status) { _, status -> status }.mapLatest { status ->
-        CodeUiState(me = settings.device, devices = saga.devices(), asked = saga.asked(), sync = status)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CodeUiState())
+class CodeViewModel(
+    private val saga: SagaService,
+    private val settings: SagaSettings,
+    private val machines: MachineService,
+) : ViewModel() {
+    val state = combine(
+        combine(saga.sessionChanges.flow, saga.status) { _, status -> status },
+        machines.sessions,
+        machines.status,
+        machines.asked,
+    ) { status, direct, machineStatus, directAsked -> Triple(status, direct, machineStatus to directAsked) }
+        .mapLatest { (status, direct, rest) ->
+            val (machineStatus, directAsked) = rest
+            val reached = direct.map { it.device }.toSet()
+            CodeUiState(
+                me = settings.device,
+                devices = direct + saga.devices().filter { it.device !in reached },
+                asked = (directAsked + saga.asked()).sortedByDescending { it.at },
+                sync = status,
+                machines = machineStatus,
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CodeUiState())
 
-    fun syncNow() = viewModelScope.launch { saga.sync() }
+    fun syncNow() = viewModelScope.launch {
+        machines.refresh()
+        saga.sync()
+    }
+
+    /** The machines reached directly, read again: the Code tab does this every few seconds while it shows. */
+    suspend fun refreshMachines() = machines.refresh()
 
     private fun ask(device: String, kind: String, build: (SessionAsk) -> SessionAsk) = viewModelScope.launch {
-        saga.askSession(build(SessionAsk(id = UUID.randomUUID().toString().replace("-", ""), kind = kind, origin = device)))
+        val ask = build(SessionAsk(id = UUID.randomUUID().toString().replace("-", ""), kind = kind, origin = device))
+        if (machines.isDirect(device)) {
+            machines.ask(ask)
+            return@launch
+        }
+        saga.askSession(ask)
         saga.sync()
+    }
+
+    /** Settings → Connection → Machines. */
+    fun machineList(): List<Machine> = machines.machines()
+
+    /** Saves a machine and reads it at once; the error says what is wrong with what was typed. */
+    fun saveMachine(label: String, host: String, token: String, keepToken: Boolean): String? {
+        val checked = Machines.check(label, host, if (keepToken && token.isBlank()) "kept" else token)
+        val machine = checked.getOrElse { return it.message }
+        machines.save(machine, token)
+        viewModelScope.launch { machines.refresh() }
+        return null
+    }
+
+    fun removeMachine(id: String) = viewModelScope.launch {
+        machines.remove(id)
     }
 
     fun prompt(device: String, s: RemoteSession, text: String) = ask(device, SessionKinds.PROMPT) { it.copy(session = s.id, text = text) }
@@ -98,7 +152,7 @@ class CodeViewModel(private val saga: SagaService, private val settings: SagaSet
 
     companion object {
         fun factory(c: AppContainer): ViewModelProvider.Factory =
-            viewModelFactory { initializer { CodeViewModel(c.saga, c.sagaSettings) } }
+            viewModelFactory { initializer { CodeViewModel(c.saga, c.sagaSettings, c.machines) } }
     }
 }
 
@@ -133,6 +187,13 @@ fun CodeScreen(
     var localOpen by remember { mutableStateOf(false) }
     if (phone != null && local != null && localOpen) PhoneLocalDialog(phone, local, onSetUpPhone) { localOpen = false; local.open(null) }
     val localState = local?.state?.collectAsStateWithLifecycle()?.value
+    // The machines reached directly, read again every few seconds while the Code tab shows.
+    LaunchedEffect(Unit) {
+        while (true) {
+            runCatching { vm.refreshMachines() }
+            kotlinx.coroutines.delay(5_000)
+        }
+    }
     // The phone's own sessions, kept fresh while the Code tab shows.
     if (local != null && phoneState?.ready == true) {
         LaunchedEffect(Unit) {
@@ -153,8 +214,8 @@ fun CodeScreen(
                     Text("Sindri", style = HudText.title)
                     HudLabel(
                         when {
-                            !s.sync.configured -> "Mímir is not set up (Settings → Connection)"
-                            s.devices.isEmpty() -> "no machine has sent its sessions"
+                            !s.sync.configured && s.machines.isEmpty() -> "no machines set up (Settings → Connection)"
+                            s.devices.isEmpty() -> "no machine has answered or sent its sessions"
                             else -> "${s.devices.sumOf { it.sessions.size }} sessions on ${s.devices.size} " +
                                 if (s.devices.size == 1) "machine" else "machines"
                         },
@@ -178,10 +239,21 @@ fun CodeScreen(
                 PhoneSessions(phoneState, localState, local, onOpen = { localOpen = true }, onNew = { local.open(null); localOpen = true })
             }
         }
+        // A machine reached directly that did not answer, or was left out.
+        s.machines.filter { it.error != null || it.refused }.forEach { m ->
+            item(key = "m-${m.machine.id}") {
+                HudLabel(
+                    if (m.refused) "${m.machine.label}: left out, it is a work machine"
+                    else "${m.machine.label}: ${m.error}",
+                    color = Hud.overlay2,
+                )
+            }
+        }
         if (s.devices.isEmpty()) {
             item {
                 Text(
-                    "A machine that runs Sindri and Sága with SINDRI_TOKEN set sends its sessions here through Mímir.",
+                    "Add your machines under Settings → Connection → Machines to see their sessions live over the tailnet. " +
+                        "A machine that runs Sindri and Sága also sends its sessions here through Mímir.",
                     style = HudText.small.copy(color = Hud.overlay0, textAlign = TextAlign.Center),
                     modifier = Modifier.fillMaxWidth().padding(24.dp),
                 )
@@ -189,8 +261,14 @@ fun CodeScreen(
         }
         s.devices.forEach { d ->
             item(key = "h-${d.device}") {
-                HudSection(d.device.replaceFirstChar { it.uppercase() }, Modifier.padding(top = 8.dp)) {
-                    HudLabel(if (d.quiet(now)) "quiet ${ago(d.heardAt, now)}" else "heard ${ago(d.heardAt, now)} ago")
+                HudSection(d.title, Modifier.padding(top = 8.dp)) {
+                    HudLabel(
+                        when {
+                            d.direct -> "live · over the tailnet"
+                            d.quiet(now) -> "quiet ${ago(d.heardAt, now)}"
+                            else -> "heard ${ago(d.heardAt, now)} ago · through Mímir"
+                        },
+                    )
                 }
             }
             item(key = "d-${d.device}") { DevicePanel(d, s, vm, now, phone?.takeIf { phoneState?.ready == true }, phoneState) }

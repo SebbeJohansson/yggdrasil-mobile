@@ -305,6 +305,10 @@ class AppContainer(private val app: Application) {
     /** Keeps the phone's alerts and the desktop's in step through Mímir. */
     val saga = SagaService(db.saga, gjallar, mimir = { sagaSettings.client() }, device = { sagaSettings.device })
 
+    /** Your machines reached directly over the tailnet (Settings → Connection → Machines). */
+    val machineSettings = io.github.sebbejohansson.yggdrasil.nodes.MachineSettings(app)
+    val machines = io.github.sebbejohansson.yggdrasil.nodes.MachineService(machineSettings, me = { sagaSettings.device })
+
     @OptIn(FlowPreview::class)
     fun start() {
         // Network code reports what it moves; the Performance page shows who pulled what.
