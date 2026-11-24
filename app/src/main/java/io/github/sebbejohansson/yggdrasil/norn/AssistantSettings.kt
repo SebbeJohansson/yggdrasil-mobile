@@ -9,7 +9,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -34,6 +38,7 @@ import java.time.format.DateTimeFormatter
 fun AssistantSettings(vm: ChatViewModel) {
     val s by vm.state.collectAsStateWithLifecycle()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        AnsweredByPanel(vm, s)
         ModelPanel(s, onDownload = vm::downloadModel, onRefresh = { vm.refreshProviders() })
         s.providers.firstOrNull { it.leavesDevice }?.let { claude ->
             Column(Modifier.fillMaxWidth().hudPanel().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -52,6 +57,39 @@ fun AssistantSettings(vm: ChatViewModel) {
             }
         }
         MemoryPanel(s, vm)
+    }
+}
+
+/**
+ * Who answers the Ask tab: this phone, or one of your machines' Norn, as the
+ * desktop dashboard's "Assistant: <machine>" picker. Only machines whose Norn
+ * is up are offered (Settings → Connection → Machines); a work machine never is.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun AnsweredByPanel(vm: ChatViewModel, s: ChatUiState) {
+    var choices by remember { mutableStateOf(vm.answerers()) }
+    var chosen by remember { mutableStateOf(vm.answeredBy()) }
+    LaunchedEffect(Unit) {
+        runCatching { vm.refreshMachines() }
+        choices = vm.answerers()
+    }
+    if (choices.isEmpty() && chosen == null) return
+    Column(Modifier.fillMaxWidth().hudPanel().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        HudLabel("Answered by", color = Hud.overlay2)
+        Text(
+            if (chosen == null) "This phone: its own model, memory and chats."
+            else "${s.answeredBy ?: chosen}'s Norn, over the tailnet: its models, memory and inbox. Chats are kept here too.",
+            style = HudText.meta,
+        )
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudButton("This phone", { vm.setAnsweredBy(null); chosen = null },
+                kind = if (chosen == null) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+            choices.forEach { m ->
+                HudButton(m.label, { vm.setAnsweredBy(m.id); chosen = m.id },
+                    kind = if (chosen == m.id) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+            }
+        }
     }
 }
 

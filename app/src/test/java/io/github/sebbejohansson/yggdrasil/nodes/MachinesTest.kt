@@ -125,7 +125,8 @@ class MachinesTest {
                 "sindri /v1/sessions" -> """{"claude":{"sessions":[{"sessionId":"s1","pid":41,"directory":"/p","lastActivity":1}]},"herdr":{"from":"herdr","sessions":[{"paneId":"w1:p1","pids":[41],"status":"idle"}]}}"""
                 "sindri /v1/cloud" -> throw IOException("off")
                 "sindri /v1/projects" -> "[]"
-                "ratatoskr /v1/status" -> """{"parts":[{"name":"sindri","up":true,"health":{"version":"v0.2.0"}},{"name":"gjallar","up":false,"error":"refused"}]}"""
+                "ratatoskr /v1/status" -> """{"parts":[{"name":"sindri","up":true,"health":{"version":"v0.2.0"}},{"name":"norn","up":true},{"name":"gjallar","up":false,"error":"refused"}]}"""
+                "norn /v1/ask" -> """{"answer":"Two meetings today.","session":"phone-3","recalled":[],"usedInbox":true,"via":"local model"}"""
                 "gjallar /v1/alerts" -> """{"alerts":[{"id":7,"source":"heimdall","key":"k","severity":"warning","title":"Port open","state":"open","firstSeenAt":"2026-11-24T10:00:00Z","lastSeenAt":"2026-11-24T11:00:00Z","muted":false}]}"""
                 else -> "{}"
             }
@@ -170,6 +171,11 @@ class MachinesTest {
         assertEquals(setOf("vps"), machines.alertsFrom.value)
         machines.onAlert(alert) { it.ackAlert(7) }
         assertTrue(clients.any { "gjallar POST /v1/alerts/7/ack" in it.calls })
+
+        // Its Norn answers the Ask tab when chosen: offered because Ratatoskr says it is up.
+        assertEquals(listOf("vps"), machines.withNorn().map { it.id })
+        assertEquals("Two meetings today.", machines.askNorn("vps", "What's on today?", "phone-3"))
+        assertTrue(clients.any { "norn POST /v1/ask" in it.calls })
     }
 
     @Test
@@ -185,6 +191,8 @@ class MachinesTest {
 
         machines.ask(SessionAsk(id = "a1", kind = SessionKinds.PROMPT, origin = "vps", session = "s1", text = "go on"))
         assertEquals(AskState.FAILED, machines.asked.value.single().state)
+        assertTrue(machines.withNorn().isEmpty())
+        assertTrue(runCatching { machines.askNorn("vps", "hello", "phone-1") }.isFailure)
         assertTrue(clients.flatMap { it.calls }.none { " POST " in it })
     }
 

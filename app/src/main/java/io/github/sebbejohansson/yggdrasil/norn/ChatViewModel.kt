@@ -49,6 +49,8 @@ data class ChatUiState(
     val downloadWaiting: Boolean = false,
     /** Until when names go to Claude unswapped (epoch ms); 0 or past when they're swapped. */
     val namesOffUntil: Long = 0,
+    /** The machine whose Norn answers the Ask tab, by name; null when this phone does. */
+    val answeredBy: String? = null,
 ) {
     val busy get() = pending != null
 }
@@ -67,6 +69,15 @@ class NornSettings(context: Context) {
     var namesOffUntil: Long
         get() = prefs.getLong("names_off_until", 0)
         set(v) = prefs.edit { putLong("names_off_until", v) }
+
+    /**
+     * Who answers the Ask tab: null for this phone, or a machine's id
+     * (nodes/), whose own Norn answers, as the desktop dashboard's
+     * "Assistant: <machine>" picker does.
+     */
+    var answeredBy: String?
+        get() = prefs.getString("answered_by", null)?.ifBlank { null }
+        set(v) = prefs.edit { putString("answered_by", v ?: "") }
 }
 
 class ChatViewModel(
@@ -78,6 +89,8 @@ class ChatViewModel(
     private val brain: Brain,
     private val embedder: LiteRtEmbedder,
     private val settings: NornSettings,
+    /** Your machines reached directly: one of them may answer instead of the phone. */
+    private val machines: io.github.sebbejohansson.yggdrasil.nodes.MachineService? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(
@@ -88,6 +101,7 @@ class ChatViewModel(
     private var generation: Job? = null
 
     init {
+        settings.answeredBy?.let { id -> _state.update { it.copy(answeredBy = machines?.machines()?.firstOrNull { m -> m.id == id }?.label ?: id) } }
         refreshProviders()
         viewModelScope.launch {
             chat.openLatest()
@@ -134,6 +148,11 @@ class ChatViewModel(
         if (question.isEmpty() || _state.value.busy) return
         _state.update { it.copy(messages = it.messages + LlmMessage(io.github.sebbejohansson.yggdrasil.llm.LlmRole.USER, question), pending = "", error = null, learned = emptyList()) }
         val privacy = if (_state.value.allowClaude) Privacy.MAY_LEAVE_DEVICE else Privacy.ON_DEVICE_ONLY
+        val machineId = settings.answeredBy
+        if (machineId != null && machines != null) {
+            sendToMachine(question, privacy, machineId, machines)
+            return
+        }
 
         generation = viewModelScope.launch {
             var answer = ""
@@ -160,6 +179,48 @@ class ChatViewModel(
             }
         }
     }
+
+    /**
+     * The message goes to a machine's Norn, which answers it there with its own
+     * memory, inbox and models. The chat is still kept on the phone, so it is
+     * in the Chats list; its session there is this chat's, so the conversation
+     * goes on. Nothing is learned on the phone from it: that machine does.
+     */
+    private fun sendToMachine(question: String, privacy: Privacy, machineId: String, machines: io.github.sebbejohansson.yggdrasil.nodes.MachineService) {
+        generation = viewModelScope.launch {
+            var answer = ""
+            try {
+                chat.ask(question, privacy)
+                _state.update { it.copy(conversationId = chat.conversationId) }
+                val session = "phone-${chat.conversationId ?: 0}"
+                answer = machines.askNorn(machineId, question, session)
+                chat.answered(answer)
+                showChat()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { chat.answered(answer) }
+                showChat()
+                throw e
+            } catch (e: Exception) {
+                chat.answered(answer)
+                showChat()
+                _state.update { it.copy(error = e.message ?: e.javaClass.simpleName) }
+            }
+        }
+    }
+
+    /** Who answers: this phone (null) or a machine; with the machines that could, for Settings → Assistant. */
+    fun answeredBy(): String? = settings.answeredBy
+    fun answerers(): List<io.github.sebbejohansson.yggdrasil.nodes.Machine> {
+        val chosen = settings.answeredBy
+        val list = machines?.withNorn().orEmpty()
+        val kept = machines?.machines().orEmpty().filter { it.id == chosen && list.none { m -> m.id == chosen } }
+        return list + kept
+    }
+    fun setAnsweredBy(id: String?) {
+        settings.answeredBy = id
+        _state.update { it.copy(answeredBy = id?.let { m -> machines?.machines()?.firstOrNull { it.id == m }?.label }) }
+    }
+    suspend fun refreshMachines() { machines?.refresh() }
 
     /** After the answer, on the side: facts from your words, never the answer's. */
     private fun learn(question: String) {
@@ -234,7 +295,7 @@ class ChatViewModel(
     companion object {
         fun factory(c: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                ChatViewModel(c.llm, c.localLlm, c.defaultModel, c.modelDownloads, c.nornChat, c.brain, c.embedder, c.nornSettings)
+                ChatViewModel(c.llm, c.localLlm, c.defaultModel, c.modelDownloads, c.nornChat, c.brain, c.embedder, c.nornSettings, c.machines)
             }
         }
     }

@@ -131,6 +131,21 @@ class MachineService(
         if (machine != null) runCatching { refresh() }
     }
 
+    /**
+     * Asks [question] of [id]'s Norn, the assistant the phone's Ask tab uses
+     * when it is set to that machine (Settings → Assistant → Answered by).
+     * The machine is asked for its health first: a work machine is never asked.
+     */
+    suspend fun askNorn(id: String, question: String, session: String): String = withContext(io) {
+        val machine = settings.list().firstOrNull { it.id == id } ?: error("no machine called $id here any more")
+        val client = clientFor(machine, settings.token(machine.id))
+        if (client.health().work) error("${machine.label} is a work machine: it never answers the phone")
+        client.ask(question, session)
+    }
+
+    /** The machines whose Norn was up last time, for the Answered by choice. */
+    fun withNorn(): List<Machine> = _status.value.filter { s -> !s.refused && s.parts.any { it.name == "norn" && it.up } }.map { it.machine }
+
     fun save(machine: Machine, token: String) = settings.save(machine, token)
 
     fun remove(id: String) {

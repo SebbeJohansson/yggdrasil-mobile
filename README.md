@@ -213,7 +213,15 @@ Each machine's other parts are asked the same way, each on its own port:
   "v0.2.0 · 5 of 5 parts up", name a part that is down, and when a newer
   Yggdrasil release is out (GitHub, asked at most every 6 hours) give the
   `ygg upgrade` to run there; a machine built from a checkout says "from
-  source". A machine whose `/health` says it is a work
+  source".
+- **The assistant:** Settings → Assistant → **Answered by** picks who
+  answers the Ask tab: this phone, or a machine whose Norn is up, as the
+  desktop dashboard's "Assistant: <machine>" picker. With a machine chosen,
+  each message goes to its Norn (`POST /v1/ask`) and is answered there with
+  its own models, memory and inbox; the session is this chat's, so the
+  conversation goes on there, and the chat is kept in the phone's Chats too.
+  Nothing is learned on the phone from it. The Ask tab's line says
+  "answered by <machine>'s Norn". A work machine is never offered or asked. A machine whose `/health` says it is a work
 machine is never read or driven from the phone, and the tailnet's policy
 keeps the phone from reaching it in the first place.
 

@@ -62,6 +62,16 @@ open class MachineClient(private val machine: Machine, private val token: String
         return runCatching { JSONObject(answer).optString("url").ifBlank { null } }.getOrNull()
     }
 
+    /**
+     * A message for its Norn (POST /v1/ask), which answers it or hands it on,
+     * as the desktop's ask window does. [session] keeps the conversation going
+     * there. A model can take a while, so this waits up to two minutes.
+     */
+    fun ask(question: String, session: String): String {
+        val body = JSONObject().put("question", question.take(4000)).put("session", session)
+        return JSONObject(call("norn", "POST", "/v1/ask", body, timeoutMs = 60_000)).optString("answer")
+    }
+
     /** Every part, as its Ratatoskr sees them. */
     fun parts(): List<PartState> = Machines.parseStatus(call("ratatoskr", "GET", "/v1/status"))
 
