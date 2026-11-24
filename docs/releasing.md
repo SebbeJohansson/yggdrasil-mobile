@@ -14,6 +14,10 @@ GitHub Actions builds a signed APK and publishes it as a GitHub Release
   git push origin v0.2.0
   ```
 
+Either way the run waits for you: approve it under the run's **Review
+deployments** (the `release` environment). Nothing is signed before that, so a
+tag pushed with a stolen token never reaches your phone on its own.
+
 - The tag sets the version: `v1.2.3` is versionName `1.2.3` and versionCode
   `10203`. Each part must stay below 100.
 - A tag with a suffix (`v1.0.0-rc.1`) is published as a pre-release.
@@ -31,7 +35,10 @@ keytool -genkeypair -v -keystore yggdrasil-release.jks -alias yggdrasil \
   -keyalg RSA -keysize 4096 -validity 10000
 ```
 
-Add four repository secrets (Settings → Secrets and variables → Actions):
+Make a `release` environment (Settings → Environments → New environment) with
+yourself as a **required reviewer** and **deployment branches and tags**
+limited to `main` and `v*` tags. Add four secrets to that environment, not to
+the repository, so only an approved release run can read them:
 
 | Secret | Value |
 | --- | --- |
