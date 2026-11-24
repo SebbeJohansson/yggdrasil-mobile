@@ -270,6 +270,7 @@ own.
 - `/v1/complete` with privacy levels
 - your prompts, kept
 - `/v1/sessions/recent` and the heatmap
+- the Claude usage ledger and `GET /v1/usage` (planned: [claude-usage-ledger.md](claude-usage-ledger.md))
 - merged goals
 - a goal's why
 - the night shift and self-repair
