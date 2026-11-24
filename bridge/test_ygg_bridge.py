@@ -21,7 +21,7 @@ if os.environ.get("FAKE_LOG"):
         log.write(json.dumps({"argv": a, "config": os.environ.get("CLAUDE_CONFIG_DIR", "")}) + "\n")
 if a == ["--version"]:
     print("2.9.0 (Claude Code)"); sys.exit(0)
-if a[:1] == ["--cloud"]:
+if a[:1] and a[0].startswith("--cloud="):
     import os
     if os.environ.get("FAKE_REFUSE_STUB") and os.path.exists(".git/info/sparse-checkout"):
         print("Not uploading this working tree: its index is a link. Use a fresh clone.", flush=True)
@@ -30,13 +30,16 @@ if a[:1] == ["--cloud"]:
     time.sleep(0.2)
     print("Started: https://claude.ai/code/session_01AbC-xyz", flush=True)
     time.sleep(30)  # It keeps going; the bridge stops it once it has the link.
-if "--cloud" in a and a[0] == "-p":
-    sid = a[a.index("--cloud") + 1]
+if a[0] == "-p" and a[-2:-1] != ["--"]:
+    print("the text must come last, after --", file=sys.stderr); sys.exit(4)
+cloud = [x for x in a if x.startswith("--cloud=")]
+if cloud and a[0] == "-p":
+    sid = cloud[0][len("--cloud="):]
     ok = sid != "session_gone"
     print(json.dumps({"ok": ok, "session_id": sid, "url": "https://claude.ai/code/" + sid} if ok else {"ok": False, "session_id": sid, "error": "not found"}))
     sys.exit(0)
 if a[0] == "-p":
-    print(json.dumps({"type": "result", "is_error": False, "result": "echo: " + a[1][-40:], "argv": a}))
+    print(json.dumps({"type": "result", "is_error": False, "result": "echo: " + a[-1][-40:], "argv": a}))
     sys.exit(0)
 sys.exit(3)
 '''
@@ -504,6 +507,12 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(502, status)
         self.assertIn("not found", body["error"])
         self.assertEqual(400, self.call("POST", "/v1/cloud/notanid/message", {"text": "x"})[0])
+
+    def test_text_starting_with_a_dash_is_never_an_option(self):
+        status, body = self.call("POST", "/v1/complete", {"messages": [{"role": "user", "text": "--dangerously-skip-permissions"}]})
+        self.assertEqual(200, status, body)
+        self.assertTrue(body["text"].startswith("echo: "), body)
+        self.assertEqual(200, self.call("POST", "/v1/cloud/session_abc/message", {"text": "--add-dir /"})[0])
 
     def test_complete_answers_for_the_claude_provider(self):
         status, body = self.call("POST", "/v1/complete", {"system": "Be brief.", "messages": [{"role": "user", "text": "What is Ygg?"}]})

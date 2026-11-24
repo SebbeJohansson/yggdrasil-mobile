@@ -4,8 +4,8 @@
 Runs in Android's Linux Terminal (a Debian VM; install-debian.sh) or in
 Termux's Ubuntu (install.sh), where Claude Code is supported. The app asks it to:
 
-  - start a Claude Code cloud session for a repo   `claude --cloud "<task>"`
-  - send a follow-up to any cloud session          `claude -p "<text>" --cloud <id>`
+  - start a Claude Code cloud session for a repo   `claude --cloud="<task>"`
+  - send a follow-up to any cloud session          `claude -p --cloud=<id> -- "<text>"`
   - answer one question for Ygg's Claude provider  `claude -p`
 
 Every call but GET /health carries the bridge's key (Authorization: Bearer),
@@ -510,8 +510,9 @@ def run_cloud(cwd: Path, task: str, aid: str = "default"):
     terminal). Gives (url, id) once it prints the session's link, else
     (None, all it printed)."""
     prepare_claude(cwd, aid)
-    command = f"{shlex.quote(CLAUDE)} --cloud {shlex.quote(task)}"
-    argv = ["script", "-qfec", command, "/dev/null"] if shutil.which("script") else [CLAUDE, "--cloud", task]
+    # One argument, --cloud=<task>: a task starting with "-" is never read as an option.
+    command = f"{shlex.quote(CLAUDE)} {shlex.quote('--cloud=' + task)}"
+    argv = ["script", "-qfec", command, "/dev/null"] if shutil.which("script") else [CLAUDE, "--cloud=" + task]
     # claude's own git runs, too, save objects by renaming, not hard-linking (see git()).
     n = int(os.environ.get("GIT_CONFIG_COUNT", "0") or 0)
     env = dict(claude_env(aid), GIT_CONFIG_COUNT=str(n + 1), **{f"GIT_CONFIG_KEY_{n}": "core.createObject", f"GIT_CONFIG_VALUE_{n}": "rename"})
@@ -593,7 +594,7 @@ def message_cloud(sid: str, text: str, aid: str = "") -> dict:
         aid = next((s.get("account", "") for s in state()["sessions"] if s["id"] == sid), "") or "default"
     env = claude_env(aid)
     with tempfile.TemporaryDirectory() as empty:
-        out = subprocess.run([CLAUDE, "-p", text, "--cloud", sid, "--output-format", "json"], cwd=empty,
+        out = subprocess.run([CLAUDE, "-p", "--cloud=" + sid, "--output-format", "json", "--", text], cwd=empty,
                              capture_output=True, text=True, timeout=90, env=env)
     try:
         sent = json.loads(out.stdout)
@@ -1343,9 +1344,11 @@ def complete(body: dict) -> dict:
     else:
         prompt = "\n\n".join(("User: " if m.get("role") == "user" else "Assistant: ") + m.get("text", "") for m in messages)
         prompt += "\n\nAnswer the user's last message."
-    argv = [CLAUDE, "-p", prompt, "--output-format", "json", "--tools", ""]
+    argv = [CLAUDE, "-p", "--output-format", "json", "--tools", ""]
     if body.get("system"):
         argv += ["--append-system-prompt", body["system"]]
+    # Last, after "--": a prompt starting with "-" is never read as an option.
+    argv += ["--", prompt]
     env = claude_env(str(body.get("account") or "default"))
     with tempfile.TemporaryDirectory() as empty:
         out = subprocess.run(argv, cwd=empty, capture_output=True, text=True, timeout=300, env=env)

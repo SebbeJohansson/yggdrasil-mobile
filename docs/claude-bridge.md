@@ -94,9 +94,9 @@ is `401`. Errors are `{ "error": "…" }` with a non-2xx code.
 
 | Call | Does | Answers |
 | --- | --- | --- |
-| `POST /v1/cloud {repo, task, branch?, account?}` | shallow-clones `owner/name` into `~/.ygg-bridge/repos` (or updates it), runs `claude --cloud "<task>"` there under `script` (it wants a terminal), and stops it once it prints the session link | `{id, url, repo, task, at}` |
+| `POST /v1/cloud {repo, task, branch?, account?}` | shallow-clones `owner/name` into `~/.ygg-bridge/repos` (or updates it), runs `claude --cloud="<task>"` there under `script` (it wants a terminal), and stops it once it prints the session link | `{id, url, repo, task, at}` |
 | `GET /v1/cloud` | the sessions it started, newest first | `{sessions: [...]}` |
-| `POST /v1/cloud/{id}/message {text, account?}` | `claude -p "<text>" --cloud <id> --output-format json`: queues it in any of your cloud sessions, as the account that started it (or the one given) | `{ok, id, url}` |
+| `POST /v1/cloud/{id}/message {text, account?}` | `claude -p --cloud=<id> --output-format json -- "<text>"` (text last, so it is never read as an option): queues it in any of your cloud sessions, as the account that started it (or the one given) | `{ok, id, url}` |
 | `GET /v1/accounts` | the Claude accounts and who each is signed in as | `{accounts: [{id, name, signedIn, email, configDir}]}` |
 | `POST /v1/accounts {name}` | adds an account; sign it in with `ygg_bridge.py login <id>` (or from the app, in Ygg's own Linux) | `{id, name, ...}` |
 | `POST /v1/accounts/{id} {name}` / `POST /v1/accounts/{id}/remove` | renames / forgets an account and its sign-in | |

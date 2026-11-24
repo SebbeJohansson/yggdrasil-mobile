@@ -35,10 +35,12 @@ class BridgeContractTest {
         import json, sys
         a = sys.argv[1:]
         if a == ["--version"]: print("2.9.0 (Claude Code)"); sys.exit(0)
-        if a[0] == "-p" and "--cloud" in a:
-            sid = a[a.index("--cloud") + 1]
+        if a[0] == "-p" and a[-2] != "--": sys.exit(4)
+        cloud = [x for x in a if x.startswith("--cloud=")]
+        if a[0] == "-p" and cloud:
+            sid = cloud[0][len("--cloud="):]
             print(json.dumps({"ok": sid != "session_gone", "session_id": sid, "error": "not found"})); sys.exit(0)
-        if a[0] == "-p": print(json.dumps({"is_error": False, "result": "Claude says: " + a[1]})); sys.exit(0)
+        if a[0] == "-p": print(json.dumps({"is_error": False, "result": "Claude says: " + a[-1]})); sys.exit(0)
         sys.exit(3)
     """.trimIndent()
 
