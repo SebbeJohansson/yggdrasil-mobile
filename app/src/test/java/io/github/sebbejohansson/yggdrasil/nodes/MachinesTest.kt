@@ -115,16 +115,18 @@ class MachinesTest {
         override fun set(token: String?) { value = token }
     }
 
-    /** A machine's Sindri, answered from memory: what was asked is kept. */
+    /** A machine's parts, answered from memory: what was asked of which part is kept. */
     private class FakeClient(machine: Machine, private val health: String) : MachineClient(machine, "t") {
         val calls = mutableListOf<String>()
-        override fun call(method: String, path: String, body: JSONObject?, timeoutMs: Int): String {
-            calls += "$method $path"
-            return when (path) {
-                "/health" -> health
-                "/v1/sessions" -> """{"claude":{"sessions":[{"sessionId":"s1","pid":41,"directory":"/p","lastActivity":1}]},"herdr":{"from":"herdr","sessions":[{"paneId":"w1:p1","pids":[41],"status":"idle"}]}}"""
-                "/v1/cloud" -> throw IOException("off")
-                "/v1/projects" -> "[]"
+        override fun call(part: String, method: String, path: String, body: JSONObject?, timeoutMs: Int): String {
+            calls += "$part $method $path"
+            return when ("$part $path") {
+                "sindri /health" -> health
+                "sindri /v1/sessions" -> """{"claude":{"sessions":[{"sessionId":"s1","pid":41,"directory":"/p","lastActivity":1}]},"herdr":{"from":"herdr","sessions":[{"paneId":"w1:p1","pids":[41],"status":"idle"}]}}"""
+                "sindri /v1/cloud" -> throw IOException("off")
+                "sindri /v1/projects" -> "[]"
+                "ratatoskr /v1/status" -> """{"parts":[{"name":"sindri","up":true,"health":{"version":"v0.2.0"}},{"name":"gjallar","up":false,"error":"refused"}]}"""
+                "gjallar /v1/alerts" -> """{"alerts":[{"id":7,"source":"heimdall","key":"k","severity":"warning","title":"Port open","state":"open","firstSeenAt":"2026-11-24T10:00:00Z","lastSeenAt":"2026-11-24T11:00:00Z","muted":false}]}"""
                 else -> "{}"
             }
         }
@@ -134,10 +136,14 @@ class MachinesTest {
         val vaults = mutableMapOf<String, MemoryVault>()
         val settings = MachineSettings(RuntimeEnvironment.getApplication()) { id -> vaults.getOrPut(id) { MemoryVault() } }
         settings.save(vps, "vps-token")
-        return MachineService(settings, me = { "phone" }, clock = Clock.fixed(now, ZoneOffset.UTC), io = kotlinx.coroutines.Dispatchers.Unconfined) { m, token ->
-            assertEquals("vps-token", token)
-            FakeClient(m, health).also { clients += it }
-        }
+        return MachineService(
+            settings, me = { "phone" }, clock = Clock.fixed(now, ZoneOffset.UTC), io = kotlinx.coroutines.Dispatchers.Unconfined,
+            clientFor = { m, token ->
+                assertEquals("vps-token", token)
+                FakeClient(m, health).also { clients += it }
+            },
+            latestRelease = { "v0.2.1" },
+        )
     }
 
     @Test
@@ -151,7 +157,19 @@ class MachinesTest {
 
         machines.ask(SessionAsk(id = "a1", kind = SessionKinds.PROMPT, origin = "vps", session = "s1", text = "go on"))
         assertEquals(AskState.DONE, machines.asked.value.single().state)
-        assertTrue(clients.any { "POST /v1/sessions/herdr/w1%3Ap1/prompt" in it.calls })
+        assertTrue(clients.any { "sindri POST /v1/sessions/herdr/w1%3Ap1/prompt" in it.calls })
+
+        // Its other parts: Ratatoskr's view, and Gjallar's alerts answered at Gjallar.
+        val status = machines.status.value.single()
+        assertEquals(listOf("gjallar"), status.partsDown.map { it.name })
+        assertEquals("v0.2.1", machines.latest.value)
+        assertEquals("v0.2.0 · gjallar down · v0.2.1 is out: ygg upgrade v0.2.1", Machines.summary(status, machines.latest.value))
+        val alert = machines.alerts.value.single()
+        assertEquals(7L, alert.directId)
+        assertEquals("VPS", alert.label)
+        assertEquals(setOf("vps"), machines.alertsFrom.value)
+        machines.onAlert(alert) { it.ackAlert(7) }
+        assertTrue(clients.any { "gjallar POST /v1/alerts/7/ack" in it.calls })
     }
 
     @Test
@@ -162,10 +180,41 @@ class MachinesTest {
         assertTrue(machines.status.value.single().refused)
         assertFalse(machines.isDirect("vps"))
         assertTrue(machines.sessions.value.isEmpty())
-        assertTrue(clients.flatMap { it.calls }.none { it.startsWith("GET /v1/sessions") })
+        assertTrue(clients.flatMap { it.calls }.none { it.contains("/v1/sessions") || it.startsWith("gjallar") || it.startsWith("ratatoskr") })
+        assertTrue(machines.alerts.value.isEmpty())
 
         machines.ask(SessionAsk(id = "a1", kind = SessionKinds.PROMPT, origin = "vps", session = "s1", text = "go on"))
         assertEquals(AskState.FAILED, machines.asked.value.single().state)
-        assertTrue(clients.flatMap { it.calls }.none { it.startsWith("POST") })
+        assertTrue(clients.flatMap { it.calls }.none { " POST " in it })
+    }
+
+    @Test
+    fun `reads alerts, leaving out the phone's own and the resolved`() {
+        val alerts = Machines.parseAlerts("""{"alerts":[
+            {"id":1,"source":"heimdall","key":"a","severity":"critical","title":"Key in commit","state":"acknowledged","firstSeenAt":"2026-11-24T10:00:00Z","lastSeenAt":"2026-11-24T10:00:00Z","snoozedUntil":"2026-11-25T10:00:00Z","muted":true},
+            {"id":2,"source":"phone","key":"b","severity":"info","title":"Battery","state":"open"},
+            {"id":3,"source":"munin","key":"c","severity":"warning","title":"Down","state":"resolved"}]}""")
+        assertEquals(listOf(1L), alerts.map { it.id })
+        val a = alerts.single().alert
+        assertEquals(io.github.sebbejohansson.yggdrasil.gjallar.Severity.CRITICAL, a.severity)
+        assertEquals(io.github.sebbejohansson.yggdrasil.gjallar.AlertState.ACKNOWLEDGED, a.state)
+        assertEquals(Instant.parse("2026-11-25T10:00:00Z"), a.snoozedUntil)
+        assertTrue(a.muted)
+    }
+
+    @Test
+    fun `compares releases as the widget does`() {
+        assertTrue(YggReleases.compare("v0.2.0", "v0.2.1") < 0)
+        assertTrue(YggReleases.compare("v0.10.0", "v0.9.9") > 0)
+        assertTrue(YggReleases.compare("v1.0.0-rc.1", "v1.0.0") < 0)
+        assertEquals(YggReleases.Standing.BEHIND, YggReleases.standing("v0.2.0", "v0.2.1"))
+        assertEquals(YggReleases.Standing.CURRENT, YggReleases.standing("v0.2.1", "v0.2.1"))
+        assertEquals(YggReleases.Standing.SOURCE, YggReleases.standing("9f1c2ab-dirty", "v0.2.1"))
+        assertEquals(YggReleases.Standing.UNKNOWN, YggReleases.standing("v0.2.0", null))
+        assertEquals("v0.2.1", YggReleases.parseLatest("""{"tag_name":"v0.2.1"}"""))
+        assertNull(YggReleases.parseLatest("""{"tag_name":"nightly"}"""))
+        val up = MachineStatus(vps, MachineHealth("v0.2.1", false), parts = listOf(PartState("sindri", true, "v0.2.1", null)))
+        assertEquals("v0.2.1 · 1 of 1 parts up", Machines.summary(up, "v0.2.1"))
+        assertFalse(Machines.needsLook(up, "v0.2.1"))
     }
 }

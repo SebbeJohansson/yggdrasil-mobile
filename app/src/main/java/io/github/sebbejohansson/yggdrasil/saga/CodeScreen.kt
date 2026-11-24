@@ -74,6 +74,8 @@ data class CodeUiState(
     val sync: SyncStatus = SyncStatus(),
     /** The machines reached directly, and how each answered last. */
     val machines: List<MachineStatus> = emptyList(),
+    /** The newest Yggdrasil release, to say which machines are behind it. */
+    val latest: String? = null,
 )
 
 /**
@@ -95,9 +97,10 @@ class CodeViewModel(
         machines.sessions,
         machines.status,
         machines.asked,
-    ) { status, direct, machineStatus, directAsked -> Triple(status, direct, machineStatus to directAsked) }
+        machines.latest,
+    ) { status, direct, machineStatus, directAsked, latest -> Triple(status, direct, Triple(machineStatus, directAsked, latest)) }
         .mapLatest { (status, direct, rest) ->
-            val (machineStatus, directAsked) = rest
+            val (machineStatus, directAsked, latest) = rest
             val reached = direct.map { it.device }.toSet()
             CodeUiState(
                 me = settings.device,
@@ -105,6 +108,7 @@ class CodeViewModel(
                 asked = (directAsked + saga.asked()).sortedByDescending { it.at },
                 sync = status,
                 machines = machineStatus,
+                latest = latest,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CodeUiState())
 
@@ -261,9 +265,11 @@ fun CodeScreen(
         }
         s.devices.forEach { d ->
             item(key = "h-${d.device}") {
+                val machine = s.machines.firstOrNull { it.machine.id == d.device }
                 HudSection(d.title, Modifier.padding(top = 8.dp)) {
                     HudLabel(
                         when {
+                            d.direct && machine != null -> "live · ${Machines.summary(machine, s.latest)}"
                             d.direct -> "live · over the tailnet"
                             d.quiet(now) -> "quiet ${ago(d.heardAt, now)}"
                             else -> "heard ${ago(d.heardAt, now)} ago · through Mímir"

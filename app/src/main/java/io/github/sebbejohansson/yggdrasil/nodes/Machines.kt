@@ -1,5 +1,8 @@
 package io.github.sebbejohansson.yggdrasil.nodes
 
+import io.github.sebbejohansson.yggdrasil.gjallar.AlertState
+import io.github.sebbejohansson.yggdrasil.gjallar.Severity
+import io.github.sebbejohansson.yggdrasil.saga.AlertSnapshot
 import io.github.sebbejohansson.yggdrasil.saga.DeviceSessions
 import io.github.sebbejohansson.yggdrasil.saga.RemoteChoice
 import io.github.sebbejohansson.yggdrasil.saga.RemoteCloud
@@ -32,8 +35,14 @@ data class Machine(
     val host: String,
 )
 
+/** One of a machine's alerts, with its id at that machine's Gjallar, for Seen, Snooze and Mute there. */
+data class DirectAlert(val id: Long, val alert: AlertSnapshot)
+
 /** What a machine's /health says, for the list under Settings → Connection. */
 data class MachineHealth(val version: String?, val work: Boolean)
+
+/** One of a machine's parts as its Ratatoskr last saw it. */
+data class PartState(val name: String, val up: Boolean, val version: String?, val error: String?)
 
 /** How a machine answered the last time it was asked. */
 data class MachineStatus(
@@ -43,10 +52,23 @@ data class MachineStatus(
     val error: String? = null,
     /** Left out: it says it is a work machine, which is never driven from here. */
     val refused: Boolean = false,
-)
+    /** Its parts, from its Ratatoskr; empty when Ratatoskr did not answer. */
+    val parts: List<PartState> = emptyList(),
+) {
+    val partsUp: Int get() = parts.count { it.up }
+    val partsDown: List<PartState> get() = parts.filter { !it.up }
+}
 
 object Machines {
-    /** The parts' ports, as Yggdrasil's: only Sindri's is asked from the phone so far. */
+    /**
+     * Each part's port, as Yggdrasil's: scripts/tailscale-serve.sh publishes
+     * the ones a machine runs at https://<its tailnet name>:<port>.
+     */
+    val PORTS = mapOf(
+        "norn" to 8771, "sindri" to 8772, "vedrfolnir" to 8773, "gjallar" to 8774,
+        "ratatoskr" to 8775, "munin" to 8776, "huginn" to 8777, "dellingr" to 8778,
+        "hermodr" to 8779, "loki" to 8780, "heimdall" to 8781,
+    )
     const val SINDRI_PORT = 8772
 
     private val ID = Regex("^[a-z0-9][a-z0-9-]{0,31}$")
@@ -71,6 +93,75 @@ object Machines {
     }
 
     fun sindri(machine: Machine): String = "https://${machine.host}:$SINDRI_PORT"
+
+    /** A part's base URL on [machine]. */
+    fun part(machine: Machine, part: String): String =
+        "https://${machine.host}:${PORTS[part] ?: error("no part called $part")}"
+
+    /** Ratatoskr's GET /v1/status: every part it watches, up or down, with its version. */
+    fun parseStatus(json: String): List<PartState> = JSONObject(json).optJSONArray("parts").objects().mapNotNull { p ->
+        val name = p.str("name") ?: return@mapNotNull null
+        PartState(name, p.optBoolean("up"), p.optJSONObject("health")?.str("version"), p.str("error"))
+    }
+
+    /**
+     * Gjallar's open alerts (GET /v1/alerts), as the phone shows another
+     * machine's: what the phone itself raised there (source `phone`, sent
+     * through Sága) is left out, since the phone shows those already.
+     */
+    fun parseAlerts(json: String): List<DirectAlert> = JSONObject(json).optJSONArray("alerts").objects().mapNotNull { a ->
+        val id = a.optLong("id").takeIf { it > 0 } ?: return@mapNotNull null
+        val source = a.str("source") ?: return@mapNotNull null
+        if (source == "phone") return@mapNotNull null
+        val state = when (a.str("state")) {
+            "acknowledged" -> AlertState.ACKNOWLEDGED
+            "resolved" -> AlertState.RESOLVED
+            else -> AlertState.OPEN
+        }
+        if (state == AlertState.RESOLVED) return@mapNotNull null
+        DirectAlert(
+            id = id,
+            alert = AlertSnapshot(
+                source = source,
+                key = a.str("key") ?: "",
+                severity = when (a.str("severity")) { "critical" -> Severity.CRITICAL; "warning" -> Severity.WARNING; else -> Severity.INFO },
+                title = a.str("title") ?: source,
+                detail = a.str("detail"),
+                link = a.str("link"),
+                state = state,
+                openedAt = instant(a.str("firstSeenAt")),
+                lastSeenAt = instant(a.str("lastSeenAt")),
+                snoozedUntil = a.str("snoozedUntil")?.let(::instant),
+                muted = a.optBoolean("muted"),
+            ),
+        )
+    }
+
+    /**
+     * One line about a machine that answered: its version, how many of its
+     * parts are up (naming the ones down), and a newer release when one is out,
+     * with the command to run there.
+     */
+    fun summary(status: MachineStatus, latest: String?): String {
+        val version = status.health?.version ?: "?"
+        val parts = when {
+            status.parts.isEmpty() -> null
+            status.partsDown.isEmpty() -> "${status.partsUp} of ${status.parts.size} parts up"
+            else -> "${status.partsDown.joinToString(", ") { it.name }} down"
+        }
+        val update = when (YggReleases.standing(status.health?.version, latest)) {
+            YggReleases.Standing.BEHIND -> "$latest is out: ygg upgrade $latest"
+            YggReleases.Standing.SOURCE -> "from source"
+            else -> null
+        }
+        return listOfNotNull(version, parts, update).joinToString(" · ")
+    }
+
+    /** Whether a machine wants your attention: a part down, or behind the newest release. */
+    fun needsLook(status: MachineStatus, latest: String?): Boolean =
+        status.partsDown.isNotEmpty() || YggReleases.standing(status.health?.version, latest) == YggReleases.Standing.BEHIND
+
+    private fun instant(text: String?): Instant = text?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: Instant.EPOCH
 
     fun parseHealth(json: String): MachineHealth = JSONObject(json).let {
         MachineHealth(version = it.str("version"), work = it.optBoolean("work"))

@@ -56,10 +56,11 @@ fun MachinesSettings(vm: CodeViewModel) {
                         val line = when {
                             status == null -> machine.host
                             status.refused -> "left out: it says it is a work machine"
-                            status.error != null -> "not answering: ${status.error}"
-                            else -> "${status.health?.version ?: "?"} · ${machine.host}"
+                            status.error != null && status.health == null -> "not answering: ${status.error}"
+                            else -> Machines.summary(status, s.latest)
                         }
-                        Text(line, style = HudText.meta.copy(color = if (status?.error != null || status?.refused == true) Hud.amber else Hud.overlay2))
+                        val warn = status != null && (status.refused || status.error != null || Machines.needsLook(status, s.latest))
+                        Text(line, style = HudText.meta.copy(color = if (warn) Hud.amber else Hud.overlay2))
                     }
                     HudButton("Edit", { editing = machine }, kind = HudButtonKind.SMALL, modifier = Modifier.padding(end = 6.dp))
                     HudButton("Remove", { vm.removeMachine(machine.id); list = list.filter { it.id != machine.id } }, kind = HudButtonKind.SMALL)

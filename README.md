@@ -199,7 +199,21 @@ buttons are done on it at once, with no Mímir between and no
 shows once, live, instead of as it last sent through Mímir; one that doesn't
 answer is named at the top with why, and its Mímir copy shows again. The
 machine publishes its parts with Yggdrasil's `scripts/tailscale-serve.sh`
-(Yggdrasil's docs/tailscale.md). A machine whose `/health` says it is a work
+(Yggdrasil's docs/tailscale.md).
+
+Each machine's other parts are asked the same way, each on its own port:
+
+- **Alerts:** Inbox → Alerts lists each machine's open alerts from its own
+  Gjallar ("live · over the tailnet"), read every 15 seconds while the tab
+  shows; **Seen**, **Snooze** and **Mute** are done there at once. The
+  phone's own alerts, which Sága sends there, are left out. A machine whose
+  Gjallar doesn't answer shows its Mímir copy instead.
+- **Parts and version:** its Ratatoskr says which parts are up, and its
+  `/health` which Yggdrasil it runs. Settings → Machines and the Code tab say
+  "v0.2.0 · 5 of 5 parts up", name a part that is down, and when a newer
+  Yggdrasil release is out (GitHub, asked at most every 6 hours) give the
+  `ygg upgrade` to run there; a machine built from a checkout says "from
+  source". A machine whose `/health` says it is a work
 machine is never read or driven from the phone, and the tailnet's policy
 keeps the phone from reaching it in the first place.
 

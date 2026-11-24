@@ -3,6 +3,7 @@ package io.github.sebbejohansson.yggdrasil.nodes
 import io.github.sebbejohansson.yggdrasil.saga.AskState
 import io.github.sebbejohansson.yggdrasil.saga.Asked
 import io.github.sebbejohansson.yggdrasil.saga.DeviceSessions
+import io.github.sebbejohansson.yggdrasil.saga.Mirror
 import io.github.sebbejohansson.yggdrasil.saga.SessionAsk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -28,7 +29,13 @@ class MachineService(
     private val clock: Clock = Clock.systemUTC(),
     private val io: CoroutineContext = Dispatchers.IO,
     private val clientFor: (Machine, String) -> MachineClient = ::MachineClient,
+    /** The newest Yggdrasil release's tag, or null when unknown (nodes/YggReleases.kt). */
+    private val latestRelease: () -> String? = { null },
 ) {
+    private val _latest = MutableStateFlow<String?>(null)
+    /** The newest Yggdrasil release, to say which machines are behind it. */
+    val latest: StateFlow<String?> = _latest.asStateFlow()
+
     private val _status = MutableStateFlow<List<MachineStatus>>(emptyList())
     /** How each machine answered last. */
     val status: StateFlow<List<MachineStatus>> = _status.asStateFlow()
@@ -36,6 +43,10 @@ class MachineService(
     private val _sessions = MutableStateFlow<List<DeviceSessions>>(emptyList())
     /** The sessions of every machine that answered last time. */
     val sessions: StateFlow<List<DeviceSessions>> = _sessions.asStateFlow()
+
+    private val _alerts = MutableStateFlow<List<Mirror>>(emptyList())
+    /** The open alerts of every machine whose Gjallar answered, as the Inbox shows another machine's. */
+    val alerts: StateFlow<List<Mirror>> = _alerts.asStateFlow()
 
     private val _asked = MutableStateFlow<List<Asked>>(emptyList())
     /** What was asked of a machine directly, and how it went, newest first. */
@@ -45,23 +56,56 @@ class MachineService(
 
     /** Asks every machine for its health and sessions, all at once. */
     suspend fun refresh() = withContext(io) {
+        if (settings.list().isNotEmpty()) _latest.value = runCatching { latestRelease() }.getOrNull() ?: _latest.value
         val reads = coroutineScope {
             settings.list().map { machine -> async { read(machine) } }.awaitAll()
         }
-        _status.value = reads.map { it.first }
-        _sessions.value = reads.mapNotNull { it.second }
+        _status.value = reads.map { it.status }
+        _sessions.value = reads.mapNotNull { it.sessions }
+        _alerts.value = reads.flatMap { it.alerts }
+        _alertsFrom.value = reads.filter { it.alertsRead }.map { it.status.machine.id }.toSet()
     }
 
-    private fun read(machine: Machine): Pair<MachineStatus, DeviceSessions?> {
+    private val _alertsFrom = MutableStateFlow<Set<String>>(emptySet())
+    /** The machines whose Gjallar answered last time: their Mímir copies of alerts are left out. */
+    val alertsFrom: StateFlow<Set<String>> = _alertsFrom.asStateFlow()
+
+    private class Read(
+        val status: MachineStatus,
+        val sessions: DeviceSessions? = null,
+        val alerts: List<Mirror> = emptyList(),
+        val alertsRead: Boolean = false,
+    )
+
+    /**
+     * One machine: its health first, and nothing more from a work machine;
+     * then its sessions, its parts and its alerts. A part that does not answer
+     * leaves only its own piece out.
+     */
+    private fun read(machine: Machine): Read {
         val client = clientFor(machine, settings.token(machine.id))
         val health = runCatching { client.health() }.getOrElse {
-            return MachineStatus(machine, error = it.message ?: "not answering") to null
+            return Read(MachineStatus(machine, error = it.message ?: "not answering"))
         }
-        if (health.work) return MachineStatus(machine, health, refused = true) to null
-        return runCatching { client.sessions(me(), clock.instant()) }.fold(
-            onSuccess = { MachineStatus(machine, health) to it },
-            onFailure = { MachineStatus(machine, health, error = it.message ?: "sessions not answering") to null },
+        if (health.work) return Read(MachineStatus(machine, health, refused = true))
+        val now = clock.instant()
+        val sessions = runCatching { client.sessions(me(), now) }
+        val parts = runCatching { client.parts() }.getOrDefault(emptyList())
+        val alerts = runCatching { client.alerts() }
+        return Read(
+            MachineStatus(machine, health, error = sessions.exceptionOrNull()?.let { it.message ?: "sessions not answering" }, parts = parts),
+            sessions.getOrNull(),
+            alerts.getOrDefault(emptyList()).map { Mirror(machine.id, it.alert, now, directId = it.id, label = machine.label) },
+            alertsRead = alerts.isSuccess,
         )
+    }
+
+    /** Seen, Snooze or Mute on a machine's alert, at its Gjallar now; then reads again. */
+    suspend fun onAlert(m: Mirror, act: (MachineClient) -> Unit) = withContext(io) {
+        val machine = settings.list().firstOrNull { it.id == m.device } ?: return@withContext
+        if (_status.value.any { it.machine.id == machine.id && it.refused }) return@withContext
+        runCatching { act(clientFor(machine, settings.token(machine.id))) }
+        runCatching { refresh() }
     }
 
     /** Whether [device] is a machine reached directly, which answered last time. */
@@ -93,5 +137,6 @@ class MachineService(
         settings.remove(id)
         _status.value = _status.value.filter { it.machine.id != id }
         _sessions.value = _sessions.value.filter { it.device != id }
+        _alerts.value = _alerts.value.filter { it.device != id }
     }
 }

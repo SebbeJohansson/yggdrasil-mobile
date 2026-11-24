@@ -307,7 +307,12 @@ class AppContainer(private val app: Application) {
 
     /** Your machines reached directly over the tailnet (Settings → Connection → Machines). */
     val machineSettings = io.github.sebbejohansson.yggdrasil.nodes.MachineSettings(app)
-    val machines = io.github.sebbejohansson.yggdrasil.nodes.MachineService(machineSettings, me = { sagaSettings.device })
+    private val latestYggRelease = io.github.sebbejohansson.yggdrasil.nodes.LatestYggRelease(app)
+    val machines = io.github.sebbejohansson.yggdrasil.nodes.MachineService(
+        machineSettings,
+        me = { sagaSettings.device },
+        latestRelease = { latestYggRelease.get() },
+    )
 
     @OptIn(FlowPreview::class)
     fun start() {

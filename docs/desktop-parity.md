@@ -319,9 +319,11 @@ as Sága's `readSessions` maps it (`Machines.deviceSessions`), and driven as
 Sága's `carryOut` drives it (`Machines.call`), with no Mímir, no
 `SAGA_DRIVE_FROM` (its owner token drives it) and no 30-minute limit. Its
 Mímir copy is hidden while it answers. A machine whose `/health` says
-`work` (Yggdrasil's `YGG_WORK=on`) is never read or driven. Not yet: its
-goals, alerts (Gjallar) and transcripts, which the desktop widget reads from
-each node.
+`work` (Yggdrasil's `YGG_WORK=on`) is never read or driven. Its alerts
+come from its own Gjallar (`MachineClient.alerts`, Seen/Snooze/Mute there),
+its parts from its Ratatoskr, and its version is compared with the newest
+release as the widget's Health page does (`YggReleases`). Not yet: its goals
+and transcripts, which the desktop widget reads from each node.
 
 ### Ratatoskr
 
