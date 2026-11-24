@@ -214,6 +214,17 @@ Each machine's other parts are asked the same way, each on its own port:
   Yggdrasil release is out (GitHub, asked at most every 6 hours) give the
   `ygg upgrade` to run there; a machine built from a checkout says "from
   source".
+- **Reading a session:** **Read** on a Claude Code session of a machine
+  reached directly opens its transcript: your prompts, its replies, its
+  thinking, and each tool call with what came back, following along every 3
+  seconds (only what changed is sent again). Read only; the same reader opens
+  a goal's agents.
+- **Goals:** under its sessions, each machine reached directly lists its goals
+  in play, in the order to act on them (needs you, moving, ready to review,
+  drafts), with what each needs next. **Start** starts a draft that names its
+  projects, **Resume** retries one waiting on Claude usage, **Read** opens one
+  of its agents, and **New goal** makes a draft in up to 4 of its projects.
+  Reviewing, races and merging stay on the desktop.
 - **The assistant:** Settings → Assistant → **Answered by** picks who
   answers the Ask tab: this phone, or a machine whose Norn is up, as the
   desktop dashboard's "Assistant: <machine>" picker. With a machine chosen,

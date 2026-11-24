@@ -72,6 +72,36 @@ open class MachineClient(private val machine: Machine, private val token: String
         return JSONObject(call("norn", "POST", "/v1/ask", body, timeoutMs = 60_000)).optString("answer")
     }
 
+    /** Its goals (Sindri's GET /v1/goals). */
+    fun goals(): List<MachineGoal> = Goals.parse(call("sindri", "GET", "/v1/goals"))
+
+    /** A new draft goal in [repos]. */
+    fun createGoal(title: String, repos: List<String>): MachineGoal? = Goals.parseOne(
+        call("sindri", "POST", "/v1/goals", JSONObject().put("title", title.trim()).put("repos", org.json.JSONArray(repos)).put("source", "manual")),
+    )
+
+    /** Starts a draft: one coding agent per project. */
+    fun startGoal(id: Long) { call("sindri", "POST", "/v1/goals/$id/start", JSONObject(), timeoutMs = 15_000) }
+
+    /** A goal whose parts wait on Claude usage tries again now. */
+    fun resumeGoal(id: Long) { call("sindri", "POST", "/v1/goals/$id/resume", JSONObject()) }
+
+    /**
+     * The end of a Claude Code session's transcript there (Yggdrasil's
+     * GET /v1/sessions/claude/{id}/transcript). With [since] as the last read
+     * said and the file unchanged, the text is left out: a reader polling it
+     * moves a few bytes while nothing happens.
+     */
+    fun transcript(session: String, directory: String?, tail: Int, since: String?): RemoteTranscript {
+        val query = buildString {
+            append("?tail=").append(tail)
+            directory?.let { append("&dir=").append(java.net.URLEncoder.encode(it, "UTF-8")) }
+            since?.let { append("&since=").append(java.net.URLEncoder.encode(it, "UTF-8")) }
+        }
+        val o = JSONObject(call("sindri", "GET", "/v1/sessions/claude/${java.net.URLEncoder.encode(session, "UTF-8")}/transcript$query", timeoutMs = 15_000))
+        return RemoteTranscript(o.optLong("size"), o.optLong("modified"), o.optString("text"), o.optBoolean("unchanged"))
+    }
+
     /** Every part, as its Ratatoskr sees them. */
     fun parts(): List<PartState> = Machines.parseStatus(call("ratatoskr", "GET", "/v1/status"))
 
