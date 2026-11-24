@@ -12,7 +12,11 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.time.Instant
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /** What GET /health says. */
 data class BridgeHealth(val claude: String, val github: Boolean, val herdr: Boolean = false)
@@ -101,13 +105,13 @@ class BridgeException(val status: Int, message: String) : IOException(message)
  * Ygg's Claude bridge (bridge/, `app/src/main/assets/bridge/ygg_bridge.py`):
  * the real `claude` CLI in Termux's Ubuntu, on 127.0.0.1:8765. It starts
  * cloud sessions, sends follow-ups to any of them, and answers for the
- * Claude provider. Everything but /health carries its key.
+ * Claude provider. Everything but /health is signed with its key
+ * ([signature]); the key itself never goes over the port, so an app that
+ * took 127.0.0.1:8765 while the bridge was down learns nothing it can use.
  */
 class BridgeClient(
     private val vault: TokenVault,
     private val baseUrl: String = "http://127.0.0.1:8765",
-    /** Ygg's own GitHub token (the updater's), handed to the bridge when it has none, for private repos. */
-    private val githubToken: () -> String? = { null },
 ) {
     val changes = Changes()
 
@@ -128,18 +132,25 @@ class BridgeClient(
     }
 
     private fun call(method: String, path: String, body: JSONObject? = null, timeoutMs: Int = 30_000, key: Boolean = true): JSONObject {
+        val bytes = body?.toString()?.toByteArray() ?: ByteArray(0)
         val conn = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 2_000
             readTimeout = timeoutMs
-            if (key) vault.get()?.let { setRequestProperty("Authorization", "Bearer $it") }
+            if (key) vault.get()?.let { k ->
+                val stamp = (System.currentTimeMillis() / 1000).toString()
+                val nonce = hex(ByteArray(16).also { random.nextBytes(it) })
+                setRequestProperty("Authorization", "Ygg-HMAC " + signature(k, method, path, stamp, nonce, bytes))
+                setRequestProperty("X-Ygg-Time", stamp)
+                setRequestProperty("X-Ygg-Nonce", nonce)
+            }
             if (body != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
             }
         }
         try {
-            body?.let { b -> conn.outputStream.use { it.write(b.toString().toByteArray()) } }
+            if (body != null) conn.outputStream.use { it.write(bytes) }
             val code = conn.responseCode
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
             val json = runCatching { JSONObject(text) }.getOrNull()
@@ -267,26 +278,33 @@ class BridgeClient(
         changes.bump()
     }
 
-    /** Keeps [token] in the bridge for cloning private repos; blank forgets it. */
+    /**
+     * True when what answers on the port knows the key: it signs a fresh nonce
+     * ([proof]). Checked before a token is handed over, so an app posing as the
+     * bridge never gets one.
+     */
+    fun isRealBridge(): Boolean {
+        val k = vault.get() ?: return false
+        val nonce = hex(ByteArray(16).also { random.nextBytes(it) })
+        val answer = runCatching { call("GET", "/v1/proof?nonce=$nonce").optString("proof") }.getOrDefault("")
+        return MessageDigest.isEqual(answer.toByteArray(), proof(k, nonce).toByteArray())
+    }
+
+    /** Keeps [token] in the bridge for cloning private repos; blank forgets it. Only ever when you press Keep. */
     suspend fun setGitHub(token: String) = withContext(Dispatchers.IO) {
+        if (!isRealBridge()) throw BridgeException(0, "what answers on 127.0.0.1:8765 couldn't show it has the bridge's key, so the token wasn't sent. Update the bridge (run its install again) and check the key.")
         call("POST", "/v1/github", JSONObject().put("token", token.trim()))
         changes.bump()
     }
 
     /**
      * Starts a cloud session for [repo] (owner/name). Takes a minute or two: it readies the repo, then waits for the link.
-     * When GitHub refuses the clone and the bridge has no token, Ygg's own is handed over and it tries once more.
+     * When GitHub refuses the clone, the bridge's error says to add a token under Settings → Claude bridge:
+     * Ygg never hands its own token over on its own.
      */
     suspend fun start(repo: String, task: String, branch: String? = null, account: String = "default"): BridgeSession = withContext(Dispatchers.IO) {
         val body = JSONObject().put("repo", repo).put("task", task).put("branch", branch ?: "").put("account", account)
-        val s = try {
-            call("POST", "/v1/cloud", body, timeoutMs = 420_000)
-        } catch (e: BridgeException) {
-            val token = githubToken()
-            if (token == null || e.message?.contains("no GitHub token") != true) throw e
-            call("POST", "/v1/github", JSONObject().put("token", token))
-            call("POST", "/v1/cloud", body, timeoutMs = 420_000)
-        }
+        val s = call("POST", "/v1/cloud", body, timeoutMs = 420_000)
         session(s).also { changes.bump() }
     }
 
@@ -347,6 +365,20 @@ class BridgeClient(
     )
 
     companion object {
+        private val random = SecureRandom()
+
+        private fun hex(b: ByteArray) = b.joinToString("") { "%02x".format(it) }
+
+        private fun hmac(key: String, text: String): String =
+            hex(Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key.toByteArray(), "HmacSHA256")) }.doFinal(text.toByteArray()))
+
+        /** As the bridge's `signature`: method, path with its query, time, nonce and the body's SHA-256. */
+        fun signature(key: String, method: String, path: String, stamp: String, nonce: String, body: ByteArray): String =
+            hmac(key, listOf(method, path, stamp, nonce, hex(MessageDigest.getInstance("SHA-256").digest(body))).joinToString("\n"))
+
+        /** As the bridge's `proof`. */
+        fun proof(key: String, nonce: String): String = hmac(key, "bridge\n$nonce")
+
         /**
          * The one command to paste into the terminal: it writes the bridge and
          * its installer from the app (the repo is private, so nothing is

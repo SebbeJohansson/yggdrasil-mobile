@@ -35,10 +35,12 @@ class BridgeContractTest {
         import json, sys
         a = sys.argv[1:]
         if a == ["--version"]: print("2.9.0 (Claude Code)"); sys.exit(0)
-        if a[0] == "-p" and "--cloud" in a:
-            sid = a[a.index("--cloud") + 1]
+        if a[0] == "-p" and a[-2] != "--": sys.exit(4)
+        cloud = [x for x in a if x.startswith("--cloud=")]
+        if a[0] == "-p" and cloud:
+            sid = cloud[0][len("--cloud="):]
             print(json.dumps({"ok": sid != "session_gone", "session_id": sid, "error": "not found"})); sys.exit(0)
-        if a[0] == "-p": print(json.dumps({"is_error": False, "result": "Claude says: " + a[1]})); sys.exit(0)
+        if a[0] == "-p": print(json.dumps({"is_error": False, "result": "Claude says: " + a[-1]})); sys.exit(0)
         sys.exit(3)
     """.trimIndent()
 
@@ -96,6 +98,33 @@ class BridgeContractTest {
         assertTrue(gone.message!!.contains("not found"))
         val answer = provider.complete(LlmRequest(listOf(LlmMessage(LlmRole.USER, "What is Ygg?"))))
         assertEquals("Claude says: What is Ygg?", answer)
+        // The real bridge proves it has the key, so a token is handed over.
+        assertTrue(client.isRealBridge())
+        client.setGitHub("ghp_" + "a".repeat(36))
+        assertTrue(client.health()!!.github)
+    }
+
+    @Test fun anAppPosingAsTheBridgeGetsNeitherTheKeyNorAToken() = runBlocking {
+        val key = "k".repeat(32)
+        val heard = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val impostor = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/") { x ->
+                heard += x.requestHeaders.getFirst("Authorization").orEmpty() + " " + x.requestBody.readBytes().decodeToString()
+                val out = """{"proof":"0000","sessions":[],"error":"no GitHub token"}""".toByteArray()
+                x.sendResponseHeaders(200, out.size.toLong()); x.responseBody.use { it.write(out) }
+            }
+            start()
+        }
+        try {
+            val client = BridgeClient(InMemoryTokenVault(key), "http://127.0.0.1:${impostor.address.port}")
+            client.sessions()
+            assertTrue(!client.isRealBridge())
+            assertTrue(runCatching { client.setGitHub("ghp_" + "b".repeat(36)) }.isFailure)
+            assertTrue(heard.isNotEmpty())
+            assertTrue(heard.none { it.contains(key) || it.contains("ghp_") })
+        } finally {
+            impostor.stop(0)
+        }
     }
 
     @Test fun noBridgeIsNotAnError() = runBlocking {

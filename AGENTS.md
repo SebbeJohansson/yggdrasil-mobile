@@ -45,7 +45,8 @@ it (`MainActivity.kt`).
   CI (`.github/workflows/build.yml`) compiles, tests and lints on every push
   to `main` and on pull requests; treat a green `main` build as the compile
   check, and read its log when it fails.
-- **Release:** Actions → release → Run workflow on `main` with a version
+- **Release:** the run waits for the owner's approval (`release`
+  environment); an agent can start it but not approve it. Actions → release → Run workflow on `main` with a version
   (`0.23.0`); the workflow makes the tag. Pushing a tag from a cloud session
   fails at the proxy even when git says otherwise; run the workflow instead,
   and only after `main`'s build is green. Versions: `MAJOR.MINOR.PATCH`, each

@@ -89,14 +89,24 @@ command**:
 `claude` is installed, and `503` when it isn't. The app counts no answer as
 "not running".
 
-Everything else needs `Authorization: Bearer <key>`; without it the answer
-is `401`. Errors are `{ "error": "…" }` with a non-2xx code.
+Everything else is signed with the key, which never goes over the port:
+
+- `X-Ygg-Time`: unix seconds, within 60 s of the bridge's clock.
+- `X-Ygg-Nonce`: 16–64 hex characters, used once.
+- `Authorization: Ygg-HMAC <hex>`: HMAC-SHA256 with the key over
+  `method \n path-with-query \n time \n nonce \n sha256-hex(body)`.
+
+A wrong, old or repeated signature is `401`. `Authorization: Bearer <key>` is
+still taken from apps older than bridge 2. `GET /v1/proof?nonce=<hex>` (signed)
+answers `{proof}`, HMAC-SHA256 with the key over `bridge \n nonce`: the app
+checks it before it hands over a GitHub token, so an app posing as the bridge
+on the port never gets one. Errors are `{ "error": "…" }` with a non-2xx code.
 
 | Call | Does | Answers |
 | --- | --- | --- |
-| `POST /v1/cloud {repo, task, branch?, account?}` | shallow-clones `owner/name` into `~/.ygg-bridge/repos` (or updates it), runs `claude --cloud "<task>"` there under `script` (it wants a terminal), and stops it once it prints the session link | `{id, url, repo, task, at}` |
+| `POST /v1/cloud {repo, task, branch?, account?}` | shallow-clones `owner/name` into `~/.ygg-bridge/repos` (or updates it), runs `claude --cloud="<task>"` there under `script` (it wants a terminal), and stops it once it prints the session link | `{id, url, repo, task, at}` |
 | `GET /v1/cloud` | the sessions it started, newest first | `{sessions: [...]}` |
-| `POST /v1/cloud/{id}/message {text, account?}` | `claude -p "<text>" --cloud <id> --output-format json`: queues it in any of your cloud sessions, as the account that started it (or the one given) | `{ok, id, url}` |
+| `POST /v1/cloud/{id}/message {text, account?}` | `claude -p --cloud=<id> --output-format json -- "<text>"` (text last, so it is never read as an option): queues it in any of your cloud sessions, as the account that started it (or the one given) | `{ok, id, url}` |
 | `GET /v1/accounts` | the Claude accounts and who each is signed in as | `{accounts: [{id, name, signedIn, email, configDir}]}` |
 | `POST /v1/accounts {name}` | adds an account; sign it in with `ygg_bridge.py login <id>` (or from the app, in Ygg's own Linux) | `{id, name, ...}` |
 | `POST /v1/accounts/{id} {name}` / `POST /v1/accounts/{id}/remove` | renames / forgets an account and its sign-in | |

@@ -4,12 +4,15 @@
 Runs in Android's Linux Terminal (a Debian VM; install-debian.sh) or in
 Termux's Ubuntu (install.sh), where Claude Code is supported. The app asks it to:
 
-  - start a Claude Code cloud session for a repo   `claude --cloud "<task>"`
-  - send a follow-up to any cloud session          `claude -p "<text>" --cloud <id>`
+  - start a Claude Code cloud session for a repo   `claude --cloud="<task>"`
+  - send a follow-up to any cloud session          `claude -p --cloud=<id> -- "<text>"`
   - answer one question for Ygg's Claude provider  `claude -p`
 
-Every call but GET /health carries the bridge's key (Authorization: Bearer),
-so other apps on the phone can't use your Claude account through it.
+Every call but GET /health is signed with the bridge's key (Authorization:
+Ygg-HMAC, see `signature`), so other apps on the phone can't use your Claude
+account through it. The key itself never goes over the port: an app that took
+the port while the bridge was down learns nothing it can use. GET /v1/proof
+lets the app check it reaches the real bridge before it hands over a token.
 
     python3 ygg_bridge.py serve        run it (Termux keeps it going)
     python3 ygg_bridge.py key          print the key to paste into Ygg
@@ -21,6 +24,8 @@ Standard library only. Kept in ~/.ygg-bridge: the key, the GitHub token, the
 sessions it started, and shallow checkouts of the repos you start sessions for.
 """
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -35,7 +40,9 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1"
+VERSION = "2"
+# A signed call is good for this many seconds either way, and once.
+SIGNED_FOR = 60
 HOME = Path(os.environ.get("YGG_BRIDGE_HOME", Path.home() / ".ygg-bridge"))
 PORT = int(os.environ.get("YGG_BRIDGE_PORT", "8765"))
 # 127.0.0.1 in Termux (it shares the phone's network). In Android's Linux
@@ -510,8 +517,9 @@ def run_cloud(cwd: Path, task: str, aid: str = "default"):
     terminal). Gives (url, id) once it prints the session's link, else
     (None, all it printed)."""
     prepare_claude(cwd, aid)
-    command = f"{shlex.quote(CLAUDE)} --cloud {shlex.quote(task)}"
-    argv = ["script", "-qfec", command, "/dev/null"] if shutil.which("script") else [CLAUDE, "--cloud", task]
+    # One argument, --cloud=<task>: a task starting with "-" is never read as an option.
+    command = f"{shlex.quote(CLAUDE)} {shlex.quote('--cloud=' + task)}"
+    argv = ["script", "-qfec", command, "/dev/null"] if shutil.which("script") else [CLAUDE, "--cloud=" + task]
     # claude's own git runs, too, save objects by renaming, not hard-linking (see git()).
     n = int(os.environ.get("GIT_CONFIG_COUNT", "0") or 0)
     env = dict(claude_env(aid), GIT_CONFIG_COUNT=str(n + 1), **{f"GIT_CONFIG_KEY_{n}": "core.createObject", f"GIT_CONFIG_VALUE_{n}": "rename"})
@@ -593,7 +601,7 @@ def message_cloud(sid: str, text: str, aid: str = "") -> dict:
         aid = next((s.get("account", "") for s in state()["sessions"] if s["id"] == sid), "") or "default"
     env = claude_env(aid)
     with tempfile.TemporaryDirectory() as empty:
-        out = subprocess.run([CLAUDE, "-p", text, "--cloud", sid, "--output-format", "json"], cwd=empty,
+        out = subprocess.run([CLAUDE, "-p", "--cloud=" + sid, "--output-format", "json", "--", text], cwd=empty,
                              capture_output=True, text=True, timeout=90, env=env)
     try:
         sent = json.loads(out.stdout)
@@ -1343,9 +1351,11 @@ def complete(body: dict) -> dict:
     else:
         prompt = "\n\n".join(("User: " if m.get("role") == "user" else "Assistant: ") + m.get("text", "") for m in messages)
         prompt += "\n\nAnswer the user's last message."
-    argv = [CLAUDE, "-p", prompt, "--output-format", "json", "--tools", ""]
+    argv = [CLAUDE, "-p", "--output-format", "json", "--tools", ""]
     if body.get("system"):
         argv += ["--append-system-prompt", body["system"]]
+    # Last, after "--": a prompt starting with "-" is never read as an option.
+    argv += ["--", prompt]
     env = claude_env(str(body.get("account") or "default"))
     with tempfile.TemporaryDirectory() as empty:
         out = subprocess.run(argv, cwd=empty, capture_output=True, text=True, timeout=300, env=env)
@@ -1379,18 +1389,31 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def allowed(self) -> bool:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > 1_000_000:
+            raise Refused(413, "too big")
+        self.raw = self.rfile.read(length) if length else b""
         given = self.headers.get("Authorization", "")
+        stamp, nonce = self.headers.get("X-Ygg-Time", ""), self.headers.get("X-Ygg-Nonce", "")
+        if given.startswith("Ygg-HMAC ") and fresh(stamp, nonce) and secrets.compare_digest(
+                given[len("Ygg-HMAC "):], signature(key(), self.command, self.path, stamp, nonce, self.raw)):
+            return True
+        # Apps from before signing send the key itself. Taking it costs nothing
+        # here: the risk was the app sending it, and new apps never do.
         if secrets.compare_digest(given, "Bearer " + key()):
             return True
         self.answer(401, {"error": "the bridge's key is missing or wrong: paste it into Ygg (python3 ygg_bridge.py key)"})
         return False
 
     def body(self) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > 1_000_000:
-            raise Refused(413, "too big")
+        raw = getattr(self, "raw", None)
+        if raw is None:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > 1_000_000:
+                raise Refused(413, "too big")
+            raw = self.rfile.read(length)
         try:
-            return json.loads(self.rfile.read(length) or b"{}")
+            return json.loads(raw or b"{}")
         except ValueError:
             raise Refused(400, "not JSON")
 
@@ -1403,6 +1426,12 @@ class Handler(BaseHTTPRequestHandler):
                                                              "github": bool(secret("github")), "herdr": bool(shutil.which(HERDR))})
             if not self.allowed():
                 return
+            if method == "GET" and path == "/v1/proof":
+                from urllib.parse import parse_qs, urlparse
+                nonce = (parse_qs(urlparse(self.path).query).get("nonce") or [""])[0]
+                if not re.fullmatch(r"[0-9a-f]{16,64}", nonce):
+                    raise Refused(400, "`nonce` must be 16-64 hex characters")
+                return self.answer(200, {"proof": proof(key(), nonce)})
             if method == "GET" and path == "/v1/cloud":
                 return self.answer(200, {"sessions": state()["sessions"]})
             if method == "GET" and path == "/v1/repos":
@@ -1478,6 +1507,38 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.route("POST")
+
+
+def signature(k: str, method: str, path: str, stamp: str, nonce: str, body: bytes) -> str:
+    """HMAC-SHA256 over the call: method, path with its query, time, nonce, and the body's SHA-256."""
+    text = "\n".join([method, path, stamp, nonce, hashlib.sha256(body).hexdigest()])
+    return hmac.new(k.encode(), text.encode(), hashlib.sha256).hexdigest()
+
+
+def proof(k: str, nonce: str) -> str:
+    """What only the real bridge can answer to GET /v1/proof?nonce=."""
+    return hmac.new(k.encode(), ("bridge\n" + nonce).encode(), hashlib.sha256).hexdigest()
+
+
+_seen: dict = {}
+_seen_lock = threading.Lock()
+
+
+def fresh(stamp: str, nonce: str) -> bool:
+    """A call's time is near now and its nonce unused, so a copied call can't be sent again."""
+    if not stamp.isdigit() or not re.fullmatch(r"[0-9a-f]{16,64}", nonce):
+        return False
+    now = time.time()
+    if abs(now - int(stamp)) > SIGNED_FOR:
+        return False
+    with _seen_lock:
+        for n, t in list(_seen.items()):
+            if now - t > 2 * SIGNED_FOR:
+                del _seen[n]
+        if nonce in _seen:
+            return False
+        _seen[nonce] = now
+    return True
 
 
 def serve() -> None:

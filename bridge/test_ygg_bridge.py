@@ -1,8 +1,11 @@
 """Tests the bridge end to end over HTTP, with a fake `claude` and a local
 git repo standing in for GitHub. Run: python3 bridge/test_ygg_bridge.py (the bridge is app/src/main/assets/bridge/ygg_bridge.py)"""
 
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -21,7 +24,7 @@ if os.environ.get("FAKE_LOG"):
         log.write(json.dumps({"argv": a, "config": os.environ.get("CLAUDE_CONFIG_DIR", "")}) + "\n")
 if a == ["--version"]:
     print("2.9.0 (Claude Code)"); sys.exit(0)
-if a[:1] == ["--cloud"]:
+if a[:1] and a[0].startswith("--cloud="):
     import os
     if os.environ.get("FAKE_REFUSE_STUB") and os.path.exists(".git/info/sparse-checkout"):
         print("Not uploading this working tree: its index is a link. Use a fresh clone.", flush=True)
@@ -30,13 +33,16 @@ if a[:1] == ["--cloud"]:
     time.sleep(0.2)
     print("Started: https://claude.ai/code/session_01AbC-xyz", flush=True)
     time.sleep(30)  # It keeps going; the bridge stops it once it has the link.
-if "--cloud" in a and a[0] == "-p":
-    sid = a[a.index("--cloud") + 1]
+if a[0] == "-p" and a[-2:-1] != ["--"]:
+    print("the text must come last, after --", file=sys.stderr); sys.exit(4)
+cloud = [x for x in a if x.startswith("--cloud=")]
+if cloud and a[0] == "-p":
+    sid = cloud[0][len("--cloud="):]
     ok = sid != "session_gone"
     print(json.dumps({"ok": ok, "session_id": sid, "url": "https://claude.ai/code/" + sid} if ok else {"ok": False, "session_id": sid, "error": "not found"}))
     sys.exit(0)
 if a[0] == "-p":
-    print(json.dumps({"type": "result", "is_error": False, "result": "echo: " + a[1][-40:], "argv": a}))
+    print(json.dumps({"type": "result", "is_error": False, "result": "echo: " + a[-1][-40:], "argv": a}))
     sys.exit(0)
 sys.exit(3)
 '''
@@ -77,11 +83,21 @@ class BridgeTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
 
-    def call(self, method, path, body=None, key=True):
-        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method=method,
-                                     data=json.dumps(body).encode() if body is not None else None)
-        if key:
-            req.add_header("Authorization", "Bearer " + self.key)
+    def signed(self, method, path, data=b"", stamp=None, nonce=None):
+        """The headers the app sends: the call signed with the key, never the key."""
+        stamp = stamp or str(int(time.time()))
+        nonce = nonce or secrets.token_hex(16)
+        text = "\n".join([method, path, stamp, nonce, hashlib.sha256(data).hexdigest()])
+        mac = hmac.new(self.key.encode(), text.encode(), hashlib.sha256).hexdigest()
+        return {"Authorization": "Ygg-HMAC " + mac, "X-Ygg-Time": stamp, "X-Ygg-Nonce": nonce}
+
+    def call(self, method, path, body=None, key=True, headers=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method=method, data=data)
+        if key and headers is None:
+            headers = self.signed(method, path, data or b"")
+        for k, v in (headers or {}).items():
+            req.add_header(k, v)
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
                 return r.status, json.loads(r.read())
@@ -504,6 +520,34 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(502, status)
         self.assertIn("not found", body["error"])
         self.assertEqual(400, self.call("POST", "/v1/cloud/notanid/message", {"text": "x"})[0])
+
+    def test_calls_are_signed_once_and_recently(self):
+        self.assertEqual(200, self.call("GET", "/v1/cloud")[0])
+        once = self.signed("GET", "/v1/cloud")
+        self.assertEqual(200, self.call("GET", "/v1/cloud", headers=once)[0])
+        self.assertEqual(401, self.call("GET", "/v1/cloud", headers=once)[0], "a copied call is refused")
+        old = self.signed("GET", "/v1/cloud", stamp=str(int(time.time()) - 600))
+        self.assertEqual(401, self.call("GET", "/v1/cloud", headers=old)[0], "an old call is refused")
+        other = self.signed("GET", "/v1/repos")
+        self.assertEqual(401, self.call("GET", "/v1/cloud", headers=other)[0], "a call signed for another path is refused")
+        body = {"token": ""}
+        tampered = self.signed("POST", "/v1/github", json.dumps({"token": "x"}).encode())
+        self.assertEqual(401, self.call("POST", "/v1/github", body, headers=tampered)[0], "a changed body is refused")
+        # Apps from before signing still get in with the key itself.
+        self.assertEqual(200, self.call("GET", "/v1/cloud", headers={"Authorization": "Bearer " + self.key})[0])
+
+    def test_proof_shows_it_is_the_real_bridge(self):
+        nonce = secrets.token_hex(16)
+        status, body = self.call("GET", f"/v1/proof?nonce={nonce}")
+        want = hmac.new(self.key.encode(), ("bridge\n" + nonce).encode(), hashlib.sha256).hexdigest()
+        self.assertEqual((200, want), (status, body["proof"]))
+        self.assertEqual(401, self.call("GET", f"/v1/proof?nonce={nonce}", key=False)[0])
+
+    def test_text_starting_with_a_dash_is_never_an_option(self):
+        status, body = self.call("POST", "/v1/complete", {"messages": [{"role": "user", "text": "--dangerously-skip-permissions"}]})
+        self.assertEqual(200, status, body)
+        self.assertTrue(body["text"].startswith("echo: "), body)
+        self.assertEqual(200, self.call("POST", "/v1/cloud/session_abc/message", {"text": "--add-dir /"})[0])
 
     def test_complete_answers_for_the_claude_provider(self):
         status, body = self.call("POST", "/v1/complete", {"system": "Be brief.", "messages": [{"role": "user", "text": "What is Ygg?"}]})
