@@ -45,6 +45,11 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.sebbejohansson.yggdrasil.AppContainer
 import io.github.sebbejohansson.yggdrasil.nodes.Machine
+import io.github.sebbejohansson.yggdrasil.nodes.MachineClient
+import io.github.sebbejohansson.yggdrasil.nodes.MachineGoal
+import io.github.sebbejohansson.yggdrasil.nodes.MachineGoals
+import io.github.sebbejohansson.yggdrasil.nodes.ReadTarget
+import io.github.sebbejohansson.yggdrasil.nodes.TranscriptDialog
 import io.github.sebbejohansson.yggdrasil.nodes.MachineService
 import io.github.sebbejohansson.yggdrasil.nodes.MachineStatus
 import io.github.sebbejohansson.yggdrasil.nodes.Machines
@@ -76,6 +81,8 @@ data class CodeUiState(
     val machines: List<MachineStatus> = emptyList(),
     /** The newest Yggdrasil release, to say which machines are behind it. */
     val latest: String? = null,
+    /** Each machine's goals in play, by machine id: only for machines reached directly. */
+    val goals: Map<String, List<MachineGoal>> = emptyMap(),
 )
 
 /**
@@ -96,11 +103,11 @@ class CodeViewModel(
         combine(saga.sessionChanges.flow, saga.status) { _, status -> status },
         machines.sessions,
         machines.status,
-        machines.asked,
-        machines.latest,
-    ) { status, direct, machineStatus, directAsked, latest -> Triple(status, direct, Triple(machineStatus, directAsked, latest)) }
+        combine(machines.asked, machines.latest, machines.goals) { a, l, g -> Triple(a, l, g) },
+    ) { status, direct, machineStatus, more -> Triple(status, direct, machineStatus to more) }
         .mapLatest { (status, direct, rest) ->
-            val (machineStatus, directAsked, latest) = rest
+            val (machineStatus, more) = rest
+            val (directAsked, latest, goals) = more
             val reached = direct.map { it.device }.toSet()
             CodeUiState(
                 me = settings.device,
@@ -109,6 +116,7 @@ class CodeViewModel(
                 sync = status,
                 machines = machineStatus,
                 latest = latest,
+                goals = goals,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CodeUiState())
 
@@ -129,6 +137,13 @@ class CodeViewModel(
         saga.askSession(ask)
         saga.sync()
     }
+
+    /** A goal action on a machine reached directly; null, or why it failed. */
+    suspend fun onGoal(device: String, act: (MachineClient) -> Unit): String? = machines.onGoal(device, act)
+
+    /** The end of a session's transcript on a machine reached directly. */
+    suspend fun transcript(device: String, session: String, directory: String?, tail: Int, since: String?) =
+        machines.transcript(device, session, directory, tail, since)
 
     /** Settings → Connection → Machines. */
     fun machineList(): List<Machine> = machines.machines()
@@ -189,6 +204,9 @@ fun CodeScreen(
     var cloudOpen by remember { mutableStateOf(false) }
     if (phone != null && cloudOpen) PhoneCloudDialog(phone, onSetUpPhone) { cloudOpen = false }
     var localOpen by remember { mutableStateOf(false) }
+    // A session on a machine reached directly, open in the reader.
+    var reading by remember { mutableStateOf<ReadTarget?>(null) }
+    reading?.let { target -> TranscriptDialog(target, vm) { reading = null } }
     if (phone != null && local != null && localOpen) PhoneLocalDialog(phone, local, onSetUpPhone) { localOpen = false; local.open(null) }
     val localState = local?.state?.collectAsStateWithLifecycle()?.value
     // The machines reached directly, read again every few seconds while the Code tab shows.
@@ -277,13 +295,21 @@ fun CodeScreen(
                     )
                 }
             }
-            item(key = "d-${d.device}") { DevicePanel(d, s, vm, now, phone?.takeIf { phoneState?.ready == true }, phoneState) }
+            item(key = "d-${d.device}") { DevicePanel(d, s, vm, now, phone?.takeIf { phoneState?.ready == true }, phoneState) { reading = it } }
         }
     }
 }
 
 @Composable
-private fun DevicePanel(d: DeviceSessions, s: CodeUiState, vm: CodeViewModel, now: Instant, phone: BridgeViewModel?, phoneState: BridgeUiState?) {
+private fun DevicePanel(
+    d: DeviceSessions,
+    s: CodeUiState,
+    vm: CodeViewModel,
+    now: Instant,
+    phone: BridgeViewModel?,
+    phoneState: BridgeUiState?,
+    onRead: (ReadTarget) -> Unit,
+) {
     val drive = d.drivableBy(s.me) && !d.quiet(now)
     Column(
         Modifier.fillMaxWidth().alpha(if (d.quiet(now)) 0.65f else 1f).hudPanel(warn = d.sessions.any { it.waiting }).padding(14.dp),
@@ -295,12 +321,14 @@ private fun DevicePanel(d: DeviceSessions, s: CodeUiState, vm: CodeViewModel, no
         }
         d.errors.forEach { (source, text) -> Text("$source: $text", style = HudText.meta) }
         if (d.sessions.isEmpty()) Text("Nothing running there.", style = HudText.small.copy(color = Hud.overlay0))
-        d.sessions.forEach { session -> SessionItem(d, session, drive, s.asked, vm, now) }
+        d.sessions.forEach { session -> SessionItem(d, session, drive, s.asked, vm, now, onRead) }
         if (d.cloud.isNotEmpty() || (drive && d.projects.isNotEmpty())) {
             HudLabel("Cloud sessions started there")
             d.cloud.forEach { c -> CloudItem(d, c, drive, s.asked, vm, now, phone, phoneState) }
             if (drive && d.projects.isNotEmpty()) StartCloud(d, s.asked, vm)
         }
+        // A machine reached directly: its goals too.
+        if (d.direct) MachineGoals(d, s.goals[d.device].orEmpty(), vm, onRead)
     }
 }
 
@@ -312,7 +340,15 @@ private fun RemoteSession.color(): Color = when {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SessionItem(d: DeviceSessions, s: RemoteSession, drive: Boolean, asked: List<Asked>, vm: CodeViewModel, now: Instant) {
+private fun SessionItem(
+    d: DeviceSessions,
+    s: RemoteSession,
+    drive: Boolean,
+    asked: List<Asked>,
+    vm: CodeViewModel,
+    now: Instant,
+    onRead: (ReadTarget) -> Unit = {},
+) {
     val uri = LocalUriHandler.current
     var draft by remember(s.id) { mutableStateOf("") }
     Column(Modifier.fillMaxWidth().leftStripe(s.color()).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -340,13 +376,21 @@ private fun SessionItem(d: DeviceSessions, s: RemoteSession, drive: Boolean, ask
             }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            // A Claude Code session on a machine reached directly: its transcript, read from its Sindri.
+            if (d.direct && s.kind == "claude" && !s.id.startsWith("herdr:")) {
+                HudButton("Read", { onRead(ReadTarget(d.device, d.title, s.id, s.directory, s.name)) }, kind = HudButtonKind.SMALL)
+            }
             s.claudeLink?.let { link -> HudButton("Open in Claude", { uri.openUri(link) }, kind = HudButtonKind.SMALL) }
             if (drive && d.herdr && s.pane == null && s.kind == "claude" && s.directory != null) {
                 HudButton("Resume there", { vm.resume(d.device, s) }, kind = HudButtonKind.SMALL)
             }
         }
         if (s.pane == null && s.claudeLink == null) {
-            Text("Outside herdr, and Remote Control is off: it can only be read from here.", style = HudText.meta)
+            Text(
+                if (d.direct) "Outside herdr, and Remote Control is off: read it here, or resume it there to type into it."
+                else "Outside herdr, and Remote Control is off: it can only be read from here.",
+                style = HudText.meta,
+            )
         }
         AskedLines(asked.filter { it.ask.origin == d.device && it.ask.session == s.id })
     }

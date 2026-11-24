@@ -48,6 +48,10 @@ class MachineService(
     /** The open alerts of every machine whose Gjallar answered, as the Inbox shows another machine's. */
     val alerts: StateFlow<List<Mirror>> = _alerts.asStateFlow()
 
+    private val _goals = MutableStateFlow<Map<String, List<MachineGoal>>>(emptyMap())
+    /** Each machine's goals in play, by machine id, as read last time. */
+    val goals: StateFlow<Map<String, List<MachineGoal>>> = _goals.asStateFlow()
+
     private val _asked = MutableStateFlow<List<Asked>>(emptyList())
     /** What was asked of a machine directly, and how it went, newest first. */
     val asked: StateFlow<List<Asked>> = _asked.asStateFlow()
@@ -64,6 +68,7 @@ class MachineService(
         _sessions.value = reads.mapNotNull { it.sessions }
         _alerts.value = reads.flatMap { it.alerts }
         _alertsFrom.value = reads.filter { it.alertsRead }.map { it.status.machine.id }.toSet()
+        _goals.value = reads.mapNotNull { r -> r.goals?.let { r.status.machine.id to it } }.toMap()
     }
 
     private val _alertsFrom = MutableStateFlow<Set<String>>(emptySet())
@@ -75,6 +80,7 @@ class MachineService(
         val sessions: DeviceSessions? = null,
         val alerts: List<Mirror> = emptyList(),
         val alertsRead: Boolean = false,
+        val goals: List<MachineGoal>? = null,
     )
 
     /**
@@ -97,6 +103,7 @@ class MachineService(
             sessions.getOrNull(),
             alerts.getOrDefault(emptyList()).map { Mirror(machine.id, it.alert, now, directId = it.id, label = machine.label) },
             alertsRead = alerts.isSuccess,
+            goals = runCatching { Goals.inPlay(client.goals()) }.getOrNull(),
         )
     }
 
@@ -145,6 +152,22 @@ class MachineService(
 
     /** The machines whose Norn was up last time, for the Answered by choice. */
     fun withNorn(): List<Machine> = _status.value.filter { s -> !s.refused && s.parts.any { it.name == "norn" && it.up } }.map { it.machine }
+
+    /** A goal action on a machine (new, start, resume), then a read so the Code tab shows it. Null, or why it failed. */
+    suspend fun onGoal(machineId: String, act: (MachineClient) -> Unit): String? = withContext(io) {
+        val machine = settings.list().firstOrNull { it.id == machineId } ?: return@withContext "no machine called $machineId here"
+        if (_status.value.any { it.machine.id == machineId && it.refused }) return@withContext "${machine.label} is a work machine"
+        val failed = runCatching { act(clientFor(machine, settings.token(machine.id))) }.exceptionOrNull()
+        runCatching { refresh() }
+        failed?.let { it.message ?: "it did not work" }
+    }
+
+    /** The end of a session's transcript on [machineId], or unchanged since [since]. */
+    suspend fun transcript(machineId: String, session: String, directory: String?, tail: Int, since: String?): RemoteTranscript = withContext(io) {
+        val machine = settings.list().firstOrNull { it.id == machineId } ?: error("no machine called $machineId here")
+        if (_status.value.any { it.machine.id == machineId && it.refused }) error("${machine.label} is a work machine")
+        clientFor(machine, settings.token(machine.id)).transcript(session, directory, tail, since)
+    }
 
     fun save(machine: Machine, token: String) = settings.save(machine, token)
 
