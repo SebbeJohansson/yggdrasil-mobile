@@ -98,6 +98,33 @@ class BridgeContractTest {
         assertTrue(gone.message!!.contains("not found"))
         val answer = provider.complete(LlmRequest(listOf(LlmMessage(LlmRole.USER, "What is Ygg?"))))
         assertEquals("Claude says: What is Ygg?", answer)
+        // The real bridge proves it has the key, so a token is handed over.
+        assertTrue(client.isRealBridge())
+        client.setGitHub("ghp_" + "a".repeat(36))
+        assertTrue(client.health()!!.github)
+    }
+
+    @Test fun anAppPosingAsTheBridgeGetsNeitherTheKeyNorAToken() = runBlocking {
+        val key = "k".repeat(32)
+        val heard = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val impostor = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/") { x ->
+                heard += x.requestHeaders.getFirst("Authorization").orEmpty() + " " + x.requestBody.readBytes().decodeToString()
+                val out = """{"proof":"0000","sessions":[],"error":"no GitHub token"}""".toByteArray()
+                x.sendResponseHeaders(200, out.size.toLong()); x.responseBody.use { it.write(out) }
+            }
+            start()
+        }
+        try {
+            val client = BridgeClient(InMemoryTokenVault(key), "http://127.0.0.1:${impostor.address.port}")
+            client.sessions()
+            assertTrue(!client.isRealBridge())
+            assertTrue(runCatching { client.setGitHub("ghp_" + "b".repeat(36)) }.isFailure)
+            assertTrue(heard.isNotEmpty())
+            assertTrue(heard.none { it.contains(key) || it.contains("ghp_") })
+        } finally {
+            impostor.stop(0)
+        }
     }
 
     @Test fun noBridgeIsNotAnError() = runBlocking {

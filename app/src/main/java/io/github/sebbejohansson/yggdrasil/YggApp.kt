@@ -138,7 +138,6 @@ class AppContainer(private val app: Application) {
     /** Ygg's Claude bridge in Termux: cloud sessions and the Claude provider. Its key is kept encrypted. */
     val bridge = BridgeClient(
         KeystoreTokenVault(app, prefsName = "bridge_key", alias = "ygg-bridge-key"),
-        githubToken = { KeystoreTokenVault(app).get() },
     )
     val bridgeSettings = BridgeSettings(app)
     /** Ygg's own Linux (Ubuntu under proot), where the bridge runs by default. */

@@ -89,8 +89,18 @@ command**:
 `claude` is installed, and `503` when it isn't. The app counts no answer as
 "not running".
 
-Everything else needs `Authorization: Bearer <key>`; without it the answer
-is `401`. Errors are `{ "error": "…" }` with a non-2xx code.
+Everything else is signed with the key, which never goes over the port:
+
+- `X-Ygg-Time`: unix seconds, within 60 s of the bridge's clock.
+- `X-Ygg-Nonce`: 16–64 hex characters, used once.
+- `Authorization: Ygg-HMAC <hex>`: HMAC-SHA256 with the key over
+  `method \n path-with-query \n time \n nonce \n sha256-hex(body)`.
+
+A wrong, old or repeated signature is `401`. `Authorization: Bearer <key>` is
+still taken from apps older than bridge 2. `GET /v1/proof?nonce=<hex>` (signed)
+answers `{proof}`, HMAC-SHA256 with the key over `bridge \n nonce`: the app
+checks it before it hands over a GitHub token, so an app posing as the bridge
+on the port never gets one. Errors are `{ "error": "…" }` with a non-2xx code.
 
 | Call | Does | Answers |
 | --- | --- | --- |
