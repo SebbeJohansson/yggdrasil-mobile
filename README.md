@@ -25,7 +25,7 @@ the desktop Yggdrasil's dashboard (`ui/`):
 - **Tabs:** Ask · Inbox (Alerts and Messages) · Code · System (Phone, Jobs,
   Huginn, Tree, Runes), with Apps first when Ygg is the home screen.
 - **Settings:** one page, as the dashboard's: Assistant (model, Claude,
-  memory), Connection (Mímir), Notifications (permission, quiet hours,
+  memory), Connection (Machines on the tailnet, Mímir), Notifications (permission, quiet hours,
   meetings), Boot sequence, Home screen, Updates, and Developer (test buttons).
 
   ![Settings](docs/screenshots/12-settings.png)
@@ -187,6 +187,43 @@ Set up under Settings → Connection: the URL (`https://<vps>.<tailnet>.ts.net`,
 HTTPS only: Android refuses plain HTTP) and this phone's token, both printed
 by Mímir's `deploy/install.sh`. Keep the name `phone` unless you gave the token
 another one. The phone needs Tailscale on.
+
+**Machines reached directly.** Under Settings → Connection → **Machines**,
+add each of your machines on the tailnet (the VPS, the home PC) with its
+tailnet name (`vps.<tailnet>.ts.net`) and its owner token
+(`~/.config/yggdrasil/owner.token` there). The Code tab then reads its coding
+sessions straight from its Sindri every 5 seconds ("live · over the
+tailnet"), and **Send**, a dialog's choices, **Resume there** and the cloud
+buttons are done on it at once, with no Mímir between and no
+`SAGA_DRIVE_FROM` to set: its token is the say-so. A machine reached this way
+shows once, live, instead of as it last sent through Mímir; one that doesn't
+answer is named at the top with why, and its Mímir copy shows again. The
+machine publishes its parts with Yggdrasil's `scripts/tailscale-serve.sh`
+(Yggdrasil's docs/tailscale.md).
+
+Each machine's other parts are asked the same way, each on its own port:
+
+- **Alerts:** Inbox → Alerts lists each machine's open alerts from its own
+  Gjallar ("live · over the tailnet"), read every 15 seconds while the tab
+  shows; **Seen**, **Snooze** and **Mute** are done there at once. The
+  phone's own alerts, which Sága sends there, are left out. A machine whose
+  Gjallar doesn't answer shows its Mímir copy instead.
+- **Parts and version:** its Ratatoskr says which parts are up, and its
+  `/health` which Yggdrasil it runs. Settings → Machines and the Code tab say
+  "v0.2.0 · 5 of 5 parts up", name a part that is down, and when a newer
+  Yggdrasil release is out (GitHub, asked at most every 6 hours) give the
+  `ygg upgrade` to run there; a machine built from a checkout says "from
+  source".
+- **The assistant:** Settings → Assistant → **Answered by** picks who
+  answers the Ask tab: this phone, or a machine whose Norn is up, as the
+  desktop dashboard's "Assistant: <machine>" picker. With a machine chosen,
+  each message goes to its Norn (`POST /v1/ask`) and is answered there with
+  its own models, memory and inbox; the session is this chat's, so the
+  conversation goes on there, and the chat is kept in the phone's Chats too.
+  Nothing is learned on the phone from it. The Ask tab's line says
+  "answered by <machine>'s Norn". A work machine is never offered or asked. A machine whose `/health` says it is a work
+machine is never read or driven from the phone, and the tailnet's policy
+keeps the phone from reaching it in the first place.
 
 **Coding sessions (the Code tab).** Each machine that runs Sindri and Sága
 (the desktop, another laptop) sends its coding sessions through Mímir

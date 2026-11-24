@@ -96,6 +96,8 @@ private fun Header(s: ChatUiState, onChats: () -> Unit, onMemory: () -> Unit, on
 }
 
 private fun statusLine(s: ChatUiState): String {
+    // A machine's Norn answers: its own models, memory and inbox.
+    s.answeredBy?.let { return "answered by $it's Norn · over the tailnet" }
     val ready = s.providers.filter { it.status == ProviderStatus.Ready }
     if (ready.isEmpty()) return "no model ready"
     val local = ready.firstOrNull { !it.leavesDevice }?.name?.substringBefore(" (")

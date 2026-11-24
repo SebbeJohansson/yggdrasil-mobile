@@ -72,11 +72,18 @@ data class DeviceSessions(
     val driveFrom: List<String>,
     val herdr: Boolean,
     val errors: Map<String, String>,
+    /** How to name it, for a machine reached directly (nodes/Machines.kt); [device] otherwise. */
+    val label: String? = null,
+    /** Read just now from the machine itself over the tailnet, not what it last sent through Mímir. */
+    val direct: Boolean = false,
 ) {
     /** Whether it carries out what [me] asks. */
     fun drivableBy(me: String) = me in driveFrom
 
-    fun quiet(now: Instant) = Duration.between(heardAt, now) > QUIET_AFTER
+    fun quiet(now: Instant) = !direct && Duration.between(heardAt, now) > QUIET_AFTER
+
+    /** The name the Code tab shows. */
+    val title: String get() = label ?: device.replaceFirstChar { it.uppercase() }
 
     companion object {
         val QUIET_AFTER: Duration = Duration.ofMinutes(12)

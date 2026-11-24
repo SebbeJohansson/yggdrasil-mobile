@@ -426,6 +426,7 @@ private fun Root(
                         bootSettings = container.bootSettings,
                         onRunBoot = { boot = BootKind.FULL },
                         onBack = { tab = beforeSettings },
+                        code = codeVm,
                     ) {
                         HomeScreenPanel(
                             held = homeHeld,

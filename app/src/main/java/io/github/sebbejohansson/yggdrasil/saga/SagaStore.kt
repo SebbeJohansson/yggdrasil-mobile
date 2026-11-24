@@ -4,7 +4,18 @@ import io.github.sebbejohansson.yggdrasil.gjallar.AlertState
 import java.time.Instant
 
 /** Another device's alert, as that device last sent it (or as you just changed it here, until it answers). */
-data class Mirror(val device: String, val alert: AlertSnapshot, val receivedAt: Instant)
+/**
+ * Another machine's alert. [directId] is its id at that machine's Gjallar when
+ * it was read from there directly over the tailnet (nodes/): Seen, Snooze and
+ * Mute then go there at once, not through Mímir. [label] names the machine.
+ */
+data class Mirror(
+    val device: String,
+    val alert: AlertSnapshot,
+    val receivedAt: Instant,
+    val directId: Long? = null,
+    val label: String? = null,
+)
 
 /**
  * Sága's own state, in `ygg.db`: what waits to go to Mímir, how far it has

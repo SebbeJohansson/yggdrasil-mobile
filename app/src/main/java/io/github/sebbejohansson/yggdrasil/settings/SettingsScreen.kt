@@ -48,6 +48,8 @@ fun SettingsScreen(
     bootSettings: BootSettings,
     onRunBoot: () -> Unit,
     onBack: () -> Unit,
+    /** The Code tab's view model, for the machines reached directly (Connection → Machines). */
+    code: io.github.sebbejohansson.yggdrasil.saga.CodeViewModel? = null,
     /** Home screen and updates: they need the activity, so the caller draws them. */
     phoneMore: @Composable () -> Unit = {},
 ) {
@@ -64,7 +66,11 @@ fun SettingsScreen(
         AssistantSettings(chat)
 
         HudSection("Connection", Modifier.padding(top = 8.dp))
-        HudLabel("Mímir: alerts, sync and coding sessions go through it", color = Hud.overlay2)
+        if (code != null) {
+            HudLabel("Machines: reached directly over the tailnet", color = Hud.overlay2)
+            io.github.sebbejohansson.yggdrasil.nodes.MachinesSettings(code)
+        }
+        HudLabel("Mímir: alerts, sync, and coding sessions of machines not reached directly", color = Hud.overlay2)
         MimirSettings(alerts)
 
         HudSection("Notifications", Modifier.padding(top = 8.dp))
