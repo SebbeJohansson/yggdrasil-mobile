@@ -647,3 +647,7 @@ message doesn't feed the whole chat to the model again.
 ```
 
 Needs JDK 21 and the Android SDK with `platforms;android-37.2`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Bundled third-party parts (fonts, PRoot) keep their own licenses, in [docs/licenses](docs/licenses). Report security problems as [SECURITY.md](SECURITY.md) says.
