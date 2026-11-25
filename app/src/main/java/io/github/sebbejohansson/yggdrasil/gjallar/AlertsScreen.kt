@@ -44,6 +44,7 @@ import io.github.sebbejohansson.yggdrasil.ui.HudText
 import io.github.sebbejohansson.yggdrasil.ui.HudTextField
 import io.github.sebbejohansson.yggdrasil.saga.Mirror
 import io.github.sebbejohansson.yggdrasil.saga.parsePairing
+import io.github.sebbejohansson.yggdrasil.nodes.MachineService
 import io.github.sebbejohansson.yggdrasil.saga.SagaService
 import io.github.sebbejohansson.yggdrasil.saga.SagaSettings
 import io.github.sebbejohansson.yggdrasil.saga.SyncStatus
@@ -78,16 +79,26 @@ class AlertsViewModel(
     private val gjallar: GjallarService,
     private val saga: SagaService,
     private val settings: SagaSettings,
+    /** Your machines reached directly over the tailnet: their alerts come from their own Gjallar. */
+    private val machines: MachineService,
 ) : ViewModel() {
 
-    val state = combine(gjallar.changes.flow, saga.changes.flow, saga.status) { _, _, status -> status }.mapLatest { status ->
+    val state = combine(
+        combine(gjallar.changes.flow, saga.changes.flow, saga.status) { _, _, status -> status },
+        machines.alerts,
+        machines.alertsFrom,
+    ) { status, direct, from -> Triple(status, direct, from) }.mapLatest { (status, direct, from) ->
         AlertsUiState(
             active = gjallar.active().map { AlertRow(it, gjallar.isMuted(it.source, it.key)) },
             resolved = gjallar.resolved(20),
-            mirrors = saga.mirrors(),
+            // A machine read directly shows its own Gjallar's alerts, not its Mímir copy.
+            mirrors = direct + saga.mirrors().filter { it.device !in from },
             sync = status,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AlertsUiState())
+
+    /** The machines reached directly, read again: the Alerts tab does this while it shows. */
+    suspend fun refreshMachines() = machines.refresh()
 
     fun form() = MimirForm(settings.url, settings.token, settings.device)
 
@@ -100,9 +111,20 @@ class AlertsViewModel(
 
     fun syncNow() = viewModelScope.launch { saga.sync() }
 
-    fun acknowledge(m: Mirror) = viewModelScope.launch { saga.acknowledge(m); saga.sync() }
-    fun snooze(m: Mirror, hours: Long) = viewModelScope.launch { saga.snooze(m, Instant.now().plus(Duration.ofHours(hours))); saga.sync() }
-    fun setMuted(m: Mirror, muted: Boolean) = viewModelScope.launch { saga.setMuted(m, muted); saga.sync() }
+    // A machine's alert read directly is answered at its own Gjallar at once;
+    // one through Mímir is asked of that machine with Sága's next sync.
+    fun acknowledge(m: Mirror) = viewModelScope.launch {
+        val id = m.directId
+        if (id != null) machines.onAlert(m) { it.ackAlert(id) } else { saga.acknowledge(m); saga.sync() }
+    }
+    fun snooze(m: Mirror, hours: Long) = viewModelScope.launch {
+        val id = m.directId
+        val until = Instant.now().plus(Duration.ofHours(hours))
+        if (id != null) machines.onAlert(m) { it.snoozeAlert(id, until) } else { saga.snooze(m, until); saga.sync() }
+    }
+    fun setMuted(m: Mirror, muted: Boolean) = viewModelScope.launch {
+        if (m.directId != null) machines.onAlert(m) { it.muteAlert(m.alert.source, m.alert.key, muted) } else { saga.setMuted(m, muted); saga.sync() }
+    }
 
     fun acknowledge(a: Alert) = viewModelScope.launch { gjallar.acknowledge(a.id) }
     fun snooze(a: Alert, hours: Long) = viewModelScope.launch { gjallar.snooze(a.id, Instant.now().plus(Duration.ofHours(hours))) }
@@ -116,7 +138,7 @@ class AlertsViewModel(
 
     companion object {
         fun factory(c: AppContainer): ViewModelProvider.Factory =
-            viewModelFactory { initializer { AlertsViewModel(c.gjallar, c.saga, c.sagaSettings) } }
+            viewModelFactory { initializer { AlertsViewModel(c.gjallar, c.saga, c.sagaSettings, c.machines) } }
     }
 }
 
@@ -132,6 +154,13 @@ private fun Severity.color(): Color = when (this) {
 @Composable
 fun AlertsScreen(vm: AlertsViewModel, modifier: Modifier = Modifier) {
     val s by vm.state.collectAsStateWithLifecycle()
+    // Your machines' alerts, read from their Gjallar again while this shows.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            runCatching { vm.refreshMachines() }
+            kotlinx.coroutines.delay(15_000)
+        }
+    }
     val open = s.active.count { it.alert.state == AlertState.OPEN }
     LazyColumn(
         modifier.fillMaxSize(),
@@ -184,7 +213,12 @@ fun AlertsScreen(vm: AlertsViewModel, modifier: Modifier = Modifier) {
         }
         if (s.mirrors.isNotEmpty()) {
             s.mirrors.groupBy { it.device }.forEach { (device, mirrors) ->
-                item { HudSection(device.replaceFirstChar { it.uppercase() }, Modifier.padding(top = 12.dp)) }
+                val title = mirrors.first().label ?: device.replaceFirstChar { it.uppercase() }
+                item {
+                    HudSection(title, Modifier.padding(top = 12.dp)) {
+                        HudLabel(if (mirrors.first().directId != null) "live · over the tailnet" else "through Mímir")
+                    }
+                }
                 item {
                     Column(
                         Modifier.fillMaxWidth().hudPanel(warn = false).padding(14.dp),

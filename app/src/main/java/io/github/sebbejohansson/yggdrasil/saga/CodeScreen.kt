@@ -44,6 +44,15 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.sebbejohansson.yggdrasil.AppContainer
+import io.github.sebbejohansson.yggdrasil.nodes.Machine
+import io.github.sebbejohansson.yggdrasil.nodes.MachineClient
+import io.github.sebbejohansson.yggdrasil.nodes.MachineGoal
+import io.github.sebbejohansson.yggdrasil.nodes.MachineGoals
+import io.github.sebbejohansson.yggdrasil.nodes.ReadTarget
+import io.github.sebbejohansson.yggdrasil.nodes.TranscriptDialog
+import io.github.sebbejohansson.yggdrasil.nodes.MachineService
+import io.github.sebbejohansson.yggdrasil.nodes.MachineStatus
+import io.github.sebbejohansson.yggdrasil.nodes.Machines
 import io.github.sebbejohansson.yggdrasil.ui.Hud
 import io.github.sebbejohansson.yggdrasil.ui.HudButton
 import io.github.sebbejohansson.yggdrasil.ui.HudButtonKind
@@ -68,24 +77,88 @@ data class CodeUiState(
     val devices: List<DeviceSessions> = emptyList(),
     val asked: List<Asked> = emptyList(),
     val sync: SyncStatus = SyncStatus(),
+    /** The machines reached directly, and how each answered last. */
+    val machines: List<MachineStatus> = emptyList(),
+    /** The newest Yggdrasil release, to say which machines are behind it. */
+    val latest: String? = null,
+    /** Each machine's goals in play, by machine id: only for machines reached directly. */
+    val goals: Map<String, List<MachineGoal>> = emptyMap(),
 )
 
 /**
- * Your machines' coding sessions, as each last sent them through Mímir, and
- * what you can ask of them from the phone. Each ask goes with Sága's next sync
- * and is carried out by that machine, when it is on and trusts this phone.
+ * Your machines' coding sessions, and what you can ask of them from the
+ * phone. A machine reached directly over the tailnet (nodes/) is read now
+ * and does what you ask now; any other machine is shown as it last sent its
+ * sessions through Mímir, and what you ask goes with Sága's next sync, carried
+ * out when that machine is on and trusts this phone. A machine reached both
+ * ways shows once, directly.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class CodeViewModel(private val saga: SagaService, private val settings: SagaSettings) : ViewModel() {
-    val state = combine(saga.sessionChanges.flow, saga.status) { _, status -> status }.mapLatest { status ->
-        CodeUiState(me = settings.device, devices = saga.devices(), asked = saga.asked(), sync = status)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CodeUiState())
+class CodeViewModel(
+    private val saga: SagaService,
+    private val settings: SagaSettings,
+    private val machines: MachineService,
+) : ViewModel() {
+    val state = combine(
+        combine(saga.sessionChanges.flow, saga.status) { _, status -> status },
+        machines.sessions,
+        machines.status,
+        combine(machines.asked, machines.latest, machines.goals) { a, l, g -> Triple(a, l, g) },
+    ) { status, direct, machineStatus, more -> Triple(status, direct, machineStatus to more) }
+        .mapLatest { (status, direct, rest) ->
+            val (machineStatus, more) = rest
+            val (directAsked, latest, goals) = more
+            val reached = direct.map { it.device }.toSet()
+            CodeUiState(
+                me = settings.device,
+                devices = direct + saga.devices().filter { it.device !in reached },
+                asked = (directAsked + saga.asked()).sortedByDescending { it.at },
+                sync = status,
+                machines = machineStatus,
+                latest = latest,
+                goals = goals,
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CodeUiState())
 
-    fun syncNow() = viewModelScope.launch { saga.sync() }
+    fun syncNow() = viewModelScope.launch {
+        machines.refresh()
+        saga.sync()
+    }
+
+    /** The machines reached directly, read again: the Code tab does this every few seconds while it shows. */
+    suspend fun refreshMachines() = machines.refresh()
 
     private fun ask(device: String, kind: String, build: (SessionAsk) -> SessionAsk) = viewModelScope.launch {
-        saga.askSession(build(SessionAsk(id = UUID.randomUUID().toString().replace("-", ""), kind = kind, origin = device)))
+        val ask = build(SessionAsk(id = UUID.randomUUID().toString().replace("-", ""), kind = kind, origin = device))
+        if (machines.isDirect(device)) {
+            machines.ask(ask)
+            return@launch
+        }
+        saga.askSession(ask)
         saga.sync()
+    }
+
+    /** A goal action on a machine reached directly; null, or why it failed. */
+    suspend fun onGoal(device: String, act: (MachineClient) -> Unit): String? = machines.onGoal(device, act)
+
+    /** The end of a session's transcript on a machine reached directly. */
+    suspend fun transcript(device: String, session: String, directory: String?, tail: Int, since: String?) =
+        machines.transcript(device, session, directory, tail, since)
+
+    /** Settings → Connection → Machines. */
+    fun machineList(): List<Machine> = machines.machines()
+
+    /** Saves a machine and reads it at once; the error says what is wrong with what was typed. */
+    fun saveMachine(label: String, host: String, token: String, keepToken: Boolean): String? {
+        val checked = Machines.check(label, host, if (keepToken && token.isBlank()) "kept" else token)
+        val machine = checked.getOrElse { return it.message }
+        machines.save(machine, token)
+        viewModelScope.launch { machines.refresh() }
+        return null
+    }
+
+    fun removeMachine(id: String) = viewModelScope.launch {
+        machines.remove(id)
     }
 
     fun prompt(device: String, s: RemoteSession, text: String) = ask(device, SessionKinds.PROMPT) { it.copy(session = s.id, text = text) }
@@ -98,7 +171,7 @@ class CodeViewModel(private val saga: SagaService, private val settings: SagaSet
 
     companion object {
         fun factory(c: AppContainer): ViewModelProvider.Factory =
-            viewModelFactory { initializer { CodeViewModel(c.saga, c.sagaSettings) } }
+            viewModelFactory { initializer { CodeViewModel(c.saga, c.sagaSettings, c.machines) } }
     }
 }
 
@@ -131,8 +204,18 @@ fun CodeScreen(
     var cloudOpen by remember { mutableStateOf(false) }
     if (phone != null && cloudOpen) PhoneCloudDialog(phone, onSetUpPhone) { cloudOpen = false }
     var localOpen by remember { mutableStateOf(false) }
+    // A session on a machine reached directly, open in the reader.
+    var reading by remember { mutableStateOf<ReadTarget?>(null) }
+    reading?.let { target -> TranscriptDialog(target, vm) { reading = null } }
     if (phone != null && local != null && localOpen) PhoneLocalDialog(phone, local, onSetUpPhone) { localOpen = false; local.open(null) }
     val localState = local?.state?.collectAsStateWithLifecycle()?.value
+    // The machines reached directly, read again every few seconds while the Code tab shows.
+    LaunchedEffect(Unit) {
+        while (true) {
+            runCatching { vm.refreshMachines() }
+            kotlinx.coroutines.delay(5_000)
+        }
+    }
     // The phone's own sessions, kept fresh while the Code tab shows.
     if (local != null && phoneState?.ready == true) {
         LaunchedEffect(Unit) {
@@ -153,8 +236,8 @@ fun CodeScreen(
                     Text("Sindri", style = HudText.title)
                     HudLabel(
                         when {
-                            !s.sync.configured -> "Mímir is not set up (Settings → Connection)"
-                            s.devices.isEmpty() -> "no machine has sent its sessions"
+                            !s.sync.configured && s.machines.isEmpty() -> "no machines set up (Settings → Connection)"
+                            s.devices.isEmpty() -> "no machine has answered or sent its sessions"
                             else -> "${s.devices.sumOf { it.sessions.size }} sessions on ${s.devices.size} " +
                                 if (s.devices.size == 1) "machine" else "machines"
                         },
@@ -178,10 +261,21 @@ fun CodeScreen(
                 PhoneSessions(phoneState, localState, local, onOpen = { localOpen = true }, onNew = { local.open(null); localOpen = true })
             }
         }
+        // A machine reached directly that did not answer, or was left out.
+        s.machines.filter { it.error != null || it.refused }.forEach { m ->
+            item(key = "m-${m.machine.id}") {
+                HudLabel(
+                    if (m.refused) "${m.machine.label}: left out, it is a work machine"
+                    else "${m.machine.label}: ${m.error}",
+                    color = Hud.overlay2,
+                )
+            }
+        }
         if (s.devices.isEmpty()) {
             item {
                 Text(
-                    "A machine that runs Sindri and Sága with SINDRI_TOKEN set sends its sessions here through Mímir.",
+                    "Add your machines under Settings → Connection → Machines to see their sessions live over the tailnet. " +
+                        "A machine that runs Sindri and Sága also sends its sessions here through Mímir.",
                     style = HudText.small.copy(color = Hud.overlay0, textAlign = TextAlign.Center),
                     modifier = Modifier.fillMaxWidth().padding(24.dp),
                 )
@@ -189,17 +283,33 @@ fun CodeScreen(
         }
         s.devices.forEach { d ->
             item(key = "h-${d.device}") {
-                HudSection(d.device.replaceFirstChar { it.uppercase() }, Modifier.padding(top = 8.dp)) {
-                    HudLabel(if (d.quiet(now)) "quiet ${ago(d.heardAt, now)}" else "heard ${ago(d.heardAt, now)} ago")
+                val machine = s.machines.firstOrNull { it.machine.id == d.device }
+                HudSection(d.title, Modifier.padding(top = 8.dp)) {
+                    HudLabel(
+                        when {
+                            d.direct && machine != null -> "live · ${Machines.summary(machine, s.latest)}"
+                            d.direct -> "live · over the tailnet"
+                            d.quiet(now) -> "quiet ${ago(d.heardAt, now)}"
+                            else -> "heard ${ago(d.heardAt, now)} ago · through Mímir"
+                        },
+                    )
                 }
             }
-            item(key = "d-${d.device}") { DevicePanel(d, s, vm, now, phone?.takeIf { phoneState?.ready == true }, phoneState) }
+            item(key = "d-${d.device}") { DevicePanel(d, s, vm, now, phone?.takeIf { phoneState?.ready == true }, phoneState) { reading = it } }
         }
     }
 }
 
 @Composable
-private fun DevicePanel(d: DeviceSessions, s: CodeUiState, vm: CodeViewModel, now: Instant, phone: BridgeViewModel?, phoneState: BridgeUiState?) {
+private fun DevicePanel(
+    d: DeviceSessions,
+    s: CodeUiState,
+    vm: CodeViewModel,
+    now: Instant,
+    phone: BridgeViewModel?,
+    phoneState: BridgeUiState?,
+    onRead: (ReadTarget) -> Unit,
+) {
     val drive = d.drivableBy(s.me) && !d.quiet(now)
     Column(
         Modifier.fillMaxWidth().alpha(if (d.quiet(now)) 0.65f else 1f).hudPanel(warn = d.sessions.any { it.waiting }).padding(14.dp),
@@ -211,12 +321,14 @@ private fun DevicePanel(d: DeviceSessions, s: CodeUiState, vm: CodeViewModel, no
         }
         d.errors.forEach { (source, text) -> Text("$source: $text", style = HudText.meta) }
         if (d.sessions.isEmpty()) Text("Nothing running there.", style = HudText.small.copy(color = Hud.overlay0))
-        d.sessions.forEach { session -> SessionItem(d, session, drive, s.asked, vm, now) }
+        d.sessions.forEach { session -> SessionItem(d, session, drive, s.asked, vm, now, onRead) }
         if (d.cloud.isNotEmpty() || (drive && d.projects.isNotEmpty())) {
             HudLabel("Cloud sessions started there")
             d.cloud.forEach { c -> CloudItem(d, c, drive, s.asked, vm, now, phone, phoneState) }
             if (drive && d.projects.isNotEmpty()) StartCloud(d, s.asked, vm)
         }
+        // A machine reached directly: its goals too.
+        if (d.direct) MachineGoals(d, s.goals[d.device].orEmpty(), vm, onRead)
     }
 }
 
@@ -228,7 +340,15 @@ private fun RemoteSession.color(): Color = when {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SessionItem(d: DeviceSessions, s: RemoteSession, drive: Boolean, asked: List<Asked>, vm: CodeViewModel, now: Instant) {
+private fun SessionItem(
+    d: DeviceSessions,
+    s: RemoteSession,
+    drive: Boolean,
+    asked: List<Asked>,
+    vm: CodeViewModel,
+    now: Instant,
+    onRead: (ReadTarget) -> Unit = {},
+) {
     val uri = LocalUriHandler.current
     var draft by remember(s.id) { mutableStateOf("") }
     Column(Modifier.fillMaxWidth().leftStripe(s.color()).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -256,13 +376,21 @@ private fun SessionItem(d: DeviceSessions, s: RemoteSession, drive: Boolean, ask
             }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            // A Claude Code session on a machine reached directly: its transcript, read from its Sindri.
+            if (d.direct && s.kind == "claude" && !s.id.startsWith("herdr:")) {
+                HudButton("Read", { onRead(ReadTarget(d.device, d.title, s.id, s.directory, s.name)) }, kind = HudButtonKind.SMALL)
+            }
             s.claudeLink?.let { link -> HudButton("Open in Claude", { uri.openUri(link) }, kind = HudButtonKind.SMALL) }
             if (drive && d.herdr && s.pane == null && s.kind == "claude" && s.directory != null) {
                 HudButton("Resume there", { vm.resume(d.device, s) }, kind = HudButtonKind.SMALL)
             }
         }
         if (s.pane == null && s.claudeLink == null) {
-            Text("Outside herdr, and Remote Control is off: it can only be read from here.", style = HudText.meta)
+            Text(
+                if (d.direct) "Outside herdr, and Remote Control is off: read it here, or resume it there to type into it."
+                else "Outside herdr, and Remote Control is off: it can only be read from here.",
+                style = HudText.meta,
+            )
         }
         AskedLines(asked.filter { it.ask.origin == d.device && it.ask.session == s.id })
     }
