@@ -75,10 +75,27 @@ open class MachineClient(private val machine: Machine, private val token: String
     /** Its goals (Sindri's GET /v1/goals). */
     fun goals(): List<MachineGoal> = Goals.parse(call("sindri", "GET", "/v1/goals"))
 
-    /** A new draft goal in [repos]. */
-    fun createGoal(title: String, repos: List<String>): MachineGoal? = Goals.parseOne(
-        call("sindri", "POST", "/v1/goals", JSONObject().put("title", title.trim()).put("repos", org.json.JSONArray(repos)).put("source", "manual")),
-    )
+    /** A new draft goal in [repos]; [source] and [context] are an imported candidate's. */
+    fun createGoal(title: String, repos: List<String>, source: String = "manual", context: String = ""): MachineGoal? {
+        val body = JSONObject().put("title", title.trim()).put("repos", org.json.JSONArray(repos)).put("source", source)
+        if (context.isNotBlank()) body.put("context", context.trim())
+        return Goals.parseOne(call("sindri", "POST", "/v1/goals", body))
+    }
+
+    /**
+     * What could become a goal there (Sindri's GET /v1/goals/candidates):
+     * [from] is todo, linear or github; [project], [query] and [assignee] narrow it.
+     */
+    fun candidates(from: String, project: String?, query: String, assignee: String): List<GoalCandidate> {
+        val params = mutableListOf("from" to from)
+        project?.let { params += "project" to it }
+        if (from != "todo") {
+            query.trim().ifEmpty { null }?.let { params += "query" to it }
+            params += "assignee" to assignee
+        }
+        val path = "/v1/goals/candidates?" + params.joinToString("&") { (k, v) -> k + "=" + java.net.URLEncoder.encode(v, "UTF-8") }
+        return Goals.parseCandidates(call("sindri", "GET", path, timeoutMs = 15_000))
+    }
 
     /** Starts a draft: one coding agent per project. */
     fun startGoal(id: Long) { call("sindri", "POST", "/v1/goals/$id/start", JSONObject(), timeoutMs = 15_000) }

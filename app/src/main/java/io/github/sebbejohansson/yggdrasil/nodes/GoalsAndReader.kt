@@ -44,7 +44,8 @@ data class ReadTarget(val machine: String, val machineLabel: String, val session
 /**
  * A machine's goals in play, under its sessions in the Code tab: what each
  * needs next, its parts (one agent per project, each readable), Start for a
- * draft, Resume for one waiting on Claude usage, and a new draft.
+ * draft, Resume for one waiting on Claude usage, a new draft, and importing
+ * drafts from TODO, Linear or GitHub (MachineGoalImport).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -54,6 +55,7 @@ fun MachineGoals(d: DeviceSessions, goals: List<MachineGoal>, vm: CodeViewModel,
     var title by remember(d.device) { mutableStateOf("") }
     var repos by remember(d.device) { mutableStateOf(listOf<String>()) }
     var adding by remember(d.device) { mutableStateOf(false) }
+    var importing by remember(d.device) { mutableStateOf(false) }
     val label = d.title
 
     HudLabel("Goals")
@@ -82,7 +84,9 @@ fun MachineGoals(d: DeviceSessions, goals: List<MachineGoal>, vm: CodeViewModel,
         }
     }
     note?.let { HudLabel(it, color = Hud.amber) }
-    if (adding) {
+    if (importing) {
+        MachineGoalImport(d, vm) { done -> importing = false; note = done }
+    } else if (adding) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             HudTextField(title, { title = it }, placeholder = "New goal on $label: what should be done?", maxLines = 3)
             if (d.projects.isNotEmpty()) {
@@ -113,7 +117,10 @@ fun MachineGoals(d: DeviceSessions, goals: List<MachineGoal>, vm: CodeViewModel,
             }
         }
     } else {
-        HudButton("New goal", { adding = true }, kind = HudButtonKind.SMALL)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudButton("New goal", { adding = true }, kind = HudButtonKind.SMALL)
+            HudButton("Import", { importing = true; note = null }, kind = HudButtonKind.SMALL)
+        }
     }
 }
 

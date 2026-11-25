@@ -84,6 +84,7 @@ class GoalsAndTranscriptTest {
                 path == "/health" -> """{"version":"v0.2.1"${if (work) ""","work":true""" else ""}}"""
                 path == "/v1/sessions" -> """{"claude":{"sessions":[]},"herdr":{"from":"off"}}"""
                 path == "/v1/goals" && method == "GET" -> """{"goals":[{"id":5,"title":"New draft","repos":["api"],"state":"draft","next":{"action":"start","text":"Start"},"tasks":[]}]}"""
+                path.startsWith("/v1/goals/candidates") -> """{"from":"github","candidates":[{"source":"github:someone/app#7","title":" Fix login ","context":"Safari","repos":["app"],"url":"https://github.com/someone/app/issues/7","labels":["bug"]},{"source":"github:someone/app#3","title":"Old","repos":["app"],"goal":5},{"source":"x"}]}"""
                 path == "/v1/goals" -> """{"id":6,"title":"Add CSV export","repos":["site"],"state":"draft","next":{"action":"start","text":"Start"},"tasks":[]}"""
                 path.startsWith("/v1/sessions/claude/") && "since=10%3A20" in path -> """{"size":10,"modified":20,"text":"","unchanged":true}"""
                 path.startsWith("/v1/sessions/claude/") -> """{"size":10,"modified":20,"text":"{\"type\":\"user\",\"message\":{\"content\":\"hi\"}}"}"""
@@ -121,6 +122,38 @@ class GoalsAndTranscriptTest {
         assertEquals("hi", (Transcript.read(first.text).single() as TranscriptEntry.Prompt).text)
         assertTrue(clients.flatMap { it.calls }.any { "/v1/sessions/claude/s1/transcript?tail=400000&dir=%2Fhome%2Fygg%2Fprojects%2Fsite" in it })
         assertTrue(machines.transcript("vps", "s1", null, 400_000, first.stamp).unchanged)
+    }
+
+    @Test
+    fun `lists a machine's GitHub issues and imports one as a goal`() = runTest {
+        val clients = mutableListOf<FakeClient>()
+        val machines = service(work = false, clients)
+        var found: List<GoalCandidate> = emptyList()
+        assertNull(machines.onGoal("vps") { found = it.candidates("github", null, " login fix ", "unassigned") })
+        assertEquals(listOf("github:someone/app#7", "github:someone/app#3"), found.map { it.source })
+        val issue = found.first()
+        assertEquals("Fix login", issue.title)
+        assertEquals(listOf("bug"), issue.labels)
+        assertNull(issue.goal)
+        assertEquals(5L, found[1].goal)
+        assertEquals("app#7", Goals.candidateTag(issue.source))
+        assertEquals(listOf("app"), Goals.importRepos(issue, listOf("other")))
+
+        assertNull(machines.onGoal("vps") { it.createGoal(issue.title, Goals.importRepos(issue, emptyList()), issue.source, issue.context) })
+        val calls = clients.flatMap { it.calls }
+        assertTrue(calls.any { it == "sindri GET /v1/goals/candidates?from=github&query=login+fix&assignee=unassigned" })
+        assertTrue(calls.any { it.startsWith("sindri POST /v1/goals {") && "\"source\":\"github:someone" in it && "app#7\"" in it && "\"context\":\"Safari\"" in it })
+    }
+
+    @Test
+    fun `a TODO import needs a project and tags its plan file`() {
+        assertFalse(Goals.canList("todo", null))
+        assertTrue(Goals.canList("todo", "app"))
+        assertTrue(Goals.canList("linear", null))
+        assertEquals("docs/ideas.md", Goals.candidateTag("todo:app:docs/ideas.md:## 1. Backups"))
+        assertNull(Goals.candidateTag("todo:app:- [ ] fix it"))
+        assertEquals("AI-3", Goals.candidateTag("linear:AI-3"))
+        assertEquals(listOf("site"), Goals.importRepos(GoalCandidate("linear:AI-3", "T", "", emptyList(), null, null, emptyList()), listOf("site")))
     }
 
     @Test

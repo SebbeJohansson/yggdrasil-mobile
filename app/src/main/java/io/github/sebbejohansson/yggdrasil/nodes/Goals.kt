@@ -27,7 +27,50 @@ data class MachineGoal(
     val resumable: Boolean get() = nextAction == "resume"
 }
 
+/**
+ * Something that could become a goal (Sindri's GET /v1/goals/candidates): an
+ * open TODO line, a Linear issue or a GitHub issue of a project there.
+ */
+data class GoalCandidate(
+    /** Ready for POST /v1/goals: todo:<repo>:<line>, linear:<ID> or github:<owner>/<repo>#<n>. */
+    val source: String,
+    val title: String,
+    val context: String,
+    /** A TODO line and a GitHub issue come with their project; a Linear issue with none. */
+    val repos: List<String>,
+    val url: String?,
+    /** The goal that already has this source. */
+    val goal: Long?,
+    val labels: List<String>,
+)
+
 object Goals {
+    /** Where candidates come from, as the desktop's import: TODO, Linear and GitHub. */
+    val SOURCES = listOf("todo" to "TODO", "linear" to "Linear", "github" to "GitHub")
+
+    /** Whose issues: yours (Sindri's default), nobody's or everyone's. */
+    val ASSIGNEES = listOf("mine" to "Mine", "unassigned" to "Unassigned", "all" to "Everyone's")
+
+    fun parseCandidates(json: String): List<GoalCandidate> = JSONObject(json).optJSONArray("candidates").objects().mapNotNull { c ->
+        val source = c.str("source") ?: return@mapNotNull null
+        val title = c.str("title")?.trim()?.ifEmpty { null } ?: return@mapNotNull null
+        GoalCandidate(source, title.take(200), c.str("context") ?: "", c.optJSONArray("repos").strings(), c.str("url"),
+            c.optLong("goal").takeIf { c.has("goal") && !c.isNull("goal") && it > 0 }, c.optJSONArray("labels").strings())
+    }
+
+    /** A short tag for where a candidate is from: app#7 for a GitHub issue, AI-3 for a Linear one, the file of a docs plan line. */
+    fun candidateTag(source: String): String? = when {
+        source.startsWith("github:") -> source.substringAfter('/').ifEmpty { null }
+        source.startsWith("linear:") -> source.removePrefix("linear:").ifEmpty { null }
+        else -> Regex("""^todo:[^:]+:([^\s:]+\.md):""", RegexOption.IGNORE_CASE).find(source)?.groupValues?.get(1)
+    }
+
+    /** TODO reads one project, so it needs one; Linear and GitHub take one or none. */
+    fun canList(from: String, project: String?): Boolean = from != "todo" || project != null
+
+    /** The repos of the goal made from [c]: its own, else the ones picked. */
+    fun importRepos(c: GoalCandidate, picked: List<String>): List<String> = c.repos.ifEmpty { picked }
+
     /** The states shown, in the order to act on them; merged and closed goals are done with. */
     val ORDER = listOf("needs-you", "running", "done", "draft")
 

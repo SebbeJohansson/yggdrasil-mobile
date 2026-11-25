@@ -232,6 +232,10 @@ Each machine's other parts are asked the same way, each on its own port:
   drafts), with what each needs next. **Start** starts a draft that names its
   projects, **Resume** retries one waiting on Claude usage, **Read** opens one
   of its agents, and **New goal** makes a draft in up to 4 of its projects.
+  **Import** lists what could become a goal there, as the desktop's import:
+  a project's TODO lines, your Linear issues, or the open GitHub issues of its
+  projects (each with its project picked; its pull request closes the issue).
+  Tick the ones wanted and each becomes a draft.
   Reviewing, races and merging stay on the desktop.
 - **The assistant:** Settings → Assistant → **Answered by** picks who
   answers the Ask tab: this phone, or a machine whose Norn is up, as the

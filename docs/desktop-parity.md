@@ -326,7 +326,9 @@ release as the widget's Health page does (`YggReleases`). Its Norn answers
 the Ask tab when Settings → Assistant → Answered by names it, as the
 dashboard's assistant picker; unlike the dashboard, only the chat moves (the
 phone's inbox, calendar and messages are its own). Its goals are listed in
-play with Start, Resume and New (`K/nodes/Goals.kt`); reviewing, races,
+play with Start, Resume, New and Import from TODO, Linear or GitHub
+(`K/nodes/Goals.kt`, `K/nodes/GoalImport.kt`, Sindri's
+`GET /v1/goals/candidates`); reviewing, races,
 merging, pictures and context stay the desktop's. Its sessions' transcripts
 are read as the widget reads them (`K/nodes/Transcript.kt` ports
 `transcriptView.ts`), without the widget's "load earlier" (the phone reads the
