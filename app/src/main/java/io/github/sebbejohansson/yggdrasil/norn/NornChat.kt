@@ -41,6 +41,8 @@ class NornChat(
         conversationId = id
     }
 
+    suspend fun setPinned(id: Long, pinned: Boolean) = withContext(io) { store.setPinned(id, pinned) }
+
     fun startNew() {
         conversationId = null
         lines = emptyList()

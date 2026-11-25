@@ -54,7 +54,7 @@ import io.github.sebbejohansson.yggdrasil.saga.SessionAsk
 import java.time.Instant
 
 /** One SQLite file for every part's state: `ygg.db`. Times are epoch millis. */
-class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 10) {
+class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 11) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -99,6 +99,8 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
         if (oldVersion < 8) createFocus(db)
         if (oldVersion < 9) createPromises(db)
         if (oldVersion < 10) createPerf(db)
+        // Version 11: chats can be pinned to the top of the Chats list.
+        if (oldVersion in 4..10) db.execSQL("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
     }
 
     // Version 10: what the parts pull, for the Performance page. A week is kept.
@@ -173,7 +175,7 @@ class YggDatabase(context: Context) : SQLiteOpenHelper(context, "ygg.db", null, 
                 id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, source TEXT NOT NULL,
                 created_at INTEGER NOT NULL, embedding BLOB, model TEXT)""",
         )
-        db.execSQL("CREATE TABLE conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, updated_at INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0)")
         db.execSQL(
             """CREATE TABLE chat_lines (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL,
@@ -500,8 +502,8 @@ private class SqliteMemoryStore(private val h: YggDatabase) : MemoryStore {
 
 private class SqliteChatStore(private val h: YggDatabase) : ChatStore {
     override fun conversations(limit: Int) = h.readableDatabase.query(
-        "conversations", null, null, null, null, null, "updated_at DESC", "$limit",
-    ).all { Conversation(long("id"), str("title"), instant("updated_at")) }
+        "conversations", null, null, null, null, null, "pinned DESC, updated_at DESC", "$limit",
+    ).all { Conversation(long("id"), str("title"), instant("updated_at"), long("pinned") != 0L) }
 
     override fun lines(conversationId: Long) = h.readableDatabase.query(
         "chat_lines", null, "conversation_id = ?", arrayOf("$conversationId"), null, null, "id ASC",
@@ -519,6 +521,10 @@ private class SqliteChatStore(private val h: YggDatabase) : ChatStore {
             put("shown", line.shown); put("sent", line.sent); putInstant("at", at)
         })
         db.update("conversations", ContentValues().apply { putInstant("updated_at", at) }, "id = ?", arrayOf("$conversationId"))
+    }
+
+    override fun setPinned(conversationId: Long, pinned: Boolean) {
+        h.writableDatabase.update("conversations", ContentValues().apply { put("pinned", if (pinned) 1 else 0) }, "id = ?", arrayOf("$conversationId"))
     }
 
     override fun delete(conversationId: Long) {

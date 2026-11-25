@@ -49,28 +49,39 @@ private fun PageHead(title: String, line: String, onBack: () -> Unit, trailing: 
     }
 }
 
-/** Your chats with Norn, newest first: open one to carry on, or start a new one. */
+/** Your chats with Norn: pinned ones in their own group on top, then the rest, newest first. */
 @Composable
-fun ChatsPage(s: ChatUiState, onOpen: (Long) -> Unit, onDelete: (Long) -> Unit, onNew: () -> Unit, onBack: () -> Unit) {
+fun ChatsPage(s: ChatUiState, onOpen: (Long) -> Unit, onDelete: (Long) -> Unit, onPin: (Long, Boolean) -> Unit, onNew: () -> Unit, onBack: () -> Unit) {
+    val pinned = s.conversations.filter { it.pinned }
+    val rest = s.conversations.filterNot { it.pinned }
+    @Composable
+    fun row(c: Conversation) {
+        val open = c.id == s.conversationId
+        Row(
+            Modifier.fillMaxWidth().leftStripe(if (open) Hud.cyan else Hud.surface1).clickable { onOpen(c.id) }.padding(start = 10.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(c.title, style = HudText.small.copy(color = if (open) Hud.bright else Hud.text), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(whenFmt.format(c.updatedAt) + if (open) " · open" else "", style = HudText.meta)
+            }
+            HudButton(if (c.pinned) "Unpin" else "Pin", { onPin(c.id, !c.pinned) }, kind = HudButtonKind.SMALL)
+            Spacer(Modifier.width(6.dp))
+            HudButton("Delete", { onDelete(c.id) }, kind = HudButtonKind.SMALL)
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         PageHead("Chats", "${s.conversations.size} kept on this phone", onBack) {
             HudButton("New", onNew, kind = HudButtonKind.SMALL)
         }
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (s.conversations.isEmpty()) item { Text("No chats yet.", style = HudText.small.copy(color = Hud.overlay0)) }
-            items(s.conversations, key = { it.id }) { c ->
-                val open = c.id == s.conversationId
-                Row(
-                    Modifier.fillMaxWidth().leftStripe(if (open) Hud.cyan else Hud.surface1).clickable { onOpen(c.id) }.padding(start = 10.dp, top = 4.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(c.title, style = HudText.small.copy(color = if (open) Hud.bright else Hud.text), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(whenFmt.format(c.updatedAt) + if (open) " · open" else "", style = HudText.meta)
-                    }
-                    HudButton("Delete", { onDelete(c.id) }, kind = HudButtonKind.SMALL)
-                }
+            if (pinned.isNotEmpty()) {
+                item(key = "pinned-head") { HudSection("Pinned") }
+                items(pinned, key = { it.id }) { row(it) }
+                if (rest.isNotEmpty()) item(key = "rest-head") { HudSection("Chats", Modifier.padding(top = 4.dp)) }
             }
+            items(rest, key = { it.id }) { row(it) }
         }
     }
 }

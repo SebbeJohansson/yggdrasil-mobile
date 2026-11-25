@@ -5,7 +5,7 @@ import io.github.sebbejohansson.yggdrasil.llm.LlmRole
 import java.time.Instant
 
 /** One chat with Norn, kept so it survives closing the app. */
-data class Conversation(val id: Long, val title: String, val updatedAt: Instant)
+data class Conversation(val id: Long, val title: String, val updatedAt: Instant, val pinned: Boolean = false)
 
 /**
  * A message in a chat. [shown] is what you see; [sent] is what the model got,
@@ -17,12 +17,13 @@ data class ChatLine(val role: LlmRole, val shown: String, val sent: String) {
 }
 
 interface ChatStore {
-    /** Newest first. */
+    /** Pinned chats first, then the rest, each newest first. */
     fun conversations(limit: Int): List<Conversation>
     fun lines(conversationId: Long): List<ChatLine>
     fun create(title: String, at: Instant): Long
     fun append(conversationId: Long, line: ChatLine, at: Instant)
     fun delete(conversationId: Long)
+    fun setPinned(conversationId: Long, pinned: Boolean)
 }
 
 object ChatTitle {
@@ -35,12 +36,15 @@ class InMemoryChatStore : ChatStore {
     private val convs = linkedMapOf<Long, Conversation>()
     private val lines = mutableMapOf<Long, MutableList<ChatLine>>()
     private var next = 1L
-    override fun conversations(limit: Int) = convs.values.sortedByDescending { it.updatedAt }.take(limit)
+    override fun conversations(limit: Int) = convs.values.sortedWith(compareByDescending<Conversation> { it.pinned }.thenByDescending { it.updatedAt }).take(limit)
     override fun lines(conversationId: Long) = lines[conversationId].orEmpty().toList()
     override fun create(title: String, at: Instant) = next++.also { convs[it] = Conversation(it, title, at); lines[it] = mutableListOf() }
     override fun append(conversationId: Long, line: ChatLine, at: Instant) {
         lines.getOrPut(conversationId) { mutableListOf() } += line
         convs[conversationId]?.let { convs[conversationId] = it.copy(updatedAt = at) }
+    }
+    override fun setPinned(conversationId: Long, pinned: Boolean) {
+        convs[conversationId]?.let { convs[conversationId] = it.copy(pinned = pinned) }
     }
     override fun delete(conversationId: Long) {
         convs.remove(conversationId)

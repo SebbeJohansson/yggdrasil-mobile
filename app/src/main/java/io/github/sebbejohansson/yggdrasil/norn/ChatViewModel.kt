@@ -251,6 +251,11 @@ class ChatViewModel(
         showChat()
     }
 
+    fun pinChat(id: Long, pinned: Boolean) = viewModelScope.launch {
+        chat.setPinned(id, pinned)
+        _state.update { it.copy(conversations = chat.conversations()) }
+    }
+
     fun deleteChat(id: Long) = viewModelScope.launch {
         chat.delete(id)
         showChat()

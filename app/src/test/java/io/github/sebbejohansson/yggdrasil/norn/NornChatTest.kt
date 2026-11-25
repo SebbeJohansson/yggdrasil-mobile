@@ -65,4 +65,16 @@ class NornChatTest {
         assertTrue(c.lines.isEmpty())
         assertTrue(store.conversations(10).isEmpty())
     }
+
+    @Test fun pinnedChatsComeFirstEvenWhenOlder() = runTest {
+        val c = chat()
+        c.ask("Old one", Privacy.ON_DEVICE_ONLY)
+        val old = c.conversationId!!
+        c.startNew()
+        c.ask("New one", Privacy.ON_DEVICE_ONLY)
+        c.setPinned(old, true)
+        assertEquals(listOf("Old one", "New one"), store.conversations(10).map { it.title })
+        c.setPinned(old, false)
+        assertEquals(listOf("New one", "Old one"), store.conversations(10).map { it.title })
+    }
 }

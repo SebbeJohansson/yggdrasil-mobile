@@ -304,6 +304,8 @@ Norn remembers you, under the desktop's rules (`Memory.kt`, ported from
 - **The Memory page:** see, add and forget facts, and switch learning off.
 
 Chats are kept on the phone. **Chats** lists them and **New** starts one.
+**Pin** puts a chat in its own Pinned group at the top of the list; **Unpin**
+moves it back among the rest.
 A reopened chat gives the model exactly what it had before, memories
 included.
 

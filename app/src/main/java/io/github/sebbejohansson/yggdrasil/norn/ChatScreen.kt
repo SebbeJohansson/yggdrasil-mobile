@@ -56,7 +56,7 @@ fun ChatScreen(vm: ChatViewModel, onSettings: () -> Unit = {}) {
     val s by vm.state.collectAsStateWithLifecycle()
     var page by rememberSaveable { mutableStateOf(NornPage.CHAT) }
     when (page) {
-        NornPage.CHATS -> ChatsPage(s, onOpen = { vm.openChat(it); page = NornPage.CHAT }, onDelete = vm::deleteChat,
+        NornPage.CHATS -> ChatsPage(s, onOpen = { vm.openChat(it); page = NornPage.CHAT }, onDelete = vm::deleteChat, onPin = vm::pinChat,
             onNew = { vm.newChat(); page = NornPage.CHAT }, onBack = { page = NornPage.CHAT })
         NornPage.MEMORY -> MemoryPage(s, vm, onBack = { page = NornPage.CHAT })
         NornPage.CHAT -> Column(Modifier.fillMaxSize()) {
