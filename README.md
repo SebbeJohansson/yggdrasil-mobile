@@ -188,10 +188,10 @@ HTTPS only: Android refuses plain HTTP) and this phone's token, both printed
 by Mímir's `deploy/install.sh`. Keep the name `phone` unless you gave the token
 another one. The phone needs Tailscale on.
 
-Or skip the typing: on the desktop, ask for a pairing code (a QR code in the
-terminal or in the Yggdrasil UI) and tap **Scan QR** under Connection, or copy
-the `ygg://pair?…` link and tap **Paste code**. Either fills the URL, token
-and name and saves them. The scan screen is Google's (Play services), so the
+Or skip the typing: on the desktop, ask for a pairing code (`ygg pair`: a QR code in the
+terminal) and tap **Scan QR** under Connection, or copy
+the `yggdrasil://pair?…` link and tap **Paste code**. Either fills the URL and token and saves them (a work
+machine's code is refused). The scan screen is Google's (Play services), so the
 app asks for no camera permission.
 
 **Coding sessions (the Code tab).** Each machine that runs Sindri and Sága

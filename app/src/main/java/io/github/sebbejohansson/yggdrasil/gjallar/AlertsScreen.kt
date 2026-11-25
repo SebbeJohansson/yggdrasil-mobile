@@ -295,13 +295,12 @@ fun MimirSettings(vm: AlertsViewModel) {
     val applyPairing = { raw: String ->
         val p = parsePairing(raw)
         if (p == null) {
-            pairNote = "That isn't a Ygg pairing code (ygg://pair?…, https only)."
+            pairNote = "That isn't a pairing code for a personal machine (yggdrasil://pair?…)."
         } else {
             url = p.url
             token = p.token
-            p.device?.let { device = it }
             vm.saveMimir(MimirForm(url, token, device))
-            pairNote = "Paired with ${p.url}."
+            pairNote = "Paired with ${p.label ?: p.url}. Keep the name above as the token was given."
         }
     }
     Column(

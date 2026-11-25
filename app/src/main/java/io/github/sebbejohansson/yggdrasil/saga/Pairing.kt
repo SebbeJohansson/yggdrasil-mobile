@@ -1,45 +1,34 @@
 package io.github.sebbejohansson.yggdrasil.saga
 
 import java.net.URLDecoder
-import org.json.JSONObject
 
-/** What a pairing code carries: where Mímir is, this phone's token there, and the name it was given. */
-data class Pairing(val url: String, val token: String, val device: String?)
+/** What a pairing link carries for the phone: where Mímir is, and this machine's token there. */
+data class Pairing(val url: String, val token: String, val label: String?)
 
 /**
- * Reads what the desktop shows as a QR code or a link when you pair a device:
- * `ygg://pair?url=…&token=…&device=…` (values percent-encoded), or the same
- * three keys as a JSON object. Null when it isn't one, so a stray scan of
- * some other code is ignored instead of half-filling the form.
+ * Reads the link `ygg pair` shows as a QR code:
+ * `yggdrasil://pair?v=1&id=…&label=…&host=<tailnet name>&token=…[&work=1]`
+ * (values percent-encoded; the contract is in the desktop's docs).
  *
- * Pure parsing, kept apart from the camera so it can be tested. Only https
- * URLs pass: Android refuses plain HTTP, and a token sent in the clear
- * is not worth saving.
+ * Null when it isn't one, so a stray scan of some other code is ignored
+ * instead of half-filling the form. Also null for `work=1`: a work machine's
+ * token never goes onto a personal phone. The URL is `https://<host>`, the
+ * shape Settings → Connection already takes; the phone has no other port to
+ * pick. Pure parsing, apart from the camera, so it is tested.
  */
 fun parsePairing(raw: String): Pairing? {
     val text = raw.trim()
-    val fields = when {
-        text.startsWith("{") -> jsonFields(text)
-        text.startsWith("ygg://pair", ignoreCase = true) -> queryFields(text)
-        else -> null
-    } ?: return null
-    val url = fields["url"]?.trim()?.trimEnd('/') ?: return null
-    val token = fields["token"]?.trim() ?: return null
-    if (!url.startsWith("https://") || url.length <= "https://".length || token.isBlank()) return null
-    return Pairing(url, token, fields["device"]?.trim()?.ifBlank { null })
-}
-
-private fun jsonFields(text: String): Map<String, String>? = runCatching {
-    val o = JSONObject(text)
-    listOf("url", "token", "device").mapNotNull { k -> o.optString(k, "").takeIf { it.isNotEmpty() }?.let { k to it } }.toMap()
-}.getOrNull()
-
-private fun queryFields(text: String): Map<String, String>? {
+    if (!text.startsWith("yggdrasil://pair", ignoreCase = true)) return null
     val q = text.substringAfter('?', "").substringBefore('#')
-    if (q.isEmpty()) return null
-    return runCatching {
+    val f = runCatching {
         q.split('&').filter { it.contains('=') }.associate {
             URLDecoder.decode(it.substringBefore('='), "UTF-8") to URLDecoder.decode(it.substringAfter('='), "UTF-8")
         }
-    }.getOrNull()
+    }.getOrNull() ?: return null
+    if ((f["v"] ?: "1") != "1") return null
+    if (f["work"] == "1") return null
+    val host = f["host"]?.trim()?.removePrefix("https://")?.trimEnd('/') ?: return null
+    val token = f["token"]?.trim() ?: return null
+    if (host.isBlank() || host.contains('/') || host.contains(' ') || token.isBlank()) return null
+    return Pairing("https://$host", token, f["label"]?.trim()?.ifBlank { null })
 }

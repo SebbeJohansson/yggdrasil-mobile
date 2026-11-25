@@ -3,32 +3,26 @@ package io.github.sebbejohansson.yggdrasil.saga
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 
-// Robolectric because org.json is a stub on the plain JVM unit-test classpath.
-@RunWith(RobolectricTestRunner::class)
 class PairingTest {
     @Test fun readsALink() {
-        val p = parsePairing("ygg://pair?url=https%3A%2F%2Fvps.tailnet.ts.net&token=abc%2B123&device=my%20phone")
-        assertEquals(Pairing("https://vps.tailnet.ts.net", "abc+123", "my phone"), p)
+        val p = parsePairing("yggdrasil://pair?v=1&id=vps&label=My%20VPS&host=vps.tail1234.ts.net&token=abc%2B123")
+        assertEquals(Pairing("https://vps.tail1234.ts.net", "abc+123", "My VPS"), p)
     }
 
-    @Test fun readsJsonAndTrims() {
-        val p = parsePairing("""  {"url":"https://vps.ts.net/","token":" t ","device":""}  """)
-        assertEquals(Pairing("https://vps.ts.net", "t", null), p)
+    @Test fun refusesAWorkMachine() {
+        assertNull(parsePairing("yggdrasil://pair?v=1&host=w.ts.net&token=t&work=1"))
     }
 
-    @Test fun refusesPlainHttpAndMissingParts() {
-        assertNull(parsePairing("ygg://pair?url=http%3A%2F%2Fvps&token=t"))
-        assertNull(parsePairing("ygg://pair?url=https%3A%2F%2Fvps"))
-        assertNull(parsePairing("ygg://pair?token=t"))
-        assertNull(parsePairing("ygg://pair"))
+    @Test fun refusesMissingOrOddParts() {
+        assertNull(parsePairing("yggdrasil://pair?v=1&host=vps.ts.net"))
+        assertNull(parsePairing("yggdrasil://pair?v=1&token=t"))
+        assertNull(parsePairing("yggdrasil://pair?v=2&host=vps.ts.net&token=t"))
+        assertNull(parsePairing("yggdrasil://pair?host=a/b&token=t"))
     }
 
     @Test fun ignoresOtherCodes() {
-        assertNull(parsePairing("https://example.com/?url=https://x&token=t"))
+        assertNull(parsePairing("https://example.com/?host=x&token=t"))
         assertNull(parsePairing("WIFI:S:home;T:WPA;P:pw;;"))
-        assertNull(parsePairing("{not json"))
     }
 }
