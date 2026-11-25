@@ -191,7 +191,9 @@ another one. The phone needs Tailscale on.
 Or skip the typing: on the desktop, ask for a pairing code (`ygg pair`: a QR code in the
 terminal) and tap **Scan QR** under Connection, or copy
 the `yggdrasil://pair?…` link and tap **Paste code**. Either fills the URL and token and saves them (a work
-machine's code is refused). The scan screen is Google's (Play services), so the
+machine's code is refused). The same two buttons are in Settings → Connection →
+Machines → Add a machine, where a code fills the name, tailnet name and owner
+token for you to save. The scan screen is Google's (Play services), so the
 app asks for no camera permission.
 
 **Machines reached directly.** Under Settings → Connection → **Machines**,

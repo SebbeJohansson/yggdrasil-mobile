@@ -14,9 +14,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.sebbejohansson.yggdrasil.saga.CodeViewModel
+import io.github.sebbejohansson.yggdrasil.saga.clipboardText
+import io.github.sebbejohansson.yggdrasil.saga.parsePairingResult
+import io.github.sebbejohansson.yggdrasil.saga.scanPairingCode
 import io.github.sebbejohansson.yggdrasil.ui.Hud
 import io.github.sebbejohansson.yggdrasil.ui.HudButton
 import io.github.sebbejohansson.yggdrasil.ui.HudButtonKind
@@ -81,7 +85,24 @@ private fun MachineForm(machine: Machine?, onDone: () -> Unit, vm: CodeViewModel
     var host by remember { mutableStateOf(machine?.host ?: "") }
     var token by remember { mutableStateOf("") }
     var problem by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    // A scanned or pasted `ygg pair` link fills the fields; a work machine's is refused.
+    val fill = { raw: String ->
+        parsePairingResult(raw).fold(
+            onSuccess = { p ->
+                host = p.host
+                token = p.token
+                if (label.isBlank()) label = p.label.orEmpty()
+                problem = null
+            },
+            onFailure = { problem = it.message },
+        )
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudButton("Scan QR", { scanPairingCode(context, fill) { problem = it } }, kind = HudButtonKind.SMALL)
+            HudButton("Paste code", { fill(clipboardText(context)) }, kind = HudButtonKind.SMALL)
+        }
         HudTextField(label, { label = it }, placeholder = "Name (VPS, Home PC)", maxLines = 1)
         HudTextField(host, { host = it }, placeholder = "Tailnet name: vps.tail1234.ts.net", maxLines = 1)
         HudTextField(

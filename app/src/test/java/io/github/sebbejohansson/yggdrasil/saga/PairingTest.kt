@@ -7,11 +7,13 @@ import org.junit.Test
 class PairingTest {
     @Test fun readsALink() {
         val p = parsePairing("yggdrasil://pair?v=1&id=vps&label=My%20VPS&host=vps.tail1234.ts.net&token=abc%2B123")
-        assertEquals(Pairing("https://vps.tail1234.ts.net", "abc+123", "My VPS"), p)
+        assertEquals(Pairing("vps.tail1234.ts.net", "abc+123", "My VPS"), p)
+        assertEquals("https://vps.tail1234.ts.net", p?.url)
     }
 
     @Test fun refusesAWorkMachine() {
         assertNull(parsePairing("yggdrasil://pair?v=1&host=w.ts.net&token=t&work=1"))
+        assertEquals(true, parsePairingResult("yggdrasil://pair?host=w.ts.net&token=t&work=1").exceptionOrNull()?.message?.contains("work machine"))
     }
 
     @Test fun refusesMissingOrOddParts() {
