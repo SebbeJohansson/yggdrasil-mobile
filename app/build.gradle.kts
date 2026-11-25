@@ -92,8 +92,12 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.work.runtime.ktx)
-    // The scan screen is Google's own (no camera permission for us); the QR code is read there.
-    implementation(libs.play.code.scanner)
+    // The phone's own camera reads the pairing QR code: CameraX shows and feeds it, zxing decodes it.
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+    implementation(libs.zxing.core)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

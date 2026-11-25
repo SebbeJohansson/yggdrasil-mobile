@@ -42,7 +42,7 @@ import io.github.sebbejohansson.yggdrasil.ui.HudTextField
 import io.github.sebbejohansson.yggdrasil.saga.Mirror
 import io.github.sebbejohansson.yggdrasil.saga.clipboardText
 import io.github.sebbejohansson.yggdrasil.saga.parsePairingResult
-import io.github.sebbejohansson.yggdrasil.saga.scanPairingCode
+import io.github.sebbejohansson.yggdrasil.saga.PairScanner
 import io.github.sebbejohansson.yggdrasil.nodes.MachineService
 import io.github.sebbejohansson.yggdrasil.saga.SagaService
 import io.github.sebbejohansson.yggdrasil.saga.SagaSettings
@@ -323,6 +323,7 @@ fun MimirSettings(vm: AlertsViewModel) {
     var token by remember { mutableStateOf(saved.token) }
     var device by remember { mutableStateOf(saved.device) }
     var pairNote by remember { mutableStateOf<String?>(null) }
+    var scanning by remember { mutableStateOf(false) }
     val context = LocalContext.current
     // A scanned or pasted pairing code fills the form and saves, so the token never gets typed.
     val applyPairing = { raw: String ->
@@ -353,8 +354,9 @@ fun MimirSettings(vm: AlertsViewModel) {
         HudTextField(token, { token = it }, placeholder = "This phone's token", maxLines = 1)
         HudTextField(device, { device = it }, placeholder = "Name at Mímir (phone)", maxLines = 1)
         pairNote?.let { Text(it, style = HudText.meta) }
+        if (scanning) PairScanner(onText = { scanning = false; applyPairing(it) }, onClose = { scanning = false; if (it != null) pairNote = it })
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            HudButton("Scan QR", { scanPairingCode(context, applyPairing) { pairNote = it } }, kind = HudButtonKind.SMALL)
+            HudButton("Scan QR", { scanning = true }, kind = HudButtonKind.SMALL)
             HudButton("Paste code", { applyPairing(clipboardText(context)) }, kind = HudButtonKind.SMALL)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

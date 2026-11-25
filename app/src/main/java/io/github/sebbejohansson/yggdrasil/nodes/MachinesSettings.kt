@@ -20,7 +20,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.sebbejohansson.yggdrasil.saga.CodeViewModel
 import io.github.sebbejohansson.yggdrasil.saga.clipboardText
 import io.github.sebbejohansson.yggdrasil.saga.parsePairingResult
-import io.github.sebbejohansson.yggdrasil.saga.scanPairingCode
+import io.github.sebbejohansson.yggdrasil.saga.PairScanner
 import io.github.sebbejohansson.yggdrasil.ui.Hud
 import io.github.sebbejohansson.yggdrasil.ui.HudButton
 import io.github.sebbejohansson.yggdrasil.ui.HudButtonKind
@@ -85,6 +85,7 @@ private fun MachineForm(machine: Machine?, onDone: () -> Unit, vm: CodeViewModel
     var host by remember { mutableStateOf(machine?.host ?: "") }
     var token by remember { mutableStateOf("") }
     var problem by remember { mutableStateOf<String?>(null) }
+    var scanning by remember { mutableStateOf(false) }
     val context = LocalContext.current
     // A scanned or pasted `ygg pair` link fills the fields; a work machine's is refused.
     val fill = { raw: String ->
@@ -100,7 +101,7 @@ private fun MachineForm(machine: Machine?, onDone: () -> Unit, vm: CodeViewModel
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            HudButton("Scan QR", { scanPairingCode(context, fill) { problem = it } }, kind = HudButtonKind.SMALL)
+            HudButton("Scan QR", { scanning = true }, kind = HudButtonKind.SMALL)
             HudButton("Paste code", { fill(clipboardText(context)) }, kind = HudButtonKind.SMALL)
         }
         HudTextField(label, { label = it }, placeholder = "Name (VPS, Home PC)", maxLines = 1)
@@ -111,6 +112,7 @@ private fun MachineForm(machine: Machine?, onDone: () -> Unit, vm: CodeViewModel
             maxLines = 1,
         )
         problem?.let { HudLabel(it, color = Hud.amber) }
+        if (scanning) PairScanner(onText = { scanning = false; fill(it) }, onClose = { scanning = false; if (it != null) problem = it })
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             HudButton("Save", {
                 problem = vm.saveMachine(label, host, token, keepToken = machine != null)

@@ -193,8 +193,8 @@ terminal) and tap **Scan QR** under Connection, or copy
 the `yggdrasil://pair?…` link and tap **Paste code**. Either fills the URL and token and saves them (a work
 machine's code is refused). The same two buttons are in Settings → Connection →
 Machines → Add a machine, where a code fills the name, tailnet name and owner
-token for you to save. The scan screen is Google's (Play services), so the
-app asks for no camera permission.
+token for you to save. Scanning uses the phone's own camera and asks for
+camera permission when you first tap Scan QR; pasting needs none.
 
 **Machines reached directly.** Under Settings → Connection → **Machines**,
 add each of your machines on the tailnet (the VPS, the home PC) with its
