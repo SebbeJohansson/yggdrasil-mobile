@@ -23,7 +23,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -39,6 +43,7 @@ import io.github.sebbejohansson.yggdrasil.ui.HudSection
 import io.github.sebbejohansson.yggdrasil.ui.HudText
 import io.github.sebbejohansson.yggdrasil.ui.HudTextField
 import io.github.sebbejohansson.yggdrasil.saga.Mirror
+import io.github.sebbejohansson.yggdrasil.saga.parsePairing
 import io.github.sebbejohansson.yggdrasil.saga.SagaService
 import io.github.sebbejohansson.yggdrasil.saga.SagaSettings
 import io.github.sebbejohansson.yggdrasil.saga.SyncStatus
@@ -284,6 +289,21 @@ fun MimirSettings(vm: AlertsViewModel) {
     var url by remember { mutableStateOf(saved.url) }
     var token by remember { mutableStateOf(saved.token) }
     var device by remember { mutableStateOf(saved.device) }
+    var pairNote by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    // A scanned or pasted pairing code fills the form and saves, so the token never gets typed.
+    val applyPairing = { raw: String ->
+        val p = parsePairing(raw)
+        if (p == null) {
+            pairNote = "That isn't a Ygg pairing code (ygg://pair?…, https only)."
+        } else {
+            url = p.url
+            token = p.token
+            p.device?.let { device = it }
+            vm.saveMimir(MimirForm(url, token, device))
+            pairNote = "Paired with ${p.url}."
+        }
+    }
     Column(
         Modifier.fillMaxWidth().hudPanel(warn = sync.lastError != null).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -300,6 +320,19 @@ fun MimirSettings(vm: AlertsViewModel) {
         HudTextField(url, { url = it }, placeholder = "https://vps.tailnet.ts.net", maxLines = 1)
         HudTextField(token, { token = it }, placeholder = "This phone's token", maxLines = 1)
         HudTextField(device, { device = it }, placeholder = "Name at Mímir (phone)", maxLines = 1)
+        pairNote?.let { Text(it, style = HudText.meta) }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudButton("Scan QR", {
+                val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
+                GmsBarcodeScanning.getClient(context, options).startScan()
+                    .addOnSuccessListener { applyPairing(it.rawValue.orEmpty()) }
+                    .addOnFailureListener { pairNote = "Couldn't scan: ${it.message ?: "cancelled"}. Paste the code below instead." }
+            }, kind = HudButtonKind.SMALL)
+            HudButton("Paste code", {
+                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                applyPairing(cm.primaryClip?.getItemAt(0)?.text?.toString().orEmpty())
+            }, kind = HudButtonKind.SMALL)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             HudButton("Save", { vm.saveMimir(MimirForm(url, token, device)) }, kind = HudButtonKind.SMALL)
             HudButton("Sync now", vm::syncNow, kind = HudButtonKind.SMALL)
