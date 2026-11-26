@@ -89,8 +89,10 @@ fun MachineGoals(d: DeviceSessions, goals: List<MachineGoal>, vm: CodeViewModel,
     } else if (adding) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             HudTextField(title, { title = it }, placeholder = "New goal on $label: what should be done?", maxLines = 3)
-            if (d.projects.isNotEmpty()) {
-                HudLabel("Projects (up to 4)", color = Hud.overlay2)
+            if (d.projects.isEmpty()) {
+                Text(Goals.noProjects(label, d.projectsAnswered), style = HudText.small.copy(color = Hud.amber))
+            } else {
+                HudLabel("Projects on $label (up to 4)", color = Hud.overlay2)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     d.projects.forEach { p ->
                         val on = p.name in repos

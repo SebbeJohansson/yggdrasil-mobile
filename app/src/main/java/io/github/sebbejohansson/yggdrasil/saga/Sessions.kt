@@ -76,6 +76,8 @@ data class DeviceSessions(
     val label: String? = null,
     /** Read just now from the machine itself over the tailnet, not what it last sent through Mímir. */
     val direct: Boolean = false,
+    /** It answered for its projects; false when the call failed, so an empty [projects] is not read as none cloned. */
+    val projectsAnswered: Boolean = true,
 ) {
     /** Whether it carries out what [me] asks. */
     fun drivableBy(me: String) = me in driveFrom

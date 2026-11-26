@@ -68,6 +68,8 @@ class GoalsAndTranscriptTest {
         assertEquals("What should be done?", Goals.checkNew(" ", emptyList()))
         assertEquals("At most 4 projects", Goals.checkNew("x", listOf("a", "b", "c", "d", "e")))
         assertNull(Goals.checkNew("Add CSV export", listOf("site")))
+        assertEquals("No projects cloned on VPS: clone one there to start a goal on it.", Goals.noProjects("VPS", answered = true))
+        assertEquals("VPS is not answering for its projects.", Goals.noProjects("VPS", answered = false))
     }
 
     private class MemoryVault : TokenVault {

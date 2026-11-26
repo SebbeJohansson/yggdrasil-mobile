@@ -280,6 +280,7 @@ object Machines {
             errors = errors,
             label = machine.label,
             direct = true,
+            projectsAnswered = projectsJson != null,
         )
     }
 

@@ -102,6 +102,11 @@ object Goals {
     fun inPlay(goals: List<MachineGoal>): List<MachineGoal> =
         goals.filter { it.state in ORDER }.sortedWith(compareBy<MachineGoal> { ORDER.indexOf(it.state) }.thenByDescending { it.id })
 
+    /** Why a machine offers no projects for a new goal: none cloned there, or it did not answer for them. */
+    fun noProjects(label: String, answered: Boolean): String =
+        if (answered) "No projects cloned on $label: clone one there to start a goal on it."
+        else "$label is not answering for its projects."
+
     /** The checks on a new goal, as Sindri's: a title of at most 200, at most 4 projects. */
     fun checkNew(title: String, repos: List<String>): String? = when {
         title.isBlank() -> "What should be done?"
