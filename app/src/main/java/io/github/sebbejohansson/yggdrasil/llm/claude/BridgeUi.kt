@@ -229,7 +229,7 @@ fun PhoneCloudPanel(vm: BridgeViewModel, onSetUp: () -> Unit) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         s.accounts.forEach { a ->
                             HudButton(a.name, { account = a.id },
-                                kind = if (a.id == account) HudButtonKind.PRIMARY else HudButtonKind.SMALL, enabled = a.signedIn)
+                                kind = if (a.id == account) HudButtonKind.SELECTED else HudButtonKind.SMALL, enabled = a.signedIn)
                         }
                     }
                 }

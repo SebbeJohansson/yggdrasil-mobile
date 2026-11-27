@@ -107,7 +107,7 @@ fun MachineGoals(d: DeviceSessions, goals: List<MachineGoal>, vm: CodeViewModel,
                     d.projects.forEach { p ->
                         val on = p.name in repos
                         HudButton(p.name, { repos = if (on) repos - p.name else repos + p.name },
-                            kind = if (on) HudButtonKind.GHOST else HudButtonKind.SMALL)
+                            kind = if (on) HudButtonKind.SELECTED else HudButtonKind.SMALL)
                     }
                 }
             }

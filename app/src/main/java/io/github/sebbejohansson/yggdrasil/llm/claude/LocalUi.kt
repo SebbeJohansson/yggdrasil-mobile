@@ -264,7 +264,7 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
         if (b.accounts.size > 1) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 b.accounts.forEach { a ->
-                    HudButton(a.name, { account = a.id }, kind = if (a.id == account) HudButtonKind.PRIMARY else HudButtonKind.SMALL, enabled = a.signedIn)
+                    HudButton(a.name, { account = a.id }, kind = if (a.id == account) HudButtonKind.SELECTED else HudButtonKind.SMALL, enabled = a.signedIn)
                 }
             }
         }
@@ -388,9 +388,9 @@ private fun LocalSessionView(c: LocalSession, s: LocalUiState, vm: LocalViewMode
             } else Box(Modifier.weight(1f))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            HudButton("Chat", { tab = "chat" }, kind = if (tab == "chat") HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+            HudButton("Chat", { tab = "chat" }, kind = if (tab == "chat") HudButtonKind.SELECTED else HudButtonKind.SMALL)
             HudButton("Changes" + (r?.files?.size?.takeIf { it > 0 }?.let { " ($it)" } ?: ""),
-                { tab = "changes"; vm.refreshRepo() }, kind = if (tab == "changes") HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+                { tab = "changes"; vm.refreshRepo() }, kind = if (tab == "changes") HudButtonKind.SELECTED else HudButtonKind.SMALL)
         }
         if (tab == "chat") LocalChat(c, s, vm, Modifier.weight(1f)) else LocalChanges(c, s, vm, Modifier.weight(1f))
     }
@@ -459,7 +459,7 @@ private fun LocalChat(c: LocalSession, s: LocalUiState, vm: LocalViewModel, modi
                 if (d.detail.isNotBlank()) Text(d.detail, style = HudText.meta.copy(fontFamily = HudFonts.mono), maxLines = 12, overflow = TextOverflow.Ellipsis)
                 Text(d.question, style = HudText.small.copy(color = Hud.text))
                 d.choices.forEach { ch ->
-                    HudButton("${ch.key}. ${ch.label}", { vm.choose(c.name, d, ch) }, kind = if (ch.selected) HudButtonKind.PRIMARY else HudButtonKind.SMALL,
+                    HudButton("${ch.key}. ${ch.label}", { vm.choose(c.name, d, ch) }, kind = if (ch.selected) HudButtonKind.SELECTED else HudButtonKind.SMALL,
                         enabled = !s.sending, modifier = Modifier.fillMaxWidth())
                 }
             }
@@ -501,7 +501,7 @@ private fun LocalChanges(c: LocalSession, s: LocalUiState, vm: LocalViewModel, m
             val shown = s.repoOf ?: c.repos.first()
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 c.repos.forEach { repo ->
-                    HudButton(repo.substringAfter('/'), { vm.pickRepo(repo) }, kind = if (repo == shown) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+                    HudButton(repo.substringAfter('/'), { vm.pickRepo(repo) }, kind = if (repo == shown) HudButtonKind.SELECTED else HudButtonKind.SMALL)
                 }
             }
         }

@@ -267,7 +267,7 @@ private fun Questions(pending: AgentPending, onSend: (Map<String, String>) -> Un
                                 else -> setOf(option)
                             })
                             typed = typed - q.question
-                        }, kind = if (on) HudButtonKind.GHOST else HudButtonKind.SMALL)
+                        }, kind = if (on) HudButtonKind.SELECTED else HudButtonKind.SMALL)
                     }
                 }
                 HudTextField(typed[q.question].orEmpty(), { typed = typed + (q.question to it) }, placeholder = "Or say it in your own words", maxLines = 3)

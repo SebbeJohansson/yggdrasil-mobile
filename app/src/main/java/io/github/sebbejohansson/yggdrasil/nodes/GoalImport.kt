@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,67 +46,81 @@ fun MachineGoalImport(d: DeviceSessions, vm: CodeViewModel, onDone: (String?) ->
     var from by remember(d.device) { mutableStateOf("github") }
     var project by remember(d.device) { mutableStateOf<String?>(null) }
     var query by remember(d.device) { mutableStateOf("") }
-    var assignee by remember(d.device) { mutableStateOf("mine") }
+    // Everyone's: issues in your own repos are seldom assigned to anyone, so Mine listed nothing.
+    var assignee by remember(d.device) { mutableStateOf("all") }
+    // Search again (the query is not searched on every letter).
+    var searches by remember(d.device) { mutableIntStateOf(0) }
     var found by remember(d.device) { mutableStateOf<List<GoalCandidate>?>(null) }
     var ticked by remember(d.device) { mutableStateOf(setOf<String>()) }
     var repos by remember(d.device) { mutableStateOf(listOf<String>()) }
     var busy by remember(d.device) { mutableStateOf(false) }
     var note by remember(d.device) { mutableStateOf<String?>(null) }
 
-    fun list() {
-        if (busy || !Goals.canList(from, project)) return
-        busy = true
+    // Lists as soon as the source, project or filter changes; a newer pick cancels an older listing.
+    var listing by remember(d.device) { mutableStateOf(false) }
+    LaunchedEffect(d.device, from, project, assignee, searches) {
+        if (!Goals.canList(from, project)) { found = null; return@LaunchedEffect }
+        listing = true
         note = null
-        val f = from
-        val p = project
         val q = query
-        val a = assignee
-        scope.launch {
-            var got: List<GoalCandidate>? = null
-            note = vm.onGoal(d.device) { got = it.candidates(f, p, q, a) }
-            found = got
-            ticked = emptySet()
-            busy = false
-        }
+        var got: List<GoalCandidate>? = null
+        note = vm.onGoal(d.device) { got = it.candidates(from, project, q, assignee) }
+        found = got
+        ticked = emptySet()
+        listing = false
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        HudLabel("Import goals", color = Hud.overlay2)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            HudLabel("Import goals", modifier = Modifier.weight(1f))
+            HudButton("Cancel", { onDone(null) }, kind = HudButtonKind.SMALL)
+        }
+        ChipRow("From") {
             Goals.SOURCES.forEach { (key, name) ->
                 HudButton(name, {
                     if (key != from) { from = key; project = null; found = null; ticked = emptySet(); note = null }
-                }, kind = if (key == from) HudButtonKind.GHOST else HudButtonKind.SMALL)
+                }, kind = if (key == from) HudButtonKind.SELECTED else HudButtonKind.SMALL)
             }
         }
-        if (from != "linear" && d.projects.isNotEmpty()) {
-            HudLabel(if (from == "todo") "Project" else "Project (tap one to narrow; none lists all)", color = Hud.overlay2)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                d.projects.forEach { p ->
-                    val on = p.name == project
-                    HudButton(p.name, { project = if (on) null else p.name }, kind = if (on) HudButtonKind.GHOST else HudButtonKind.SMALL)
-                }
+        if (from != "linear" && d.projects.isNotEmpty()) ChipRow(if (from == "todo") "Project" else "Project · none is all") {
+            d.projects.forEach { p ->
+                val on = p.name == project
+                HudButton(p.name, { project = if (on) null else p.name }, kind = if (on) HudButtonKind.SELECTED else HudButtonKind.SMALL)
+            }
+        }
+        if (from == "todo" && project == null) Text("Pick the project whose TODO to read.", style = HudText.meta)
+        if (from != "todo") ChipRow("Whose") {
+            Goals.ASSIGNEES.forEach { (key, name) ->
+                HudButton(name, { assignee = key }, kind = if (key == assignee) HudButtonKind.SELECTED else HudButtonKind.SMALL)
             }
         }
         if (from == "linear") HudTextField(project ?: "", { project = it.ifBlank { null } }, placeholder = "Linear project (optional)", maxLines = 1)
-        if (from != "todo") {
-            HudTextField(query, { query = it }, placeholder = "Search titles (optional)", maxLines = 1)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Goals.ASSIGNEES.forEach { (key, name) ->
-                    HudButton(name, { assignee = key }, kind = if (key == assignee) HudButtonKind.GHOST else HudButtonKind.SMALL)
-                }
-            }
+        if (from != "todo") Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudTextField(query, { query = it }, placeholder = "Search titles (optional)", maxLines = 1, modifier = Modifier.weight(1f))
+            HudButton("Search", { searches++ }, kind = HudButtonKind.SMALL, enabled = !listing)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            HudButton(if (busy && found == null) "Listing…" else "List", { list() }, kind = HudButtonKind.SMALL, enabled = !busy && Goals.canList(from, project))
-            HudButton("Cancel", { onDone(null) }, kind = HudButtonKind.SMALL)
-        }
+        if (listing) Text("Listing…", style = HudText.meta)
 
         val list = found
-        if (list != null && list.isEmpty()) Text(
-            if (from != "todo" && assignee == "mine") "Nothing open assigned to you. Try Unassigned or Everyone's." else "Nothing open to import.",
+        if (!listing && list != null && list.isEmpty()) Text(
+            when {
+                from == "todo" -> "No open lines in $project's TODO."
+                assignee == "mine" -> "Nothing open assigned to you. Try Everyone's."
+                assignee == "unassigned" -> "Nothing open and unassigned. Try Everyone's."
+                query.isNotBlank() -> "No open issue matches \"${query.trim()}\"."
+                else -> "No open ${if (from == "github") "issues" else "Linear issues"}${project?.let { " in $it" } ?: ""}."
+            },
             style = HudText.small.copy(color = Hud.overlay0),
         )
+        if (!list.isNullOrEmpty()) {
+            val open = list.filter { it.goal == null }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("${list.size} open · ${ticked.size} ticked", style = HudText.meta, modifier = Modifier.weight(1f))
+                if (open.isNotEmpty()) HudButton(if (ticked.size == open.size) "Untick all" else "Tick all", {
+                    ticked = if (ticked.size == open.size) emptySet() else open.map { it.source }.toSet()
+                }, kind = HudButtonKind.SMALL)
+            }
+        }
         list?.forEach { c ->
             val on = c.source in ticked
             val has = c.goal != null
@@ -131,7 +147,7 @@ fun MachineGoalImport(d: DeviceSessions, vm: CodeViewModel, onDone: (String?) ->
                 d.projects.forEach { p ->
                     val on = p.name in repos
                     HudButton(p.name, { repos = if (on) repos - p.name else if (repos.size < 4) repos + p.name else repos },
-                        kind = if (on) HudButtonKind.GHOST else HudButtonKind.SMALL)
+                        kind = if (on) HudButtonKind.SELECTED else HudButtonKind.SMALL)
                 }
             }
         }
@@ -157,8 +173,18 @@ fun MachineGoalImport(d: DeviceSessions, vm: CodeViewModel, onDone: (String?) ->
                         note = "$problem. Not created: ${failed.joinToString(", ")}"
                     }
                 }
-            }, kind = HudButtonKind.SMALL, enabled = !busy && ticked.isNotEmpty())
+            }, kind = if (ticked.isNotEmpty()) HudButtonKind.SELECTED else HudButtonKind.SMALL, enabled = !busy && ticked.isNotEmpty())
         }
         note?.let { HudLabel(it, color = Hud.amber) }
+    }
+}
+
+/** A labelled row of chips: the label on its own line, small, then the choices. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ChipRow(label: String, chips: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = HudText.meta.copy(color = Hud.overlay2))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { chips() }
     }
 }
