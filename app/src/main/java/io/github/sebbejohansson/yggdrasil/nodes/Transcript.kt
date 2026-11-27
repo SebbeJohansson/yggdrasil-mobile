@@ -33,6 +33,13 @@ data class RemoteTranscript(val size: Long, val modified: Long, val text: String
 }
 
 object Transcript {
+    /**
+     * Sindri's 404 for a session with no transcript file yet: Claude Code
+     * writes it at the session's first message, so a session started in
+     * herdr and not typed into has none. Shown as "Nothing said yet".
+     */
+    fun notYet(message: String?): Boolean = message != null && "answered 404" in message && "no transcript" in message
+
     /** A tool's output past this is cut; the transcript has the whole thing. */
     const val OUTPUT_MAX = 2_000
 

@@ -35,13 +35,14 @@ private const val UPGRADE_POLL_MAX_MS = 16 * 60_000L
 fun MachineUpgrade(d: DeviceSessions, status: MachineStatus, latest: String?, vm: CodeViewModel) {
     val scope = rememberCoroutineScope()
     var run by remember(d.device) { mutableStateOf<UpgradeRun?>(null) }
+    var now by remember(d.device) { mutableStateOf<String?>(null) }
     var note by remember(d.device) { mutableStateOf<String?>(null) }
     var starting by remember(d.device) { mutableStateOf(false) }
     val behind = YggReleases.standing(status.health?.version, latest) == YggReleases.Standing.BEHIND
 
     // What the machine says about its last upgrade, once; a run started from the desktop shows too.
     LaunchedEffect(d.device) {
-        vm.upgradeStatus(d.device).onSuccess { run = it.last }
+        vm.upgradeStatus(d.device).onSuccess { run = it.last; now = it.version }
     }
     // Follow a running upgrade until the Sindri that comes back says how it went.
     LaunchedEffect(d.device, run?.running, run?.version) {
@@ -53,6 +54,7 @@ fun MachineUpgrade(d: DeviceSessions, status: MachineStatus, latest: String?, vm
             val last = read.last ?: continue
             if (!last.running) {
                 run = last
+                now = read.version
                 runCatching { vm.refreshMachines() }
                 return@LaunchedEffect
             }
@@ -69,7 +71,7 @@ fun MachineUpgrade(d: DeviceSessions, status: MachineStatus, latest: String?, vm
                 it.ok == true -> Hud.green
                 else -> Hud.amber
             }
-            Text(Upgrades.line(it), style = HudText.meta.copy(color = color))
+            Text(Upgrades.line(it, now ?: status.health?.version), style = HudText.meta.copy(color = color))
         }
         note?.let { Text(it, style = HudText.meta.copy(color = Hud.amber)) }
         if (behind && latest != null && current?.running != true) {
@@ -77,7 +79,8 @@ fun MachineUpgrade(d: DeviceSessions, status: MachineStatus, latest: String?, vm
                 starting = true
                 note = null
                 scope.launch {
-                    vm.startUpgrade(d.device, latest)
+                    // "latest": the machine asks GitHub itself, so a release newer than the phone knows is not missed.
+                    vm.startUpgrade(d.device, Upgrades.LATEST)
                         .onSuccess { run = it }
                         .onFailure { note = Upgrades.refusal(it.message) }
                     starting = false

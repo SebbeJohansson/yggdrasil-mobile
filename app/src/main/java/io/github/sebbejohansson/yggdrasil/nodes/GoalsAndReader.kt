@@ -187,7 +187,11 @@ fun TranscriptDialog(target: ReadTarget, vm: CodeViewModel, onDismiss: () -> Uni
                     }
                     error = null
                 }
-                .onFailure { error = it.message ?: "could not read it" }
+                .onFailure {
+                    // Claude writes a session's transcript at its first message: none yet is not an error.
+                    if (Transcript.notYet(it.message)) { entries = emptyList(); error = null }
+                    else error = it.message ?: "could not read it"
+                }
             loaded = true
             delay(3_000)
         }
