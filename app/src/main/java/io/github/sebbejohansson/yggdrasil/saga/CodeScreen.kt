@@ -163,6 +163,12 @@ class CodeViewModel(
     /** Starts `ygg upgrade [version]` on a machine; the failure is Sindri's refusal. */
     suspend fun startUpgrade(device: String, version: String) = machines.on(device) { it.startUpgrade(version) }
 
+    /** Anything read or done on a machine reached directly, off the main thread; the failure says why. */
+    suspend fun <T> onMachine(device: String, act: (MachineClient) -> T): Result<T> = machines.on(device, act)
+
+    /** The machines read again, so the Code tab shows what an action changed. */
+    suspend fun refreshAfter() = runCatching { machines.refresh() }
+
     /** A machine's cleanup of quiet projects; failure for a Yggdrasil without it (404). */
     suspend fun cleanup(device: String) = machines.on(device) { it.cleanup() }
 

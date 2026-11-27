@@ -257,9 +257,16 @@ Each machine's other parts are asked the same way, each on its own port:
   waiting for the 30-minute check, and reads every machine again.
 - **Goals:** under its sessions, each machine reached directly lists its goals
   in play, in the order to act on them (needs you, moving, ready to review,
-  drafts), with what each needs next. **Start** starts a draft that names its
-  projects, **Resume** retries one waiting on Claude usage, **Read** opens one
-  of its agents, and **New goal** makes a draft in up to 4 of its projects.
+  drafts), each with its parts (repo and what its agent is doing) and what it
+  needs next; **Done (n)** folds away the merged and closed ones. **Start**
+  starts a draft that names its projects, **Resume** retries one waiting on
+  Claude usage, and **New goal** makes a draft in up to 4 of its projects.
+  **Open** (or a tap on the goal) shows all of it: each part's last words as
+  Markdown, its questions to answer (choices as buttons, or your own words)
+  or the tool it wants to use (Allow, Deny), a reply box (sent when a busy
+  turn ends), **Read** for its transcript, **Review** for its branch (commits,
+  files, the diff) with **Merge** into its base or **Open PR**, **Restart**
+  for a new agent from the newest base, and **Close goal** / **Reopen**.
   **Import** lists what could become a goal there, as the desktop's import:
   a project's TODO lines, your Linear issues, or the open GitHub issues of its
   projects (each with its project picked; its pull request closes the issue).
@@ -268,7 +275,7 @@ Each machine's other parts are asked the same way, each on its own port:
   its projects folder (`~/projects`), where Sindri, the desktop and this tab
   all look, with its GitHub origin (so issues and cloud sessions work). Needs
   the machine's Yggdrasil to have the clone route (POST /v1/projects {repo}).
-  Reviewing, races and merging stay on the desktop.
+  Races, pictures and checks stay on the desktop.
 - **The assistant:** Settings → Assistant → **Answered by** picks who
   answers the Ask tab: this phone, or a machine whose Norn is up, as the
   desktop dashboard's "Assistant: <machine>" picker. With a machine chosen,

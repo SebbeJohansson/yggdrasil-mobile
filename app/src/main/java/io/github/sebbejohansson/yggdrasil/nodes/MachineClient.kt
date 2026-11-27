@@ -127,6 +127,46 @@ open class MachineClient(private val machine: Machine, private val token: String
     /** A goal whose parts wait on Claude usage tries again now. */
     fun resumeGoal(id: Long) { call("sindri", "POST", "/v1/goals/$id/resume", JSONObject()) }
 
+    /** Closes a goal without merging the rest (its unmerged branches go); reopen brings it back. */
+    fun closeGoal(id: Long) { call("sindri", "POST", "/v1/goals/$id/close", JSONObject(), timeoutMs = 30_000) }
+
+    fun reopenGoal(id: Long) { call("sindri", "POST", "/v1/goals/$id/reopen", JSONObject()) }
+
+    /** Starts a part's repo again with a new agent, from the newest base. */
+    fun restartPart(id: Long, repo: String) {
+        call("sindri", "POST", "/v1/goals/$id/parts/${java.net.URLEncoder.encode(repo, "UTF-8").replace("+", "%20")}/restart", JSONObject(), timeoutMs = 30_000)
+    }
+
+    /** A goal part's agent: status, last words, what it waits on you for. */
+    fun agent(id: String): AgentDetail = GoalWork.parseAgent(call("sindri", "GET", "/v1/agents/${enc(id)}"))
+
+    /** A reply to a goal part's agent; waits out a busy turn (queue), and resumes a finished one. */
+    fun promptAgent(id: String, text: String) {
+        call("sindri", "POST", "/v1/agents/${enc(id)}/prompt", JSONObject().put("text", text).put("queue", true), timeoutMs = 30_000)
+    }
+
+    /** Allows or denies a tool the agent waits on. */
+    fun allowTool(id: String, requestId: String, allow: Boolean) {
+        call("sindri", "POST", "/v1/agents/${enc(id)}/permissions/${enc(requestId)}", JSONObject().put("allow", allow))
+    }
+
+    /** Answers the agent's questions, by question text. */
+    fun answerQuestions(id: String, requestId: String, answers: Map<String, String>) {
+        call("sindri", "POST", "/v1/agents/${enc(id)}/permissions/${enc(requestId)}", JSONObject().put("answers", JSONObject(answers)))
+    }
+
+    /** A part's branch: commits, files and diff. */
+    fun review(id: String): GoalReview = GoalWork.parseReview(call("sindri", "GET", "/v1/agents/${enc(id)}/review", timeoutMs = 20_000))
+
+    /** Merges the part's branch into the branch it was cut from, in that machine's checkout. */
+    fun mergePart(id: String) { call("sindri", "POST", "/v1/agents/${enc(id)}/merge", JSONObject(), timeoutMs = 60_000) }
+
+    /** Pushes the part's branch and opens a GitHub pull request; its link. */
+    fun pullRequest(id: String): String? =
+        JSONObject(call("sindri", "POST", "/v1/agents/${enc(id)}/pull-request", JSONObject(), timeoutMs = 90_000)).optString("url").ifBlank { null }
+
+    private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+
     /**
      * The end of a Claude Code session's transcript there (Yggdrasil's
      * GET /v1/sessions/claude/{id}/transcript). With [since] as the last read

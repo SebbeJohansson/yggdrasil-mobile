@@ -1,6 +1,7 @@
 package io.github.sebbejohansson.yggdrasil.nodes
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import io.github.sebbejohansson.yggdrasil.ui.rememberFollowBottom
 import io.github.sebbejohansson.yggdrasil.ui.Markdown
@@ -74,32 +75,23 @@ fun MachineGoals(d: DeviceSessions, goals: List<MachineGoal>, vm: CodeViewModel,
     var cloning by remember(d.device) { mutableStateOf(false) }
     var repo by remember(d.device) { mutableStateOf("") }
     var busy by remember(d.device) { mutableStateOf(false) }
+    var opened by remember(d.device) { mutableStateOf<Long?>(null) }
+    var showDone by remember(d.device) { mutableStateOf(false) }
     val label = d.title
+    val inPlay = Goals.inPlay(goals)
+    val finished = Goals.finished(goals)
+
+    opened?.let { id -> GoalDialog(d, id, vm, onRead) { opened = null } }
 
     HudLabel("Goals")
-    if (goals.isEmpty()) Text("No goals in play there.", style = HudText.small.copy(color = Hud.overlay0))
-    goals.forEach { g ->
-        Column(Modifier.fillMaxWidth().leftStripe(goalColor(g.state)).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(g.title, style = HudText.small.copy(color = Hud.text), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                Text(Goals.LABEL[g.state] ?: g.state, style = HudText.meta.copy(color = goalColor(g.state)))
-            }
-            val where = g.repos.joinToString(" · ").ifEmpty { "no project yet" }
-            Text(listOf(where, g.nextText).filter { it.isNotBlank() }.joinToString(" — "), style = HudText.meta)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (g.startable) HudButton("Start", {
-                    scope.launch { note = vm.onGoal(d.device) { it.startGoal(g.id) } }
-                }, kind = HudButtonKind.SMALL)
-                if (g.resumable) HudButton("Resume", {
-                    scope.launch { note = vm.onGoal(d.device) { it.resumeGoal(g.id) } }
-                }, kind = HudButtonKind.SMALL)
-                g.parts.forEach { p ->
-                    HudButton("Read ${p.repo ?: p.label ?: "part"} · ${p.status}", {
-                        onRead(ReadTarget(d.device, label, p.agent, null, "${g.title} · ${p.repo ?: ""}".trimEnd(' ', '·')))
-                    }, kind = HudButtonKind.SMALL)
-                }
-            }
-        }
+    if (inPlay.isEmpty()) Text("No goals in play there.", style = HudText.small.copy(color = Hud.overlay0))
+    inPlay.forEach { g -> GoalRow(g, onOpen = { opened = g.id }) {
+        if (g.startable) HudButton("Start", { scope.launch { note = vm.onGoal(d.device) { it.startGoal(g.id) } } }, kind = HudButtonKind.SMALL)
+        if (g.resumable) HudButton("Resume", { scope.launch { note = vm.onGoal(d.device) { it.resumeGoal(g.id) } } }, kind = HudButtonKind.SMALL)
+    } }
+    if (finished.isNotEmpty()) {
+        HudButton(if (showDone) "Hide done" else "Done (${finished.size})", { showDone = !showDone }, kind = HudButtonKind.SMALL)
+        if (showDone) finished.take(20).forEach { g -> GoalRow(g, onOpen = { opened = g.id }) {} }
     }
     note?.let { HudLabel(it, color = Hud.amber) }
     if (importing) {
@@ -115,7 +107,7 @@ fun MachineGoals(d: DeviceSessions, goals: List<MachineGoal>, vm: CodeViewModel,
                     d.projects.forEach { p ->
                         val on = p.name in repos
                         HudButton(p.name, { repos = if (on) repos - p.name else repos + p.name },
-                            kind = if (on) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+                            kind = if (on) HudButtonKind.GHOST else HudButtonKind.SMALL)
                     }
                 }
             }
@@ -168,11 +160,28 @@ fun MachineGoals(d: DeviceSessions, goals: List<MachineGoal>, vm: CodeViewModel,
     }
 }
 
-private fun goalColor(state: String) = when (state) {
-    "needs-you" -> Hud.yellow
-    "running" -> Hud.green
-    "done" -> Hud.cyan
-    else -> Hud.overlay0
+/**
+ * A goal in the list: its title and state, its parts (repo · what each is
+ * doing), the next step, and Open, which shows all of it (GoalDialog).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GoalRow(g: MachineGoal, onOpen: () -> Unit, quick: @Composable () -> Unit) {
+    val color = if (g.closed) Hud.overlay0 else goalStateColor(g.state)
+    Column(Modifier.fillMaxWidth().leftStripe(color).clickable(onClick = onOpen).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(g.title, style = HudText.small.copy(color = Hud.text), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(if (g.closed) "Closed" else if (g.state == "merged") "Merged" else Goals.LABEL[g.state] ?: g.state, style = HudText.meta.copy(color = color))
+        }
+        val parts = if (g.parts.isEmpty()) g.repos.joinToString(" · ").ifEmpty { "no project yet" }
+            else g.parts.joinToString(" · ") { p -> "${p.repo ?: p.label ?: "part"} ${Goals.partLabel(p.status)}${if (p.merged) " ✓" else ""}" }
+        Text(parts, style = HudText.meta, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (g.nextText.isNotBlank() && !g.closed && g.state != "merged") Text(g.nextText, style = HudText.meta.copy(color = color), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudButton("Open", onOpen, kind = HudButtonKind.SMALL)
+            quick()
+        }
+    }
 }
 
 /** How much of the end of a transcript is read: hours of a session, a few hundred KB. */

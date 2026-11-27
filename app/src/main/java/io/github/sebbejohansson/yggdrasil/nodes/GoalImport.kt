@@ -74,15 +74,15 @@ fun MachineGoalImport(d: DeviceSessions, vm: CodeViewModel, onDone: (String?) ->
             Goals.SOURCES.forEach { (key, name) ->
                 HudButton(name, {
                     if (key != from) { from = key; project = null; found = null; ticked = emptySet(); note = null }
-                }, kind = if (key == from) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+                }, kind = if (key == from) HudButtonKind.GHOST else HudButtonKind.SMALL)
             }
         }
         if (from != "linear" && d.projects.isNotEmpty()) {
-            HudLabel(if (from == "todo") "Project" else "Project (none: every one on GitHub)", color = Hud.overlay2)
+            HudLabel(if (from == "todo") "Project" else "Project (tap one to narrow; none lists all)", color = Hud.overlay2)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 d.projects.forEach { p ->
                     val on = p.name == project
-                    HudButton(p.name, { project = if (on) null else p.name }, kind = if (on) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+                    HudButton(p.name, { project = if (on) null else p.name }, kind = if (on) HudButtonKind.GHOST else HudButtonKind.SMALL)
                 }
             }
         }
@@ -91,7 +91,7 @@ fun MachineGoalImport(d: DeviceSessions, vm: CodeViewModel, onDone: (String?) ->
             HudTextField(query, { query = it }, placeholder = "Search titles (optional)", maxLines = 1)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Goals.ASSIGNEES.forEach { (key, name) ->
-                    HudButton(name, { assignee = key }, kind = if (key == assignee) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+                    HudButton(name, { assignee = key }, kind = if (key == assignee) HudButtonKind.GHOST else HudButtonKind.SMALL)
                 }
             }
         }
@@ -101,7 +101,10 @@ fun MachineGoalImport(d: DeviceSessions, vm: CodeViewModel, onDone: (String?) ->
         }
 
         val list = found
-        if (list != null && list.isEmpty()) Text("Nothing open to import.", style = HudText.small.copy(color = Hud.overlay0))
+        if (list != null && list.isEmpty()) Text(
+            if (from != "todo" && assignee == "mine") "Nothing open assigned to you. Try Unassigned or Everyone's." else "Nothing open to import.",
+            style = HudText.small.copy(color = Hud.overlay0),
+        )
         list?.forEach { c ->
             val on = c.source in ticked
             val has = c.goal != null
@@ -128,7 +131,7 @@ fun MachineGoalImport(d: DeviceSessions, vm: CodeViewModel, onDone: (String?) ->
                 d.projects.forEach { p ->
                     val on = p.name in repos
                     HudButton(p.name, { repos = if (on) repos - p.name else if (repos.size < 4) repos + p.name else repos },
-                        kind = if (on) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+                        kind = if (on) HudButtonKind.GHOST else HudButtonKind.SMALL)
                 }
             }
         }
