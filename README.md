@@ -270,8 +270,9 @@ Each machine's other parts are asked the same way, each on its own port:
   **Import** lists what could become a goal there, as the desktop's import:
   a project's TODO lines, your Linear issues, or the open GitHub issues of its
   projects (each with its project picked; its pull request closes the issue).
-  It lists as soon as you pick where from, a project or whose (Everyone's by
-  default: issues in your own repos are seldom assigned); Search runs the
+  It lists as soon as you pick where from, a project or whose (GitHub starts
+  on Everyone's, as issues in your own repos are seldom assigned; Linear on
+  Mine); Search runs the
   title search. Tick the ones wanted (or Tick all) and each becomes a draft. **Clone from GitHub** takes
   `owner/repo` or a GitHub link and has that machine's Sindri clone it into
   its projects folder (`~/projects`), where Sindri, the desktop and this tab

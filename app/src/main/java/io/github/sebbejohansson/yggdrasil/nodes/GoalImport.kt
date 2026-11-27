@@ -46,8 +46,7 @@ fun MachineGoalImport(d: DeviceSessions, vm: CodeViewModel, onDone: (String?) ->
     var from by remember(d.device) { mutableStateOf("github") }
     var project by remember(d.device) { mutableStateOf<String?>(null) }
     var query by remember(d.device) { mutableStateOf("") }
-    // Everyone's: issues in your own repos are seldom assigned to anyone, so Mine listed nothing.
-    var assignee by remember(d.device) { mutableStateOf("all") }
+    var assignee by remember(d.device) { mutableStateOf(Goals.defaultAssignee("github")) }
     // Search again (the query is not searched on every letter).
     var searches by remember(d.device) { mutableIntStateOf(0) }
     var found by remember(d.device) { mutableStateOf<List<GoalCandidate>?>(null) }
@@ -78,7 +77,7 @@ fun MachineGoalImport(d: DeviceSessions, vm: CodeViewModel, onDone: (String?) ->
         ChipRow("From") {
             Goals.SOURCES.forEach { (key, name) ->
                 HudButton(name, {
-                    if (key != from) { from = key; project = null; found = null; ticked = emptySet(); note = null }
+                    if (key != from) { from = key; project = null; found = null; ticked = emptySet(); note = null; assignee = Goals.defaultAssignee(key) }
                 }, kind = if (key == from) HudButtonKind.SELECTED else HudButtonKind.SMALL)
             }
         }

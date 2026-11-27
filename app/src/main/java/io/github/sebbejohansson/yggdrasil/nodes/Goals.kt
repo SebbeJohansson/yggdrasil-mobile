@@ -69,6 +69,13 @@ object Goals {
     /** Whose issues: yours (Sindri's default), nobody's or everyone's. */
     val ASSIGNEES = listOf("mine" to "Mine", "unassigned" to "Unassigned", "all" to "Everyone's")
 
+    /**
+     * Whose issues a source lists first: everyone's on GitHub, where issues in
+     * your own repos are seldom assigned (Mine listed nothing), yours in Linear,
+     * where everyone's is the whole workspace.
+     */
+    fun defaultAssignee(source: String): String = if (source == "github") "all" else "mine"
+
     fun parseCandidates(json: String): List<GoalCandidate> = JSONObject(json).optJSONArray("candidates").objects().mapNotNull { c ->
         val source = c.str("source") ?: return@mapNotNull null
         val title = c.str("title")?.trim()?.ifEmpty { null } ?: return@mapNotNull null

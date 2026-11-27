@@ -35,6 +35,8 @@ class GoalWorkTest {
         assertEquals(listOf(3L), Goals.inPlay(goals).map { it.id })
         assertEquals(listOf(2L, 1L), Goals.finished(goals).map { it.id })
         assertEquals("waiting on Claude usage", Goals.partLabel("scheduled"))
+        assertEquals("all", Goals.defaultAssignee("github"))
+        assertEquals("mine", Goals.defaultAssignee("linear"))
     }
 
     @Test
