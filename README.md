@@ -235,7 +235,11 @@ Each machine's other parts are asked the same way, each on its own port:
   **Import** lists what could become a goal there, as the desktop's import:
   a project's TODO lines, your Linear issues, or the open GitHub issues of its
   projects (each with its project picked; its pull request closes the issue).
-  Tick the ones wanted and each becomes a draft.
+  Tick the ones wanted and each becomes a draft. **Clone from GitHub** takes
+  `owner/repo` or a GitHub link and has that machine's Sindri clone it into
+  its projects folder (`~/projects`), where Sindri, the desktop and this tab
+  all look, with its GitHub origin (so issues and cloud sessions work). Needs
+  the machine's Yggdrasil to have the clone route (POST /v1/projects {repo}).
   Reviewing, races and merging stay on the desktop.
 - **The assistant:** Settings → Assistant → **Answered by** picks who
   answers the Ask tab: this phone, or a machine whose Norn is up, as the

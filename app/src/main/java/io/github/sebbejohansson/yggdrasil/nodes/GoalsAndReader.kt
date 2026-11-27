@@ -56,6 +56,9 @@ fun MachineGoals(d: DeviceSessions, goals: List<MachineGoal>, vm: CodeViewModel,
     var repos by remember(d.device) { mutableStateOf(listOf<String>()) }
     var adding by remember(d.device) { mutableStateOf(false) }
     var importing by remember(d.device) { mutableStateOf(false) }
+    var cloning by remember(d.device) { mutableStateOf(false) }
+    var repo by remember(d.device) { mutableStateOf("") }
+    var busy by remember(d.device) { mutableStateOf(false) }
     val label = d.title
 
     HudLabel("Goals")
@@ -118,10 +121,34 @@ fun MachineGoals(d: DeviceSessions, goals: List<MachineGoal>, vm: CodeViewModel,
                 HudButton("Cancel", { adding = false; note = null }, kind = HudButtonKind.SMALL)
             }
         }
+    } else if (cloning) {
+        // Into Sindri's projects folder there, so it shows as a project here, on the desktop and in goals.
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudTextField(repo, { repo = it }, placeholder = "owner/repo or GitHub link, to clone on $label", maxLines = 1)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                HudButton(if (busy) "Cloning…" else "Clone", {
+                    val r = Goals.gitHubRepoOf(repo)
+                    if (r == null) {
+                        note = "Type owner/repo or a github.com link"
+                    } else {
+                        busy = true
+                        note = "Cloning $r on $label…"
+                        scope.launch {
+                            val failed = vm.onGoal(d.device) { it.cloneProject(r) }
+                            busy = false
+                            note = failed ?: "Cloned $r on $label."
+                            if (failed == null) { repo = ""; cloning = false }
+                        }
+                    }
+                }, kind = HudButtonKind.SMALL, enabled = !busy && repo.isNotBlank())
+                HudButton("Cancel", { cloning = false; note = null }, kind = HudButtonKind.SMALL, enabled = !busy)
+            }
+        }
     } else {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             HudButton("New goal", { adding = true }, kind = HudButtonKind.SMALL)
             HudButton("Import", { importing = true; note = null }, kind = HudButtonKind.SMALL)
+            HudButton("Clone from GitHub", { cloning = true; note = null }, kind = HudButtonKind.SMALL)
         }
     }
 }
