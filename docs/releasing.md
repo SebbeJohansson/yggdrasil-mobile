@@ -14,16 +14,26 @@ GitHub Actions builds a signed APK and publishes it as a GitHub Release
   git push origin v0.2.0
   ```
 
-Either way the run waits for you: approve it under the run's **Review
-deployments** (the `release` environment). Nothing is signed before that, so a
-tag pushed with a stolen token never reaches your phone on its own.
+The slow part runs first, without asking: **build** makes the release APK,
+unsigned, with the version in it, and beside it **test** runs the unit tests,
+unless the `build` workflow already passed that exact commit (it runs on every
+push to `main`, so a release of `main` usually skips them). Only then does
+**publish** wait for you: approve it under the run's **Review deployments**
+(the `release` environment). It signs the APK it was handed with `apksigner`,
+checks the signature and publishes, in under a minute. Only it can read the
+key, and nothing is signed before you approve, so a tag pushed with a stolen
+token never reaches your phone on its own. Start a release as soon as `main`
+has what you want: there is no need to wait for `main`'s build first.
 
 - The tag sets the version: `v1.2.3` is versionName `1.2.3` and versionCode
   `10203`. Each part must stay below 100.
 - A tag with a suffix (`v1.0.0-rc.1`) is published as a pre-release.
 - The release has the APK, its SHA-256, and notes generated from the
   commits since the last release.
-- The unit tests run first, and a failing test stops the release.
+- A failing test, or a build that fails, stops the release before you are asked.
+- Releases publish one at a time (`concurrency: release` on publish): one
+  waiting for approval holds the next one's publish, not its build. Cancel a
+  release you no longer want rather than leaving it waiting.
 
 ## The signing key (once)
 
