@@ -96,6 +96,9 @@ class MachinesTest {
         assertEquals("/v1/cloud/c1/message", Machines.call(ask(SessionKinds.CLOUD_MESSAGE, "c1", text = "hi"), null).getOrThrow().path)
         assertEquals("/v1/cloud/c1/teleport", Machines.call(ask(SessionKinds.CLOUD_TELEPORT, "c1"), null).getOrThrow().path)
         assertTrue(Machines.call(ask(SessionKinds.CLOUD_START, cwd = "relative", task = "fix"), null).isFailure)
+        // Sindri holds a cloud start up to 90 s and a cloud message up to 60 s; the read (twice this) outlasts both.
+        assertTrue(Machines.call(ask(SessionKinds.CLOUD_START, cwd = "/p", task = "fix"), null).getOrThrow().timeoutMs * 2 > 90_000)
+        assertTrue(Machines.call(ask(SessionKinds.CLOUD_MESSAGE, "c1", text = "hi"), null).getOrThrow().timeoutMs * 2 > 60_000)
     }
 
     @Test

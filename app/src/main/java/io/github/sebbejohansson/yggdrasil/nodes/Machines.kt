@@ -284,8 +284,14 @@ object Machines {
         )
     }
 
-    /** One request against a machine's Sindri, as its own Sága carries it out (saga/sessions.go carryOut). */
-    data class Call(val method: String, val path: String, val body: JSONObject?)
+    /**
+     * One request against a machine's Sindri, as its own Sága carries it out (saga/sessions.go carryOut).
+     * [timeoutMs] is MachineClient's connect timeout; it reads for twice that. Most calls answer in
+     * seconds, but Sindri holds a new cloud session's call until `claude --cloud` prints its link (up
+     * to 90 s, sindri/cloud.go wait) and a cloud message until the CLI is done (up to a minute): a
+     * shorter read gave up first, said only "timeout", and the dropped call cancelled the start there.
+     */
+    data class Call(val method: String, val path: String, val body: JSONObject?, val timeoutMs: Int = 15_000)
 
     /**
      * The call that does [ask] on the machine, or why it can't be done.
@@ -313,12 +319,12 @@ object Machines {
             SessionKinds.CLOUD_START -> {
                 val cwd = ask.cwd?.takeIf { it.startsWith("/") } ?: return bad("no project to start in")
                 val task = ask.task?.takeIf { it.isNotBlank() } ?: return bad("no task")
-                Result.success(Call("POST", "/v1/cloud", JSONObject().put("cwd", cwd).put("task", task)))
+                Result.success(Call("POST", "/v1/cloud", JSONObject().put("cwd", cwd).put("task", task), timeoutMs = 60_000))
             }
             SessionKinds.CLOUD_MESSAGE -> {
                 val id = ask.session ?: return bad("no cloud session")
                 val text = ask.text?.takeIf { it.isNotBlank() } ?: return bad("nothing to send")
-                Result.success(Call("POST", "/v1/cloud/${enc(id)}/message", JSONObject().put("text", text)))
+                Result.success(Call("POST", "/v1/cloud/${enc(id)}/message", JSONObject().put("text", text), timeoutMs = 45_000))
             }
             SessionKinds.CLOUD_TELEPORT -> {
                 val id = ask.session ?: return bad("no cloud session")

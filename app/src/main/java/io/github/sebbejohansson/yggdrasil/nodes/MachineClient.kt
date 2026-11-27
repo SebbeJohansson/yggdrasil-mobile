@@ -58,7 +58,7 @@ open class MachineClient(private val machine: Machine, private val token: String
 
     /** Does one call on Sindri; for a new cloud session, its link. */
     fun send(c: Machines.Call): String? {
-        val answer = call("sindri", c.method, c.path, c.body, timeoutMs = 15_000)
+        val answer = call("sindri", c.method, c.path, c.body, timeoutMs = c.timeoutMs)
         return runCatching { JSONObject(answer).optString("url").ifBlank { null } }.getOrNull()
     }
 
