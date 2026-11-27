@@ -61,6 +61,7 @@ import io.github.sebbejohansson.yggdrasil.ui.HudButtonKind
 import io.github.sebbejohansson.yggdrasil.ui.HudLabel
 import io.github.sebbejohansson.yggdrasil.ui.HudSection
 import io.github.sebbejohansson.yggdrasil.ui.HudText
+import io.github.sebbejohansson.yggdrasil.ui.MarkdownParser
 import io.github.sebbejohansson.yggdrasil.ui.HudTextField
 import io.github.sebbejohansson.yggdrasil.ui.hudPanel
 import io.github.sebbejohansson.yggdrasil.ui.leftStripe
@@ -85,6 +86,8 @@ data class CodeUiState(
     val latest: String? = null,
     /** Each machine's goals in play, by machine id: only for machines reached directly. */
     val goals: Map<String, List<MachineGoal>> = emptyMap(),
+    /** Sessions archived on this phone, by Archive.key, with when (SessionArchive). */
+    val archived: Map<String, Instant> = emptyMap(),
 )
 
 /**
@@ -100,15 +103,17 @@ class CodeViewModel(
     private val saga: SagaService,
     private val settings: SagaSettings,
     private val machines: MachineService,
+    private val archive: SessionArchive,
 ) : ViewModel() {
     val state = combine(
         combine(saga.sessionChanges.flow, saga.status) { _, status -> status },
         machines.sessions,
         machines.status,
         combine(machines.asked, machines.latest, machines.goals) { a, l, g -> Triple(a, l, g) },
-    ) { status, direct, machineStatus, more -> Triple(status, direct, machineStatus to more) }
+        archive.archived,
+    ) { status, direct, machineStatus, more, archived -> Triple(status, direct, Triple(machineStatus, more, archived)) }
         .mapLatest { (status, direct, rest) ->
-            val (machineStatus, more) = rest
+            val (machineStatus, more, archived) = rest
             val (directAsked, latest, goals) = more
             val reached = direct.map { it.device }.toSet()
             CodeUiState(
@@ -119,8 +124,13 @@ class CodeViewModel(
                 machines = machineStatus,
                 latest = latest,
                 goals = goals,
+                archived = archived,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CodeUiState())
+
+    /** Hides a session from the Code tab on this phone; it comes back when something happens in it. */
+    fun archive(device: String, session: String) = archive.archive(Archive.key(device, session))
+    fun unarchive(device: String, session: String) = archive.unarchive(Archive.key(device, session))
 
     fun syncNow() = viewModelScope.launch {
         machines.refresh()
@@ -183,7 +193,7 @@ class CodeViewModel(
 
     companion object {
         fun factory(c: AppContainer): ViewModelProvider.Factory =
-            viewModelFactory { initializer { CodeViewModel(c.saga, c.sagaSettings, c.machines) } }
+            viewModelFactory { initializer { CodeViewModel(c.saga, c.sagaSettings, c.machines, c.sessionArchive) } }
     }
 }
 
@@ -270,7 +280,7 @@ fun CodeScreen(
                 }
             }
             item(key = "phone-local") {
-                PhoneSessions(phoneState, localState, local, onOpen = { localOpen = true }, onNew = { local.open(null); localOpen = true })
+                PhoneSessions(phoneState, localState, local, s.archived, vm, onOpen = { localOpen = true }, onNew = { local.open(null); localOpen = true })
             }
         }
         // A machine reached directly that did not answer, or was left out.
@@ -334,12 +344,16 @@ private fun DevicePanel(
             d.quiet(now) -> Text("Not heard from in a while. What you ask waits until it is back, for up to 30 minutes.", style = HudText.meta)
         }
         d.errors.forEach { (source, text) -> Text("$source: $text", style = HudText.meta) }
-        if (d.sessions.isEmpty()) Text("Nothing running there.", style = HudText.small.copy(color = Hud.overlay0))
-        d.sessions.forEach { session -> SessionItem(d, session, drive, s.asked, vm, now, onRead) }
+        val (sessions, archivedSessions) = d.sessions.partition { !Archive.hidden(s.archived, Archive.key(d.device, it.id), it.lastActivity) }
+        if (sessions.isEmpty()) Text("Nothing running there.", style = HudText.small.copy(color = Hud.overlay0))
+        sessions.forEach { session -> SessionItem(d, session, drive, s.asked, vm, now, onRead) }
+        ArchivedList(d.device, archivedSessions.map { it.id to it.name }, vm)
         if (drive && d.projects.isNotEmpty()) StartSession(d, s.asked, vm, machine?.health?.version)
+        val (cloud, archivedCloud) = d.cloud.partition { !Archive.hidden(s.archived, Archive.key(d.device, it.id), null) }
         if (d.cloud.isNotEmpty()) {
             HudLabel("Cloud sessions started there")
-            d.cloud.forEach { c -> CloudItem(d, c, drive, s.asked, vm, now, phone, phoneState) }
+            cloud.forEach { c -> CloudItem(d, c, drive, s.asked, vm, now, phone, phoneState) }
+            ArchivedList(d.device, archivedCloud.map { it.id to it.task }, vm)
         }
         // A machine reached directly: its goals too.
         if (d.direct) MachineGoals(d, s.goals[d.device].orEmpty(), vm, onRead)
@@ -375,7 +389,7 @@ private fun SessionItem(
             s.permission != null -> Text("Waiting on a permission prompt for ${s.permission}.", style = HudText.meta.copy(color = Hud.yellow))
             s.working && s.tool != null -> Text("Running ${s.tool}…", style = HudText.meta)
         }
-        if (!s.working) s.lastText?.let { Text(it, style = HudText.meta.copy(color = Hud.subtext0), maxLines = 4, overflow = TextOverflow.Ellipsis) }
+        if (!s.working) s.lastText?.let { Text(MarkdownParser.plain(it), style = HudText.meta.copy(color = Hud.subtext0), maxLines = 4, overflow = TextOverflow.Ellipsis) }
         val dialog = s.dialog
         if (dialog != null && drive && s.pane != null) {
             Text(dialog.question, style = HudText.meta.copy(color = Hud.subtext0))
@@ -392,12 +406,15 @@ private fun SessionItem(
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             // A Claude Code session on a machine reached directly: its transcript, read from its Sindri.
             if (d.direct && s.kind == "claude" && !s.id.startsWith("herdr:")) {
-                HudButton("Read", { onRead(ReadTarget(d.device, d.title, s.id, s.directory, s.name)) }, kind = HudButtonKind.SMALL)
+                HudButton(if (drive && s.pane != null) "Open" else "Read", {
+                    onRead(ReadTarget(d.device, d.title, s.id, s.directory, s.name, typeInto = s.takeIf { drive }))
+                }, kind = HudButtonKind.SMALL)
             }
             s.claudeLink?.let { link -> HudButton("Open in Claude", { uri.openUri(link) }, kind = HudButtonKind.SMALL) }
             if (drive && d.herdr && s.pane == null && s.kind == "claude" && s.directory != null) {
                 HudButton("Resume there", { vm.resume(d.device, s) }, kind = HudButtonKind.SMALL)
             }
+            HudButton("Archive", { vm.archive(d.device, s.id) }, kind = HudButtonKind.SMALL)
         }
         if (s.pane == null && s.claudeLink == null) {
             Text(
@@ -441,6 +458,7 @@ private fun CloudItem(
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             HudButton("Open in Claude", { uri.openUri(c.url) }, kind = HudButtonKind.SMALL)
             if (drive && d.herdr) HudButton(if (c.teleportedAt != null) "Bring home again" else "Bring home there", { vm.teleport(d.device, c) }, kind = HudButtonKind.SMALL)
+            HudButton("Archive", { vm.archive(d.device, c.id) }, kind = HudButtonKind.SMALL)
         }
         AskedLines(asked.filter { it.ask.origin == d.device && it.ask.session == c.id })
     }
@@ -480,6 +498,25 @@ private fun StartSession(d: DeviceSessions, asked: List<Asked>, vm: CodeViewMode
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(a.line, style = HudText.meta.copy(color = a.color()), modifier = Modifier.weight(1f))
                 a.url?.let { link -> HudButton("Open", { uri.openUri(link) }, kind = HudButtonKind.SMALL) }
+            }
+        }
+    }
+}
+
+/**
+ * Archived (n) under a list: folded by default; open, each archived session
+ * by name with Unarchive. Nothing shows when none is archived.
+ */
+@Composable
+fun ArchivedList(device: String, items: List<Pair<String, String>>, vm: CodeViewModel) {
+    if (items.isEmpty()) return
+    var open by remember(device) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        HudButton(if (open) "Hide archived" else "Archived (${items.size})", { open = !open }, kind = HudButtonKind.SMALL)
+        if (open) items.forEach { (id, name) ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(name, style = HudText.meta, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                HudButton("Unarchive", { vm.unarchive(device, id) }, kind = HudButtonKind.SMALL)
             }
         }
     }

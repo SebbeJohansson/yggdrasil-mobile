@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -288,20 +289,36 @@ private fun LocalList(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel) {
  * it asks as buttons, and a message box. A message to an ended one resumes
  * it first. The chat and the checkout's changes open full screen.
  */
+/** The Code tab's archive key for this phone's own sessions. */
+private const val PHONE = "phone"
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun PhoneSessions(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel, onOpen: () -> Unit, onNew: () -> Unit) {
+fun PhoneSessions(
+    b: BridgeUiState,
+    s: LocalUiState,
+    vm: LocalViewModel,
+    archived: Map<String, java.time.Instant>,
+    code: io.github.sebbejohansson.yggdrasil.saga.CodeViewModel,
+    onOpen: () -> Unit,
+    onNew: () -> Unit,
+) {
     val now = java.time.Instant.now()
+    // Archived on this phone (Code tab), under "phone|<name>"; back when it does something again.
+    val (shown, hidden) = s.sessions.partition {
+        !io.github.sebbejohansson.yggdrasil.saga.Archive.hidden(archived, io.github.sebbejohansson.yggdrasil.saga.Archive.key(PHONE, it.name), it.lastActivity)
+    }
     Column(Modifier.fillMaxWidth().hudPanel(warn = s.sessions.any { it.phase == "blocked" }).padding(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        if (s.sessions.isEmpty()) Text("Nothing running here. Claude Code runs on the phone itself, in herdr, in the phone's own checkout of a repo.",
+        if (shown.isEmpty()) Text("Nothing running here. Claude Code runs on the phone itself, in herdr, in the phone's own checkout of a repo.",
             style = HudText.small.copy(color = Hud.overlay0))
-        val byAccount = s.sessions.groupBy { it.account }
+        val byAccount = shown.groupBy { it.account }
         val order = b.accounts.map { it.id } + byAccount.keys.filter { k -> b.accounts.none { it.id == k } }
         order.filter { it in byAccount }.forEach { id ->
             val a = b.accounts.firstOrNull { it.id == id }
             if (b.accounts.size > 1 || a == null) HudLabel(listOfNotNull(a?.name ?: id, a?.email?.ifEmpty { null }).joinToString(" · "))
-            byAccount.getValue(id).forEach { c -> PhoneSessionItem(c, s, vm, now) { vm.open(c); onOpen() } }
+            byAccount.getValue(id).forEach { c -> PhoneSessionItem(c, s, vm, now, onArchive = { code.archive(PHONE, c.name) }) { vm.open(c); onOpen() } }
         }
+        io.github.sebbejohansson.yggdrasil.saga.ArchivedList(PHONE, hidden.map { it.name to it.title.ifEmpty { it.task.ifEmpty { it.repo } } }, code)
         HudButton("New session on this phone", onNew, kind = HudButtonKind.SMALL)
         s.error?.let { Text(it, style = HudText.meta.copy(color = Hud.amber), maxLines = 3, overflow = TextOverflow.Ellipsis) }
     }
@@ -309,7 +326,7 @@ fun PhoneSessions(b: BridgeUiState, s: LocalUiState, vm: LocalViewModel, onOpen:
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PhoneSessionItem(c: LocalSession, s: LocalUiState, vm: LocalViewModel, now: java.time.Instant, open: () -> Unit) {
+private fun PhoneSessionItem(c: LocalSession, s: LocalUiState, vm: LocalViewModel, now: java.time.Instant, onArchive: () -> Unit, open: () -> Unit) {
     var draft by remember(c.name) { mutableStateOf("") }
     val color = phaseColor(c.phase)
     Column(Modifier.fillMaxWidth().leftStripe(color).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -321,7 +338,7 @@ private fun PhoneSessionItem(c: LocalSession, s: LocalUiState, vm: LocalViewMode
         }
         Text(phaseText(c), style = HudText.meta.copy(color = color))
         if (c.phase != "busy" && c.lastText.isNotBlank()) {
-            Text(c.lastText, style = HudText.meta.copy(color = Hud.subtext0), maxLines = 4, overflow = TextOverflow.Ellipsis,
+            Text(io.github.sebbejohansson.yggdrasil.ui.MarkdownParser.plain(c.lastText), style = HudText.meta.copy(color = Hud.subtext0), maxLines = 4, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.clickable(onClick = open))
         }
         val dialog = c.dialog
@@ -341,6 +358,7 @@ private fun PhoneSessionItem(c: LocalSession, s: LocalUiState, vm: LocalViewMode
             HudButton("Open", open, kind = HudButtonKind.SMALL)
             if (c.phase == "busy") HudButton("Esc", { vm.interrupt(c.name) }, kind = HudButtonKind.SMALL)
             if (c.phase == "ended" && c.resumable) HudButton("Resume", { vm.resume(c.name) }, kind = HudButtonKind.SMALL, enabled = !s.sending)
+            HudButton("Archive", onArchive, kind = HudButtonKind.SMALL)
         }
     }
 }
@@ -400,10 +418,12 @@ private fun LocalChat(c: LocalSession, s: LocalUiState, vm: LocalViewModel, modi
     var draft by remember(c.name) { mutableStateOf("") }
     val chat = remember(c.messages) { chatItems(c.messages.takeLast(120)) }
     val list = rememberLazyListState()
-    // New messages scroll into view.
-    LaunchedEffect(chat.size, c.status) { if (chat.isNotEmpty()) list.animateScrollToItem(chat.size) }
+    val scope = rememberCoroutineScope()
+    // New text follows only while you are at the bottom; scrolled up to read, it stays put.
+    val follow = io.github.sebbejohansson.yggdrasil.ui.rememberFollowBottom(list, Triple(chat.size, chat.lastOrNull()?.hashCode(), c.status))
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+        LazyColumn(Modifier.fillMaxSize(), state = list, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (chat.isEmpty() && c.screen.isBlank()) item { Text("Nothing yet.", style = HudText.meta) }
             items(chat.size) { i ->
                 when (val entry = chat[i]) {
@@ -427,6 +447,11 @@ private fun LocalChat(c: LocalSession, s: LocalUiState, vm: LocalViewModel, modi
             if (c.phase == "busy") item { Text(phaseText(c).replaceFirstChar { it.uppercase() }, style = HudText.meta.copy(color = Hud.cyan)) }
             item { Box(Modifier.heightIn(min = 1.dp)) }
         }
+            if (!follow.following) {
+                HudButton(if (follow.missed) "↓ New" else "↓ Latest", { scope.launch { follow.jump() } },
+                    kind = HudButtonKind.SMALL, modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp))
+            }
+        }
         c.dialog?.let { d ->
             // A question Claude asks (a tool to allow, say): its choices, answered with its own keys.
             Column(Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState()).hudPanel(warn = true).padding(10.dp),
@@ -442,7 +467,7 @@ private fun LocalChat(c: LocalSession, s: LocalUiState, vm: LocalViewModel, modi
         if (c.phase != "ended" || c.resumable) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 HudTextField(draft, { draft = it }, placeholder = if (c.phase == "ended") "Message Claude (resumes it)" else "Message Claude", maxLines = 5, modifier = Modifier.weight(1f))
-                HudButton(if (s.sending) "…" else "Send", { vm.send(c.name, draft.trim()); draft = "" }, kind = HudButtonKind.PRIMARY,
+                HudButton(if (s.sending) "…" else "Send", { vm.send(c.name, draft.trim()); draft = ""; scope.launch { follow.jump() } }, kind = HudButtonKind.PRIMARY,
                     enabled = draft.isNotBlank() && !s.sending && c.phase != "blocked")
             }
         }

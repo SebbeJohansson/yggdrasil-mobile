@@ -2,6 +2,13 @@ package io.github.sebbejohansson.yggdrasil.nodes
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import io.github.sebbejohansson.yggdrasil.ui.rememberFollowBottom
+import io.github.sebbejohansson.yggdrasil.ui.Markdown
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -39,7 +46,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** A session to read: on which machine, its id, and where it runs (which finds its transcript there). */
-data class ReadTarget(val machine: String, val machineLabel: String, val session: String, val directory: String?, val name: String)
+data class ReadTarget(
+    val machine: String,
+    val machineLabel: String,
+    val session: String,
+    val directory: String?,
+    val name: String,
+    /** The session as listed, when it can be typed into from the reader (in a herdr pane there, and that machine takes your requests). */
+    val typeInto: io.github.sebbejohansson.yggdrasil.saga.RemoteSession? = null,
+)
 
 /**
  * A machine's goals in play, under its sessions in the Code tab: what each
@@ -171,11 +186,21 @@ private const val TAIL_BYTES = 400_000
  */
 @Composable
 fun TranscriptDialog(target: ReadTarget, vm: CodeViewModel, onDismiss: () -> Unit) {
-    var entries by remember(target) { mutableStateOf<List<TranscriptEntry>>(emptyList()) }
-    var error by remember(target) { mutableStateOf<String?>(null) }
-    var loaded by remember(target) { mutableStateOf(false) }
+    var entries by remember(target.session) { mutableStateOf<List<TranscriptEntry>>(emptyList()) }
+    var error by remember(target.session) { mutableStateOf<String?>(null) }
+    var loaded by remember(target.session) { mutableStateOf(false) }
+    var draft by remember(target.session) { mutableStateOf("") }
+    // Read again at once after you send, not on the next 3-second tick.
+    var poke by remember(target.session) { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
     val list = rememberLazyListState()
-    LaunchedEffect(target) {
+    val follow = rememberFollowBottom(list, entries.lastOrNull()?.let { it.hashCode() to entries.size } ?: 0)
+    val state by vm.state.collectAsStateWithLifecycle()
+    // What you sent from here and how it went: a message is typed in by the machine, then shows in the transcript.
+    val sent = state.asked.filter { it.ask.origin == target.machine && it.ask.session == target.session }.take(2)
+    // Read faster while a message you sent is on its way; the loop below reads this as it changes.
+    val waiting by rememberUpdatedState(sent.any { it.state == io.github.sebbejohansson.yggdrasil.saga.AskState.WAITING })
+    LaunchedEffect(target.session, poke) {
         var since: String? = null
         while (true) {
             runCatching { vm.transcript(target.machine, target.session, target.directory, TAIL_BYTES, since) }
@@ -183,7 +208,6 @@ fun TranscriptDialog(target: ReadTarget, vm: CodeViewModel, onDismiss: () -> Uni
                     if (!t.unchanged) {
                         entries = Transcript.read(t.text)
                         since = t.stamp
-                        if (entries.isNotEmpty()) list.scrollToItem(entries.size - 1)
                     }
                     error = null
                 }
@@ -193,25 +217,47 @@ fun TranscriptDialog(target: ReadTarget, vm: CodeViewModel, onDismiss: () -> Uni
                     else error = it.message ?: "could not read it"
                 }
             loaded = true
-            delay(3_000)
+            delay(if (waiting) 1_500 else 3_000)
         }
     }
+    val canType = target.typeInto?.pane != null
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
-            Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 20.dp).background(Hud.base).padding(14.dp),
+            Modifier.fillMaxSize().imePadding().padding(horizontal = 8.dp, vertical = 20.dp).background(Hud.base).padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(target.name, style = HudText.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    HudLabel("on ${target.machineLabel} · read only · over the tailnet")
+                    HudLabel("on ${target.machineLabel} · ${if (canType) "type below to reply" else "read only"} · over the tailnet")
                 }
                 HudButton("Close", onDismiss, kind = HudButtonKind.SMALL)
             }
             error?.let { HudLabel(it, color = Hud.amber) }
             if (loaded && entries.isEmpty() && error == null) Text("Nothing said yet.", style = HudText.small.copy(color = Hud.overlay0))
-            LazyColumn(state = list, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(entries) { e -> EntryView(e) }
+            Box(Modifier.weight(1f)) {
+                LazyColumn(state = list, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(entries) { e -> EntryView(e) }
+                }
+                if (!follow.following) {
+                    HudButton(if (follow.missed) "↓ New" else "↓ Latest", { scope.launch { follow.jump() } },
+                        kind = HudButtonKind.SMALL, modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp))
+                }
+            }
+            sent.forEach { a -> Text(a.line, style = HudText.meta.copy(color = if (a.state == io.github.sebbejohansson.yggdrasil.saga.AskState.FAILED) Hud.amber else Hud.overlay2)) }
+            val session = target.typeInto
+            if (session != null && canType) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    HudTextField(draft, { draft = it }, placeholder = "Reply on ${target.machineLabel}", maxLines = 5, modifier = Modifier.weight(1f))
+                    HudButton("Send", {
+                        vm.prompt(target.machine, session, draft.trim())
+                        draft = ""
+                        scope.launch { follow.jump() }
+                        poke++
+                    }, kind = HudButtonKind.SMALL, enabled = draft.isNotBlank())
+                }
+            } else if (target.typeInto != null) {
+                Text("Not in a herdr pane there, so it can't be typed into: Resume there from its card first.", style = HudText.meta)
             }
         }
     }
@@ -221,7 +267,8 @@ fun TranscriptDialog(target: ReadTarget, vm: CodeViewModel, onDismiss: () -> Uni
 private fun EntryView(e: TranscriptEntry) {
     when (e) {
         is TranscriptEntry.Prompt -> Text("› ${e.text}", style = HudText.body.copy(color = Hud.cyan))
-        is TranscriptEntry.Reply -> Text(e.text, style = HudText.body)
+        // Claude answers in Markdown: headings, lists, bold, code, tables.
+        is TranscriptEntry.Reply -> Markdown(e.text, Modifier.fillMaxWidth(), style = HudText.body.copy(color = Hud.text))
         is TranscriptEntry.Thinking -> Text(e.text, style = HudText.meta.copy(color = Hud.overlay0), maxLines = 6, overflow = TextOverflow.Ellipsis)
         is TranscriptEntry.Tool -> Column(Modifier.fillMaxWidth().leftStripe(if (e.failed) Hud.yellow else Hud.overlay0).padding(start = 8.dp)) {
             Text("${e.name}  ${e.detail}", style = HudText.meta.copy(color = Hud.subtext0), maxLines = 3, overflow = TextOverflow.Ellipsis)
