@@ -307,6 +307,8 @@ class AppContainer(private val app: Application) {
 
     /** Your machines reached directly over the tailnet (Settings → Connection → Machines). */
     val machineSettings = io.github.sebbejohansson.yggdrasil.nodes.MachineSettings(app)
+    /** Sessions archived in the Code tab, on this phone only. */
+    val sessionArchive = io.github.sebbejohansson.yggdrasil.saga.SessionArchive(app)
     private val latestYggRelease = io.github.sebbejohansson.yggdrasil.nodes.LatestYggRelease(app)
     val machines = io.github.sebbejohansson.yggdrasil.nodes.MachineService(
         machineSettings,

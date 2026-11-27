@@ -138,6 +138,25 @@ object MarkdownParser {
         if (at < text.length) out += MdSpan(text.substring(at), bold = bold)
         return out
     }
+
+    /**
+     * The words alone, for a preview of a line or a few (a session's last
+     * reply on a card): no `**`, `#`, backticks or link targets. Paragraphs
+     * and list items run together with spaces.
+     */
+    fun plain(text: String): String = blocks(text).joinToString(" ") { b ->
+        when (b) {
+            is MdBlock.Heading -> words(b.text)
+            is MdBlock.Paragraph -> words(b.text)
+            is MdBlock.Items -> b.items.joinToString(" ") { words(it) }
+            is MdBlock.Code -> b.text
+            is MdBlock.Table -> b.rows.joinToString(" ") { row -> row.joinToString(" ") { words(it) } }
+            is MdBlock.Quote -> words(b.text)
+            MdBlock.Rule -> ""
+        }
+    }.replace(Regex("\\s+"), " ").trim()
+
+    private fun words(text: String) = spans(text).joinToString("") { it.text }
 }
 
 private fun annotated(text: String): AnnotatedString = buildAnnotatedString {

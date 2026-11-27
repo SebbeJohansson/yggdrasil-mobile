@@ -58,4 +58,20 @@ class MarkdownParserTest {
         // Underscores and stars inside words are text.
         assertEquals(listOf(MdSpan("ygg_bridge.py and 2*3*4")), MarkdownParser.spans("ygg_bridge.py and 2*3*4"))
     }
+
+    @Test
+    fun plainLeavesTheWordsForAPreview() {
+        assertEquals(
+            "Yggdrasil Mobile is an Android app (Kotlin). How it works Content: in app/storyblok/ docs",
+            MarkdownParser.plain("**Yggdrasil Mobile** is an Android app (Kotlin).\n\n## How it works\n- **Content:** in `app/storyblok/`\n- [docs](https://x.y)"),
+        )
+    }
+
+    @Test
+    fun theEndOfAListIsTheLastItemShownWhole() {
+        assertEquals(true, FollowBottom.atEnd(null, 0, 0, 100))
+        assertEquals(true, FollowBottom.atEnd(9, 10, 100, 100))
+        assertEquals(false, FollowBottom.atEnd(9, 10, 400, 100))
+        assertEquals(false, FollowBottom.atEnd(7, 10, 90, 100))
+    }
 }

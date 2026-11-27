@@ -222,11 +222,22 @@ Each machine's other parts are asked the same way, each on its own port:
   Yggdrasil release is out (GitHub, asked at most every 30 minutes) give the
   `ygg upgrade` to run there; a machine built from a checkout says "from
   source".
-- **Reading a session:** **Read** on a Claude Code session of a machine
-  reached directly opens its transcript: your prompts, its replies, its
-  thinking, and each tool call with what came back, following along every 3
-  seconds (only what changed is sent again). Read only; the same reader opens
-  a goal's agents.
+- **Reading a session:** **Read** (or **Open**, when you can type into it)
+  on a Claude Code session of a machine reached directly opens its
+  transcript: your prompts, its replies drawn as Markdown, its thinking, and
+  each tool call with what came back, following along every 3 seconds (only
+  what changed is sent again). A session in a herdr pane there, on a machine
+  that takes your requests, has a reply box under its history: what you send
+  is typed in there, and shows with how it went. The list follows new text
+  only while you are at its bottom; scrolled up, **↓ New** takes you back.
+  The phone's own sessions follow the same way. The same reader opens a
+  goal's agents.
+- **Archive:** each session, cloud session and phone session has
+  **Archive**, which hides it from the Code tab on this phone (nothing is
+  stopped where it runs). **Archived (n)** under a list shows them, with
+  **Unarchive**. A session that does something after you archived it comes
+  back by itself. Session previews on the cards show plain words, not
+  Markdown marks.
 - **Upgrade:** a machine reached directly that runs an older Yggdrasil
   release than the newest gets **Upgrade <machine> to vX.Y.Z** at the top of
   its card. Its Sindri runs `ygg upgrade latest` in a unit of its own (POST
