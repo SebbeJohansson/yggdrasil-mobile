@@ -52,6 +52,7 @@ import io.github.sebbejohansson.yggdrasil.nodes.ReadTarget
 import io.github.sebbejohansson.yggdrasil.nodes.TranscriptDialog
 import io.github.sebbejohansson.yggdrasil.nodes.MachineService
 import io.github.sebbejohansson.yggdrasil.nodes.MachineStatus
+import io.github.sebbejohansson.yggdrasil.nodes.MachineUpgrade
 import io.github.sebbejohansson.yggdrasil.nodes.Machines
 import io.github.sebbejohansson.yggdrasil.ui.Hud
 import io.github.sebbejohansson.yggdrasil.ui.HudButton
@@ -140,6 +141,12 @@ class CodeViewModel(
 
     /** A goal action on a machine reached directly; null, or why it failed. */
     suspend fun onGoal(device: String, act: (MachineClient) -> Unit): String? = machines.onGoal(device, act)
+
+    /** A machine's version and its last upgrade from a dashboard; failure while Sindri restarts. */
+    suspend fun upgradeStatus(device: String) = machines.on(device) { it.upgradeStatus() }
+
+    /** Starts `ygg upgrade [version]` on a machine; the failure is Sindri's refusal. */
+    suspend fun startUpgrade(device: String, version: String) = machines.on(device) { it.startUpgrade(version) }
 
     /** The end of a session's transcript on a machine reached directly. */
     suspend fun transcript(device: String, session: String, directory: String?, tail: Int, since: String?) =
@@ -316,6 +323,8 @@ private fun DevicePanel(
         Modifier.fillMaxWidth().alpha(if (d.quiet(now)) 0.65f else 1f).hudPanel(warn = d.sessions.any { it.waiting }).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        val machine = s.machines.firstOrNull { it.machine.id == d.device }
+        if (d.direct && machine?.health != null) MachineUpgrade(d, machine, s.latest, vm)
         when {
             !d.drivableBy(s.me) -> Text("Look only: ${d.device} does not take requests from ${s.me} (SAGA_DRIVE_FROM there).", style = HudText.meta)
             d.quiet(now) -> Text("Not heard from in a while. What you ask waits until it is back, for up to 30 minutes.", style = HudText.meta)

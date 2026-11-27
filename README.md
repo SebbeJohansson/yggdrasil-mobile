@@ -227,6 +227,13 @@ Each machine's other parts are asked the same way, each on its own port:
   thinking, and each tool call with what came back, following along every 3
   seconds (only what changed is sent again). Read only; the same reader opens
   a goal's agents.
+- **Upgrade:** a machine reached directly that runs an older Yggdrasil
+  release than the newest gets **Upgrade <machine> to vX.Y.Z** at the top of
+  its card. Its Sindri runs `ygg upgrade` in a unit of its own (POST
+  /v1/upgrade, owner token), restarting on the way; the card follows it and
+  says how it went, with the last line of the output when it failed. An
+  upgrade started from the desktop shows there too. A machine built from a
+  checkout, or with a Yggdrasil from before that route, says so instead.
 - **Goals:** under its sessions, each machine reached directly lists its goals
   in play, in the order to act on them (needs you, moving, ready to review,
   drafts), with what each needs next. **Start** starts a draft that names its

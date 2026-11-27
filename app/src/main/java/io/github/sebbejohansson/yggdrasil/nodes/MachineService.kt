@@ -162,6 +162,16 @@ class MachineService(
         failed?.let { it.message ?: "it did not work" }
     }
 
+    /** Something read or done on [machineId]'s parts, off the main thread; refused for a work machine. */
+    suspend fun <T> on(machineId: String, act: (MachineClient) -> T): Result<T> = withContext(io) {
+        val machine = settings.list().firstOrNull { it.id == machineId }
+            ?: return@withContext Result.failure(IllegalStateException("no machine called $machineId here"))
+        if (_status.value.any { it.machine.id == machineId && it.refused }) {
+            return@withContext Result.failure(IllegalStateException("${machine.label} is a work machine"))
+        }
+        runCatching { act(clientFor(machine, settings.token(machine.id))) }
+    }
+
     /** The end of a session's transcript on [machineId], or unchanged since [since]. */
     suspend fun transcript(machineId: String, session: String, directory: String?, tail: Int, since: String?): RemoteTranscript = withContext(io) {
         val machine = settings.list().firstOrNull { it.id == machineId } ?: error("no machine called $machineId here")
