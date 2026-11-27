@@ -74,11 +74,11 @@ object YggReleases {
 class LatestYggRelease(context: Context, private val clock: Clock = Clock.systemUTC(), private val fetch: () -> String? = ::fetchLatest) {
     private val prefs = context.getSharedPreferences("ygg_release", Context.MODE_PRIVATE)
 
-    /** The tag known now, asking GitHub first when the last answer is old. Blocking. */
-    fun get(): String? {
+    /** The tag known now, asking GitHub first when the last answer is old, or always with [force]. Blocking. */
+    fun get(force: Boolean = false): String? {
         val tag = prefs.getString("tag", null)
         val at = prefs.getLong("at", 0)
-        if (tag != null && clock.millis() - at < MAX_AGE_MS) return tag
+        if (!force && tag != null && clock.millis() - at < MAX_AGE_MS) return tag
         val fresh = runCatching { fetch() }.getOrNull()?.let(YggReleases::parseLatest)
         if (fresh != null) prefs.edit { putString("tag", fresh); putLong("at", clock.millis()) }
         return fresh ?: tag

@@ -60,4 +60,19 @@ class UpgradesTest {
         assertTrue(Transcript.notYet("VPS's sindri answered 404: no transcript for that session here"))
         assertTrue(!Transcript.notYet("VPS's sindri answered 403: only the owner may read a transcript"))
     }
+
+    @Test
+    fun checkingForUpdatesAsksGitHubPastTheCache() {
+        var asked = 0
+        var tag = "v0.3.10"
+        val latest = LatestYggRelease(org.robolectric.RuntimeEnvironment.getApplication()) { asked++; """{"tag_name":"$tag"}""" }
+        assertEquals("v0.3.10", latest.get())
+        tag = "v0.3.11"
+        // Within 30 minutes the kept answer stands...
+        assertEquals("v0.3.10", latest.get())
+        assertEquals(1, asked)
+        // ...unless you check: then GitHub is asked now.
+        assertEquals("v0.3.11", latest.get(force = true))
+        assertEquals(2, asked)
+    }
 }

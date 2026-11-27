@@ -311,7 +311,7 @@ class AppContainer(private val app: Application) {
     val machines = io.github.sebbejohansson.yggdrasil.nodes.MachineService(
         machineSettings,
         me = { sagaSettings.device },
-        latestRelease = { latestYggRelease.get() },
+        latestRelease = { force -> latestYggRelease.get(force) },
     )
 
     @OptIn(FlowPreview::class)

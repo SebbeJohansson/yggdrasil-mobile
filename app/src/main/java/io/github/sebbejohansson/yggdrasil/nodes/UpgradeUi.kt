@@ -63,7 +63,6 @@ fun MachineUpgrade(d: DeviceSessions, status: MachineStatus, latest: String?, vm
     }
 
     val current = run
-    if (!behind && current == null && note == null) return
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         current?.let {
             val color = when {
@@ -87,5 +86,29 @@ fun MachineUpgrade(d: DeviceSessions, status: MachineStatus, latest: String?, vm
                 }
             }, kind = HudButtonKind.SMALL, enabled = !starting)
         }
+        if (current?.running != true) CheckForYggUpdates(vm, latest)
+    }
+}
+
+/**
+ * Check for Yggdrasil updates: the newest release asked of GitHub now, past
+ * the 30-minute cache, and every machine read again, so a card shows Upgrade
+ * at once when a release came out since the last look.
+ */
+@Composable
+fun CheckForYggUpdates(vm: CodeViewModel, latest: String?) {
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var said by remember { mutableStateOf<String?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        HudButton(if (checking) "Checking…" else "Check for Yggdrasil updates", {
+            checking = true
+            scope.launch {
+                val found = runCatching { vm.checkForUpdates() }.getOrNull()
+                said = if (found != null) "Newest Yggdrasil: $found, checked just now." else "GitHub did not answer; ${latest ?: "no release"} is the newest known."
+                checking = false
+            }
+        }, kind = HudButtonKind.SMALL, enabled = !checking)
+        said?.let { Text(it, style = HudText.meta) }
     }
 }

@@ -229,13 +229,15 @@ Each machine's other parts are asked the same way, each on its own port:
   a goal's agents.
 - **Upgrade:** a machine reached directly that runs an older Yggdrasil
   release than the newest gets **Upgrade <machine> to vX.Y.Z** at the top of
-  its card. Its Sindri runs `ygg upgrade latest` in a unit of its own (the
-  machine asks GitHub itself, so it gets the newest even if the phone has
-  not heard of it yet) (POST
-  /v1/upgrade, owner token), restarting on the way; the card follows it and
+  its card. Its Sindri runs `ygg upgrade latest` in a unit of its own (POST
+  /v1/upgrade, owner token; the machine asks GitHub itself, so it gets the
+  newest even if the phone has not heard of it yet), restarting on the way; the card follows it and
   says how it went, with the last line of the output when it failed. An
   upgrade started from the desktop shows there too. A machine built from a
   checkout, or with a Yggdrasil from before that route, says so instead.
+  **Check for Yggdrasil updates**, on each card and under Settings →
+  Connection → Machines, asks GitHub for the newest release now instead of
+  waiting for the 30-minute check, and reads every machine again.
 - **Goals:** under its sessions, each machine reached directly lists its goals
   in play, in the order to act on them (needs you, moving, ready to review,
   drafts), with what each needs next. **Start** starts a draft that names its

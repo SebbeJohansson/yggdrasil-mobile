@@ -130,6 +130,9 @@ class CodeViewModel(
     /** The machines reached directly, read again: the Code tab does this every few seconds while it shows. */
     suspend fun refreshMachines() = machines.refresh()
 
+    /** The newest Yggdrasil release asked of GitHub now, and every machine read again; null when GitHub did not answer. */
+    suspend fun checkForUpdates(): String? = machines.checkForUpdates()
+
     private fun ask(device: String, kind: String, build: (SessionAsk) -> SessionAsk) = viewModelScope.launch {
         val ask = build(SessionAsk(id = UUID.randomUUID().toString().replace("-", ""), kind = kind, origin = device))
         if (machines.isDirect(device)) {

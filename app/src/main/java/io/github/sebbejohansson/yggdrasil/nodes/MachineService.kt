@@ -29,8 +29,8 @@ class MachineService(
     private val clock: Clock = Clock.systemUTC(),
     private val io: CoroutineContext = Dispatchers.IO,
     private val clientFor: (Machine, String) -> MachineClient = ::MachineClient,
-    /** The newest Yggdrasil release's tag, or null when unknown (nodes/YggReleases.kt). */
-    private val latestRelease: () -> String? = { null },
+    /** The newest Yggdrasil release's tag, or null when unknown (nodes/YggReleases.kt); true asks GitHub now. */
+    private val latestRelease: (Boolean) -> String? = { null },
 ) {
     private val _latest = MutableStateFlow<String?>(null)
     /** The newest Yggdrasil release, to say which machines are behind it. */
@@ -59,8 +59,20 @@ class MachineService(
     fun machines(): List<Machine> = settings.list()
 
     /** Asks every machine for its health and sessions, all at once. */
-    suspend fun refresh() = withContext(io) {
-        if (settings.list().isNotEmpty()) _latest.value = runCatching { latestRelease() }.getOrNull() ?: _latest.value
+    suspend fun refresh() = refresh(force = false)
+
+    /**
+     * Check for updates: asks GitHub for the newest Yggdrasil release now,
+     * past the 30-minute cache, then reads every machine again, so each card
+     * says at once whether it is behind. Null when GitHub did not answer.
+     */
+    suspend fun checkForUpdates(): String? {
+        refresh(force = true)
+        return _latest.value
+    }
+
+    private suspend fun refresh(force: Boolean) = withContext(io) {
+        if (force || settings.list().isNotEmpty()) _latest.value = runCatching { latestRelease(force) }.getOrNull() ?: _latest.value
         val reads = coroutineScope {
             settings.list().map { machine -> async { read(machine) } }.awaitAll()
         }
