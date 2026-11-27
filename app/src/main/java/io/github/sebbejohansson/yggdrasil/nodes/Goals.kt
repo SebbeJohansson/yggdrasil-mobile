@@ -5,11 +5,25 @@ import org.json.JSONObject
 
 /**
  * A machine's goals (Sindri's GET /v1/goals): long-running work across its
- * repos, as the desktop widget's Goals page shows them. The phone lists the
- * ones in play, starts a draft, resumes one waiting on Claude usage, and
- * makes a new draft; the rest (review, races, merging) is the desktop's.
+ * repos, as the desktop widget's Goals page shows them. The phone lists them,
+ * opens one (GoalDialog) to answer its agents, reply, review and merge each
+ * part's branch, restart a part, and close or reopen it; races and pictures
+ * stay on the desktop.
  */
-data class GoalPart(val repo: String?, val agent: String, val status: String, val label: String?)
+data class GoalPart(
+    val repo: String?,
+    val agent: String,
+    val status: String,
+    val label: String?,
+    /** The part's branch; null before it has one. */
+    val branch: String? = null,
+    val merged: Boolean = false,
+    /** The agent's last words when its turn ended. */
+    val result: String? = null,
+    val lastActivity: Long = 0,
+    /** Sindri's task id: a restarted part has a newer one. */
+    val taskId: Long = 0,
+)
 
 data class MachineGoal(
     val id: Long,
@@ -21,6 +35,10 @@ data class MachineGoal(
     val nextAction: String,
     val nextText: String,
     val parts: List<GoalPart>,
+    /** Closed without merging it all; reopen brings it back. */
+    val closed: Boolean = false,
+    /** Which part the next step is about, when one is. */
+    val nextAgent: String? = null,
 ) {
     /** A draft that names its projects can be started from here. */
     val startable: Boolean get() = state == "draft" && repos.isNotEmpty()
@@ -93,14 +111,41 @@ object Goals {
             nextText = next?.str("text") ?: "",
             parts = g.optJSONArray("tasks").objects().mapNotNull { t ->
                 val agent = t.str("agent") ?: return@mapNotNull null
-                GoalPart(t.str("repo"), agent, t.str("status") ?: "", t.str("label"))
-            },
+                GoalPart(t.str("repo"), agent, t.str("status") ?: "", t.str("label"),
+                    branch = t.str("branch"), merged = t.optBoolean("merged"), result = t.str("result"), lastActivity = t.optLong("lastActivity"),
+                    taskId = t.optLong("id"))
+            }.let(::currentParts),
+            closed = g.has("closedAt") && !g.isNull("closedAt"),
+            nextAgent = next?.str("agent"),
         )
     }
+
+    /** Merged and closed goals, newest first: the Done list, folded. */
+    fun finished(goals: List<MachineGoal>): List<MachineGoal> = goals.filter { it.state !in ORDER }.sortedByDescending { it.id }
 
     /** The goals in play, in the order to act on them; newest first within a state. */
     fun inPlay(goals: List<MachineGoal>): List<MachineGoal> =
         goals.filter { it.state in ORDER }.sortedWith(compareBy<MachineGoal> { ORDER.indexOf(it.state) }.thenByDescending { it.id })
+
+    /**
+     * The newest part of each repo, in the order given: a restarted part's
+     * older agents are history, as Sindri's currentParts counts them.
+     */
+    fun currentParts(parts: List<GoalPart>): List<GoalPart> {
+        val newest = parts.groupBy { it.repo }.mapValues { (_, v) -> v.maxOf { it.taskId } }
+        return parts.filter { newest[it.repo] == it.taskId }
+    }
+
+    /** What a part's status says, in words. */
+    fun partLabel(status: String): String = when (status) {
+        "running" -> "working"
+        "scheduled" -> "waiting on Claude usage"
+        "needs-you" -> "needs you"
+        "failed" -> "failed"
+        "stopped" -> "stopped"
+        "done" -> "done"
+        else -> status
+    }
 
     /** Why a machine offers no projects for a new goal: none cloned there, or it did not answer for them. */
     fun noProjects(label: String, answered: Boolean): String =

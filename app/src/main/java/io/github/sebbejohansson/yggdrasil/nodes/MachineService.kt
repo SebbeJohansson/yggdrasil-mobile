@@ -49,7 +49,7 @@ class MachineService(
     val alerts: StateFlow<List<Mirror>> = _alerts.asStateFlow()
 
     private val _goals = MutableStateFlow<Map<String, List<MachineGoal>>>(emptyMap())
-    /** Each machine's goals in play, by machine id, as read last time. */
+    /** Each machine's goals (in play, merged and closed), by machine id, as read last time. */
     val goals: StateFlow<Map<String, List<MachineGoal>>> = _goals.asStateFlow()
 
     private val _asked = MutableStateFlow<List<Asked>>(emptyList())
@@ -115,7 +115,7 @@ class MachineService(
             sessions.getOrNull(),
             alerts.getOrDefault(emptyList()).map { Mirror(machine.id, it.alert, now, directId = it.id, label = machine.label) },
             alertsRead = alerts.isSuccess,
-            goals = runCatching { Goals.inPlay(client.goals()) }.getOrNull(),
+            goals = runCatching { client.goals() }.getOrNull(),
         )
     }
 
