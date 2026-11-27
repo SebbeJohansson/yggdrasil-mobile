@@ -46,11 +46,13 @@ it (`MainActivity.kt`).
   CI (`.github/workflows/build.yml`) compiles, tests and lints on every push
   to `main` and on pull requests; treat a green `main` build as the compile
   check, and read its log when it fails.
-- **Release:** the run waits for the owner's approval (`release`
-  environment); an agent can start it but not approve it. Actions → release → Run workflow on `main` with a version
+- **Release:** the APK is built and tested first; only its publish step
+  waits for the owner's approval (`release` environment); an agent can start
+  it but not approve it. Actions → release → Run workflow on `main` with a version
   (`0.23.0`); the workflow makes the tag. Pushing a tag from a cloud session
-  fails at the proxy even when git says otherwise; run the workflow instead,
-  and only after `main`'s build is green. Versions: `MAJOR.MINOR.PATCH`, each
+  fails at the proxy even when git says otherwise; run the workflow instead.
+  It need not wait for `main`'s build: it skips tests `build` already passed
+  on that commit and runs them itself otherwise. Versions: `MAJOR.MINOR.PATCH`, each
   below 100. Details: [docs/releasing.md](docs/releasing.md).
 - **Style.** Comments and commit messages say *why*, in plain sentences,
   as the existing ones do: a subject that says what changed for the user,
