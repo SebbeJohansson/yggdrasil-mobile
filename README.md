@@ -263,8 +263,14 @@ dialog waiting. From there:
 - **Resume there** starts a session outside herdr again in a herdr pane.
 - **Open in Claude** opens a session with Remote Control on, or a cloud
   session, in the Claude app.
+- **New session**: pick one of its projects, say what Claude should do, and
+  **Start on <machine>** runs Claude on that machine itself, in a herdr pane
+  in the project's checkout (`sindri.session.start`; needs herdr there and a
+  Yggdrasil whose Sága knows that request). **Start in the cloud** runs
+  `claude --cloud` instead: Anthropic's cloud works on a copy of the repo,
+  not on the machine.
 - **Cloud sessions** the machine's Sindri started can be followed up and
-  brought home there, and a new one started in one of its projects.
+  brought home there.
 
 Each of these is a request (`sindri.session.*`, `sindri.cloud.*`) that only
 that machine carries out, when it is on, within 30 minutes, and only if its

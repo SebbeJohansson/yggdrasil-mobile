@@ -165,6 +165,7 @@ class CodeViewModel(
     fun choose(device: String, s: RemoteSession, c: RemoteChoice) =
         ask(device, SessionKinds.CHOOSE) { it.copy(session = s.id, question = s.dialog?.question, key = c.key, label = c.label) }
     fun resume(device: String, s: RemoteSession) = ask(device, SessionKinds.RESUME) { it.copy(session = s.id, cwd = s.directory) }
+    fun startThere(device: String, cwd: String, task: String) = ask(device, SessionKinds.START) { it.copy(cwd = cwd, task = task) }
     fun startCloud(device: String, cwd: String, task: String) = ask(device, SessionKinds.CLOUD_START) { it.copy(cwd = cwd, task = task) }
     fun follow(device: String, c: RemoteCloud, text: String) = ask(device, SessionKinds.CLOUD_MESSAGE) { it.copy(session = c.id, text = text) }
     fun teleport(device: String, c: RemoteCloud) = ask(device, SessionKinds.CLOUD_TELEPORT) { it.copy(session = c.id) }
@@ -322,10 +323,10 @@ private fun DevicePanel(
         d.errors.forEach { (source, text) -> Text("$source: $text", style = HudText.meta) }
         if (d.sessions.isEmpty()) Text("Nothing running there.", style = HudText.small.copy(color = Hud.overlay0))
         d.sessions.forEach { session -> SessionItem(d, session, drive, s.asked, vm, now, onRead) }
-        if (d.cloud.isNotEmpty() || (drive && d.projects.isNotEmpty())) {
+        if (drive && d.projects.isNotEmpty()) StartSession(d, s.asked, vm)
+        if (d.cloud.isNotEmpty()) {
             HudLabel("Cloud sessions started there")
             d.cloud.forEach { c -> CloudItem(d, c, drive, s.asked, vm, now, phone, phoneState) }
-            if (drive && d.projects.isNotEmpty()) StartCloud(d, s.asked, vm)
         }
         // A machine reached directly: its goals too.
         if (d.direct) MachineGoals(d, s.goals[d.device].orEmpty(), vm, onRead)
@@ -432,23 +433,34 @@ private fun CloudItem(
     }
 }
 
+/**
+ * A new Claude session on that machine. Start there runs Claude on the machine
+ * itself, in a herdr pane in the project (as the desktop's own start does), so
+ * it works in the machine's checkout; Cloud runs `claude --cloud`, which works
+ * in Anthropic's cloud on a copy of the repo instead.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StartCloud(d: DeviceSessions, asked: List<Asked>, vm: CodeViewModel) {
+private fun StartSession(d: DeviceSessions, asked: List<Asked>, vm: CodeViewModel) {
     val uri = LocalUriHandler.current
     var cwd by remember(d.device) { mutableStateOf(d.projects.first().path) }
     var task by remember(d.device) { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        HudLabel("New session")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             d.projects.forEach { p ->
                 HudButton(p.name, { cwd = p.path }, kind = if (p.path == cwd) HudButtonKind.GHOST else HudButtonKind.SMALL)
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            HudTextField(task, { task = it }, placeholder = "What the cloud session should do", maxLines = 3, modifier = Modifier.weight(1f))
-            HudButton("Start", { vm.startCloud(d.device, cwd, task.trim()); task = "" }, kind = HudButtonKind.SMALL, enabled = task.isNotBlank())
+        HudTextField(task, { task = it }, placeholder = "What Claude should do", maxLines = 3)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            HudButton("Start on ${d.title}", { vm.startThere(d.device, cwd, task.trim()); task = "" },
+                kind = HudButtonKind.SMALL, enabled = task.isNotBlank() && d.herdr)
+            HudButton("Start in the cloud", { vm.startCloud(d.device, cwd, task.trim()); task = "" },
+                kind = HudButtonKind.SMALL, enabled = task.isNotBlank())
         }
-        asked.filter { it.ask.origin == d.device && it.ask.kind == SessionKinds.CLOUD_START }.take(3).forEach { a ->
+        if (!d.herdr) Text("herdr is off on ${d.title}, so Claude can only start in the cloud from here.", style = HudText.meta)
+        asked.filter { it.ask.origin == d.device && (it.ask.kind == SessionKinds.START || it.ask.kind == SessionKinds.CLOUD_START) }.take(3).forEach { a ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(a.line, style = HudText.meta.copy(color = a.color()), modifier = Modifier.weight(1f))
                 a.url?.let { link -> HudButton("Open", { uri.openUri(link) }, kind = HudButtonKind.SMALL) }
