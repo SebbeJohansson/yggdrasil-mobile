@@ -232,6 +232,12 @@ Each machine's other parts are asked the same way, each on its own port:
   only while you are at its bottom; scrolled up, **↓ New** takes you back.
   The phone's own sessions follow the same way. The same reader opens a
   goal's agents.
+- **Cleanup:** a machine reached directly whose Yggdrasil cleans quiet
+  projects (v0.3.12 and newer) shows how many projects are quiet and how much
+  their git-ignored `node_modules`, build output and caches take, with
+  **Clean now**; **Details** lists each project with a **Clean** of its own,
+  for one you are done with however recent. The machine cleans by itself
+  after the days it says (`SINDRI_CLEAN_AFTER_DAYS` there).
 - **Archive:** each session, cloud session and phone session has
   **Archive**, which hides it from the Code tab on this phone (nothing is
   stopped where it runs). **Archived (n)** under a list shows them, with

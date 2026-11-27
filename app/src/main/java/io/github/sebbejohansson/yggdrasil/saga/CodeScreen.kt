@@ -52,6 +52,7 @@ import io.github.sebbejohansson.yggdrasil.nodes.ReadTarget
 import io.github.sebbejohansson.yggdrasil.nodes.TranscriptDialog
 import io.github.sebbejohansson.yggdrasil.nodes.MachineService
 import io.github.sebbejohansson.yggdrasil.nodes.MachineStatus
+import io.github.sebbejohansson.yggdrasil.nodes.MachineCleanup
 import io.github.sebbejohansson.yggdrasil.nodes.MachineUpgrade
 import io.github.sebbejohansson.yggdrasil.nodes.Machines
 import io.github.sebbejohansson.yggdrasil.nodes.YggReleases
@@ -161,6 +162,12 @@ class CodeViewModel(
 
     /** Starts `ygg upgrade [version]` on a machine; the failure is Sindri's refusal. */
     suspend fun startUpgrade(device: String, version: String) = machines.on(device) { it.startUpgrade(version) }
+
+    /** A machine's cleanup of quiet projects; failure for a Yggdrasil without it (404). */
+    suspend fun cleanup(device: String) = machines.on(device) { it.cleanup() }
+
+    /** Cleans a machine's quiet projects now, or one project however recent. */
+    suspend fun cleanNow(device: String, project: String? = null) = machines.on(device) { it.cleanNow(project) }
 
     /** The end of a session's transcript on a machine reached directly. */
     suspend fun transcript(device: String, session: String, directory: String?, tail: Int, since: String?) =
@@ -339,6 +346,7 @@ private fun DevicePanel(
     ) {
         val machine = s.machines.firstOrNull { it.machine.id == d.device }
         if (d.direct && machine?.health != null) MachineUpgrade(d, machine, s.latest, vm)
+        if (d.direct && machine?.health != null) MachineCleanup(d, vm)
         when {
             !d.drivableBy(s.me) -> Text("Look only: ${d.device} does not take requests from ${s.me} (SAGA_DRIVE_FROM there).", style = HudText.meta)
             d.quiet(now) -> Text("Not heard from in a while. What you ask waits until it is back, for up to 30 minutes.", style = HudText.meta)

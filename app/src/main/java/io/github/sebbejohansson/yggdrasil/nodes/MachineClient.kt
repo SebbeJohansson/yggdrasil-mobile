@@ -113,6 +113,14 @@ open class MachineClient(private val machine: Machine, private val token: String
     fun startUpgrade(version: String): UpgradeRun =
         Upgrades.parseRun(JSONObject(call("sindri", "POST", "/v1/upgrade", JSONObject().put("version", version), timeoutMs = 15_000)))
 
+    /** Its projects' cleanup: what can go and the last run (Sindri's GET /v1/cleanup). Sizes take a moment on big trees. */
+    fun cleanup(): CleanupStatus = Cleanup.parseStatus(call("sindri", "GET", "/v1/cleanup", timeoutMs = 30_000))
+
+    /** Cleans the quiet projects now, or [project] however recent (POST /v1/cleanup). */
+    fun cleanNow(project: String? = null): CleanupRun = Cleanup.parseRun(JSONObject(call(
+        "sindri", "POST", "/v1/cleanup", JSONObject().apply { project?.let { put("project", it) } }, timeoutMs = 60_000,
+    )))
+
     /** Starts a draft: one coding agent per project. */
     fun startGoal(id: Long) { call("sindri", "POST", "/v1/goals/$id/start", JSONObject(), timeoutMs = 15_000) }
 
