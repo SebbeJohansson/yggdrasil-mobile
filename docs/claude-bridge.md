@@ -124,7 +124,9 @@ the desktop's Sindri does: one headless `herdr server` per account (its socket a
 `/tmp/yh-<hash>.sock`: under proot a long path overflows a socket's 108 bytes), started with the account's `CLAUDE_CONFIG_DIR`. herdr says
 whether Claude works, waits or shows a dialog, and types for you; what Claude
 said is read from its transcript (`sessions/<pid>.json` gives the session id).
-Setup installs herdr, pinned and checked against its sums.
+Setup installs herdr, pinned and checked against its sums. Each Claude starts with
+`--remote-control`, as the desktop's Sindri starts them, so a local session
+opens in the Claude app too (`YGG_BRIDGE_REMOTE_CONTROL=0`: off).
 
 **Each session its own worktree**, as the desktop's Sindri gives each
 agent one, so two sessions never touch each other's work:

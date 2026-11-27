@@ -374,6 +374,26 @@ class BridgeTest(unittest.TestCase):
         self._git("commit", "-qm", "api", cwd=work)
         subprocess.run(["git", "clone", "-q", "--bare", str(work), str(origin)], check=True)
 
+    def test_local_sessions_join_remote_control(self):
+        b = self.b
+        calls = []
+
+        def fake_herdr(aid, method, params, timeout=None):
+            calls.append((method, params))
+            return {"root_pane": {"pane_id": "w9:p1"}, "workspace": {"workspace_id": "w9"}} if method == "workspace.create" else {}
+        saved, on = b.herdr, b.REMOTE_CONTROL
+        b.herdr = fake_herdr
+        try:
+            b.REMOTE_CONTROL = True
+            b.open_claude("default", Path(self.tmp), "app-1a2b", ["--resume", "abc"])
+            started = [p for m, p in calls if m == "agent.start"][-1]
+            self.assertEqual(["--remote-control", "--resume", "abc"], started["args"])
+            b.REMOTE_CONTROL = False
+            b.open_claude("default", Path(self.tmp), "app-1a2c", [])
+            self.assertEqual([], [p for m, p in calls if m == "agent.start"][-1]["args"])
+        finally:
+            b.herdr, b.REMOTE_CONTROL = saved, on
+
     def test_one_session_over_several_repos(self):
         b = self.b
         self._second_repo()
