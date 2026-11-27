@@ -106,6 +106,13 @@ open class MachineClient(private val machine: Machine, private val token: String
         call("sindri", "POST", "/v1/projects", JSONObject().put("repo", repo), timeoutMs = 180_000)
     }
 
+    /** What the machine runs and its last upgrade from a dashboard (Sindri's GET /v1/upgrade). */
+    fun upgradeStatus(): UpgradeStatus = Upgrades.parseStatus(call("sindri", "GET", "/v1/upgrade"))
+
+    /** Starts `ygg upgrade [version]` there (POST /v1/upgrade): it answers at once, the upgrade runs on. */
+    fun startUpgrade(version: String): UpgradeRun =
+        Upgrades.parseRun(JSONObject(call("sindri", "POST", "/v1/upgrade", JSONObject().put("version", version), timeoutMs = 15_000)))
+
     /** Starts a draft: one coding agent per project. */
     fun startGoal(id: Long) { call("sindri", "POST", "/v1/goals/$id/start", JSONObject(), timeoutMs = 15_000) }
 

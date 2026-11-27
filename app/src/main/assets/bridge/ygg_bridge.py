@@ -56,6 +56,9 @@ START_WAIT = int(os.environ.get("YGG_BRIDGE_START_WAIT", "180"))
 GIT_BASE = os.environ.get("YGG_BRIDGE_GIT_BASE", "https://github.com")
 # Start from a stub with no files first (YGG_BRIDGE_STUB=0: always a full checkout).
 STUB = os.environ.get("YGG_BRIDGE_STUB", "1") != "0"
+# Local sessions join Remote Control, as the desktop's Sindri starts them
+# (SINDRI_REMOTE_CONTROL), so each opens in the Claude app (YGG_BRIDGE_REMOTE_CONTROL=0: off).
+REMOTE_CONTROL = os.environ.get("YGG_BRIDGE_REMOTE_CONTROL", "1") != "0"
 
 CLOUD_URL = re.compile(r"https://claude\.ai/code/(session_[A-Za-z0-9_-]+)")
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -831,11 +834,18 @@ def local_name(repo: str) -> str:
             return name
 
 
+def claude_args(args: list) -> list:
+    """An interactive Claude's arguments, with --remote-control first when on:
+    its name is optional, so after the others it could take one as its name."""
+    return (["--remote-control"] if REMOTE_CONTROL else []) + list(args)
+
+
 def open_claude(aid: str, cwd: Path, name: str, args: list):
     """Claude in a new herdr workspace in [cwd] (as Sindri's Herdr.Start): the
     workspace's shell may still be starting (agent_pane_busy), so the start is
     tried again for 20 s; if it never takes, the workspace is closed again.
     Gives (pane, workspace)."""
+    args = claude_args(args)
     created = herdr(aid, "workspace.create", {"cwd": str(cwd), "label": name, "focus": False})
     pane = created.get("root_pane", {}).get("pane_id", "")
     workspace = (created.get("workspace") or {}).get("workspace_id") or pane.split(":")[0]

@@ -316,6 +316,11 @@ object Machines {
                 val id = ask.session ?: return bad("no session to resume")
                 Result.success(Call("POST", "/v1/sessions/herdr", JSONObject().put("kind", "claude").put("cwd", cwd).put("resume", id)))
             }
+            SessionKinds.START -> {
+                val cwd = ask.cwd?.takeIf { it.startsWith("/") } ?: return bad("no project to start in")
+                val task = ask.task?.takeIf { it.isNotBlank() } ?: return bad("no task")
+                Result.success(Call("POST", "/v1/sessions/herdr", JSONObject().put("kind", "claude").put("cwd", cwd).put("prompt", task)))
+            }
             SessionKinds.CLOUD_START -> {
                 val cwd = ask.cwd?.takeIf { it.startsWith("/") } ?: return bad("no project to start in")
                 val task = ask.task?.takeIf { it.isNotBlank() } ?: return bad("no task")

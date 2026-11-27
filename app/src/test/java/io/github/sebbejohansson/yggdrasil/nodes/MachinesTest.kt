@@ -93,6 +93,10 @@ class MachinesTest {
         assertEquals("s2", resume.body?.getString("resume"))
 
         assertEquals("/v1/cloud", Machines.call(ask(SessionKinds.CLOUD_START, cwd = "/p", task = "fix"), null).getOrThrow().path)
+        val here = Machines.call(ask(SessionKinds.START, cwd = "/p", task = "fix"), null).getOrThrow()
+        assertEquals("/v1/sessions/herdr", here.path)
+        assertEquals("claude /p fix", "${here.body?.getString("kind")} ${here.body?.getString("cwd")} ${here.body?.getString("prompt")}")
+        assertTrue(Machines.call(ask(SessionKinds.START, cwd = "/p", task = " "), null).isFailure)
         assertEquals("/v1/cloud/c1/message", Machines.call(ask(SessionKinds.CLOUD_MESSAGE, "c1", text = "hi"), null).getOrThrow().path)
         assertEquals("/v1/cloud/c1/teleport", Machines.call(ask(SessionKinds.CLOUD_TELEPORT, "c1"), null).getOrThrow().path)
         assertTrue(Machines.call(ask(SessionKinds.CLOUD_START, cwd = "relative", task = "fix"), null).isFailure)

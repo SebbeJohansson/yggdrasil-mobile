@@ -15,6 +15,8 @@ object SessionKinds {
     const val PROMPT = "sindri.session.prompt"
     const val CHOOSE = "sindri.session.choose"
     const val RESUME = "sindri.session.resume"
+    /** Claude on the machine itself, in a herdr pane in the project, starting on the task. */
+    const val START = "sindri.session.start"
     const val CLOUD_START = "sindri.cloud.start"
     const val CLOUD_MESSAGE = "sindri.cloud.message"
     const val CLOUD_TELEPORT = "sindri.cloud.teleport"
@@ -207,6 +209,7 @@ data class Asked(
             SessionKinds.PROMPT, SessionKinds.CLOUD_MESSAGE -> "Sent \"${short(ask.text)}\""
             SessionKinds.CHOOSE -> "Chose \"${short(ask.label)}\""
             SessionKinds.RESUME -> "Resume"
+            SessionKinds.START -> "Started \"${short(ask.task)}\" there"
             SessionKinds.CLOUD_START -> "Cloud session \"${short(ask.task)}\""
             SessionKinds.CLOUD_TELEPORT -> "Bring home"
             else -> ask.kind

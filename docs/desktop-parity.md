@@ -28,7 +28,7 @@ port that it missed. Most worth doing first.
 | 1 | `2809e3b` Claude's own words on a failed turn, and the `/login` hint | `complete()` returns `claude: <result>`, with no hint and no expired sign-in check | `bridge` `complete()` |
 | 2 | `a89e7b6` `/v1/claude-login` | `LinuxLogin` runs `claude auth login` without `--claudeai` or `BROWSER=true`, takes the first `https://` link, and counts you as signed in if `.credentials.json` exists. It never notices an expired sign-in | `K/linux/OwnLinux.kt:80,216`, `K/linux/Proot.kt:104` |
 | 3 | `da020c3` a loop whose run fails runs again after a minute | No retry. A failed `loki.plan` shows as failing for an hour | `K/core/Loops.kt`, `K/YggApp.kt:298` |
-| 4 | `f1497ac` Remote Control on every agent, `remoteUrl` | Local sessions start with no arguments, so none can be followed from claude.ai. Not yet checked whether interactive claude in herdr can switch it on by a flag | `bridge:735` |
+| 4 | `f1497ac` Remote Control on every agent, `remoteUrl` | Done for local sessions: the bridge starts Claude with `--remote-control` (`YGG_BRIDGE_REMOTE_CONTROL=0` turns it off). The session's claude.ai link is not read back and shown yet (`remoteUrl`) | `bridge` `open_claude` |
 | 5 | `81b5d7b` promises have their own on/off switch | Reading promises from chat is tied to the memory *Learn* switch, and Share isn't gated at all | `K/norn/NornChat.kt:75`, `K/norn/ShareActivity.kt:26` |
 | 6 | `d95e3bc` promise matching knows a person's aliases | Aliases are used when names are swapped, not when promises are matched | `K/norn/Promises.kt` |
 | 7 | `7da406d` working hours from `WORK_HOURS` | Fixed at 09–17, Monday to Friday, in the Today card and Bifröst | `K/today/Today.kt:30`, `K/ui/Aurora.kt` |
