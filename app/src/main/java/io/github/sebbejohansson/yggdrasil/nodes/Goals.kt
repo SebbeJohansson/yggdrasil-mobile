@@ -104,8 +104,17 @@ object Goals {
 
     /** Why a machine offers no projects for a new goal: none cloned there, or it did not answer for them. */
     fun noProjects(label: String, answered: Boolean): String =
-        if (answered) "No projects cloned on $label: clone one there to start a goal on it."
+        if (answered) "No projects cloned on $label: Clone from GitHub to start a goal on one."
         else "$label is not answering for its projects."
+
+    private val GITHUB_REPO = Regex("""^(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:)?([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+?)(?:\.git)?/?$""")
+
+    /** owner/name from what was typed (owner/name or its github.com link), or null; Sindri reads it the same way (sindri/clone.go). */
+    fun gitHubRepoOf(text: String): String? {
+        val m = GITHUB_REPO.matchEntire(text.trim()) ?: return null
+        val name = m.groupValues[2]
+        return if (name == "." || name == "..") null else "${m.groupValues[1]}/$name"
+    }
 
     /** The checks on a new goal, as Sindri's: a title of at most 200, at most 4 projects. */
     fun checkNew(title: String, repos: List<String>): String? = when {

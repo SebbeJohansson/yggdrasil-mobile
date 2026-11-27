@@ -97,6 +97,15 @@ open class MachineClient(private val machine: Machine, private val token: String
         return Goals.parseCandidates(call("sindri", "GET", path, timeoutMs = 15_000))
     }
 
+    /**
+     * Clones a GitHub repo into Sindri's projects folder there (POST /v1/projects {repo}),
+     * where Sindri, its goals and this tab look. Sindri gives a clone up to five minutes,
+     * so this reads for six.
+     */
+    fun cloneProject(repo: String) {
+        call("sindri", "POST", "/v1/projects", JSONObject().put("repo", repo), timeoutMs = 180_000)
+    }
+
     /** Starts a draft: one coding agent per project. */
     fun startGoal(id: Long) { call("sindri", "POST", "/v1/goals/$id/start", JSONObject(), timeoutMs = 15_000) }
 

@@ -68,7 +68,13 @@ class GoalsAndTranscriptTest {
         assertEquals("What should be done?", Goals.checkNew(" ", emptyList()))
         assertEquals("At most 4 projects", Goals.checkNew("x", listOf("a", "b", "c", "d", "e")))
         assertNull(Goals.checkNew("Add CSV export", listOf("site")))
-        assertEquals("No projects cloned on VPS: clone one there to start a goal on it.", Goals.noProjects("VPS", answered = true))
+        assertEquals("No projects cloned on VPS: Clone from GitHub to start a goal on one.", Goals.noProjects("VPS", answered = true))
+        assertEquals("owner/name", Goals.gitHubRepoOf(" owner/name "))
+        assertEquals("owner/name", Goals.gitHubRepoOf("https://github.com/owner/name.git"))
+        assertEquals("owner/name", Goals.gitHubRepoOf("git@github.com:owner/name.git"))
+        assertEquals(null, Goals.gitHubRepoOf("https://gitlab.com/owner/name"))
+        assertEquals(null, Goals.gitHubRepoOf("owner/name/tree/main"))
+        assertEquals(null, Goals.gitHubRepoOf("owner/.."))
         assertEquals("VPS is not answering for its projects.", Goals.noProjects("VPS", answered = false))
     }
 
