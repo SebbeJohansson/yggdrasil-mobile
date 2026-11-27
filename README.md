@@ -219,7 +219,7 @@ Each machine's other parts are asked the same way, each on its own port:
 - **Parts and version:** its Ratatoskr says which parts are up, and its
   `/health` which Yggdrasil it runs. Settings → Machines and the Code tab say
   "v0.2.0 · 5 of 5 parts up", name a part that is down, and when a newer
-  Yggdrasil release is out (GitHub, asked at most every 6 hours) give the
+  Yggdrasil release is out (GitHub, asked at most every 30 minutes) give the
   `ygg upgrade` to run there; a machine built from a checkout says "from
   source".
 - **Reading a session:** **Read** on a Claude Code session of a machine
@@ -229,11 +229,15 @@ Each machine's other parts are asked the same way, each on its own port:
   a goal's agents.
 - **Upgrade:** a machine reached directly that runs an older Yggdrasil
   release than the newest gets **Upgrade <machine> to vX.Y.Z** at the top of
-  its card. Its Sindri runs `ygg upgrade` in a unit of its own (POST
-  /v1/upgrade, owner token), restarting on the way; the card follows it and
+  its card. Its Sindri runs `ygg upgrade latest` in a unit of its own (POST
+  /v1/upgrade, owner token; the machine asks GitHub itself, so it gets the
+  newest even if the phone has not heard of it yet), restarting on the way; the card follows it and
   says how it went, with the last line of the output when it failed. An
   upgrade started from the desktop shows there too. A machine built from a
   checkout, or with a Yggdrasil from before that route, says so instead.
+  **Check for Yggdrasil updates**, on each card and under Settings →
+  Connection → Machines, asks GitHub for the newest release now instead of
+  waiting for the 30-minute check, and reads every machine again.
 - **Goals:** under its sessions, each machine reached directly lists its goals
   in play, in the order to act on them (needs you, moving, ready to review,
   drafts), with what each needs next. **Start** starts a draft that names its
@@ -272,8 +276,9 @@ dialog waiting. From there:
   session, in the Claude app.
 - **New session**: pick one of its projects, say what Claude should do, and
   **Start on <machine>** runs Claude on that machine itself, in a herdr pane
-  in the project's checkout (`sindri.session.start`; needs herdr there and a
-  Yggdrasil whose Sága knows that request). **Start in the cloud** runs
+  in the project's checkout (`sindri.session.start`; needs herdr there and
+  Yggdrasil v0.3.11 or newer, which the card says when it is older: an older
+  Sindri starts Claude but drops the task). **Start in the cloud** runs
   `claude --cloud` instead: Anthropic's cloud works on a copy of the repo,
   not on the machine.
 - **Cloud sessions** the machine's Sindri started can be followed up and

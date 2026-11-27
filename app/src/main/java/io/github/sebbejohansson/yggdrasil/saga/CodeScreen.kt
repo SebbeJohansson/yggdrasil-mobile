@@ -54,6 +54,7 @@ import io.github.sebbejohansson.yggdrasil.nodes.MachineService
 import io.github.sebbejohansson.yggdrasil.nodes.MachineStatus
 import io.github.sebbejohansson.yggdrasil.nodes.MachineUpgrade
 import io.github.sebbejohansson.yggdrasil.nodes.Machines
+import io.github.sebbejohansson.yggdrasil.nodes.YggReleases
 import io.github.sebbejohansson.yggdrasil.ui.Hud
 import io.github.sebbejohansson.yggdrasil.ui.HudButton
 import io.github.sebbejohansson.yggdrasil.ui.HudButtonKind
@@ -128,6 +129,9 @@ class CodeViewModel(
 
     /** The machines reached directly, read again: the Code tab does this every few seconds while it shows. */
     suspend fun refreshMachines() = machines.refresh()
+
+    /** The newest Yggdrasil release asked of GitHub now, and every machine read again; null when GitHub did not answer. */
+    suspend fun checkForUpdates(): String? = machines.checkForUpdates()
 
     private fun ask(device: String, kind: String, build: (SessionAsk) -> SessionAsk) = viewModelScope.launch {
         val ask = build(SessionAsk(id = UUID.randomUUID().toString().replace("-", ""), kind = kind, origin = device))
@@ -332,7 +336,7 @@ private fun DevicePanel(
         d.errors.forEach { (source, text) -> Text("$source: $text", style = HudText.meta) }
         if (d.sessions.isEmpty()) Text("Nothing running there.", style = HudText.small.copy(color = Hud.overlay0))
         d.sessions.forEach { session -> SessionItem(d, session, drive, s.asked, vm, now, onRead) }
-        if (drive && d.projects.isNotEmpty()) StartSession(d, s.asked, vm)
+        if (drive && d.projects.isNotEmpty()) StartSession(d, s.asked, vm, machine?.health?.version)
         if (d.cloud.isNotEmpty()) {
             HudLabel("Cloud sessions started there")
             d.cloud.forEach { c -> CloudItem(d, c, drive, s.asked, vm, now, phone, phoneState) }
@@ -450,8 +454,10 @@ private fun CloudItem(
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StartSession(d: DeviceSessions, asked: List<Asked>, vm: CodeViewModel) {
+private fun StartSession(d: DeviceSessions, asked: List<Asked>, vm: CodeViewModel, version: String?) {
     val uri = LocalUriHandler.current
+    // Through Mímir the version is unknown: let it through, as before.
+    val startsThere = !d.direct || YggReleases.startsThere(version)
     var cwd by remember(d.device) { mutableStateOf(d.projects.first().path) }
     var task by remember(d.device) { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -464,11 +470,12 @@ private fun StartSession(d: DeviceSessions, asked: List<Asked>, vm: CodeViewMode
         HudTextField(task, { task = it }, placeholder = "What Claude should do", maxLines = 3)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             HudButton("Start on ${d.title}", { vm.startThere(d.device, cwd, task.trim()); task = "" },
-                kind = HudButtonKind.SMALL, enabled = task.isNotBlank() && d.herdr)
+                kind = HudButtonKind.SMALL, enabled = task.isNotBlank() && d.herdr && startsThere)
             HudButton("Start in the cloud", { vm.startCloud(d.device, cwd, task.trim()); task = "" },
                 kind = HudButtonKind.SMALL, enabled = task.isNotBlank())
         }
         if (!d.herdr) Text("herdr is off on ${d.title}, so Claude can only start in the cloud from here.", style = HudText.meta)
+        else if (!startsThere) Text("${d.title} runs Yggdrasil ${version ?: "?"}: Start on ${d.title} needs ${YggReleases.START_THERE} or newer (an older one starts Claude without the task). Upgrade it first.", style = HudText.meta.copy(color = Hud.amber))
         asked.filter { it.ask.origin == d.device && (it.ask.kind == SessionKinds.START || it.ask.kind == SessionKinds.CLOUD_START) }.take(3).forEach { a ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(a.line, style = HudText.meta.copy(color = a.color()), modifier = Modifier.weight(1f))

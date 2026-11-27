@@ -22,6 +22,9 @@ data class UpgradeRun(
 data class UpgradeStatus(val version: String?, val last: UpgradeRun?)
 
 object Upgrades {
+    /** What Upgrade asks for: whatever is newest when the machine looks, not what the phone last saw. */
+    const val LATEST = "latest"
+
     fun parseStatus(json: String): UpgradeStatus {
         val o = JSONObject(json)
         return UpgradeStatus(o.str("version"), o.optJSONObject("last")?.let(::parseRun))
@@ -38,10 +41,13 @@ object Upgrades {
     /** The last line of an upgrade's output worth showing: what failed, usually. */
     fun lastLine(log: String): String = log.trim().lines().lastOrNull { it.isNotBlank() }?.trim() ?: ""
 
-    /** One line about an upgrade: running, done, or why not. */
-    fun line(run: UpgradeRun): String = when {
-        run.running -> "Upgrading ${run.from} → ${run.version}… Sindri restarts on the way."
-        run.ok == true -> "Upgraded ${run.from} → ${run.version}."
+    /**
+     * One line about an upgrade: running, done, or why not. A run asked for
+     * "latest" names the version it ended on, [now], once it is done.
+     */
+    fun line(run: UpgradeRun, now: String? = null): String = when {
+        run.running -> "Upgrading ${run.from} → ${if (run.version == LATEST) "the newest release" else run.version}… Sindri restarts on the way."
+        run.ok == true -> "Upgraded ${run.from} → ${if (run.version == LATEST) now ?: "the newest release" else run.version}."
         run.ok == false -> "Upgrade to ${run.version} failed" + lastLine(run.log).let { if (it.isBlank()) "." else ": $it" }
         else -> "Upgrade to ${run.version} stopped without saying how it went" + lastLine(run.log).let { if (it.isBlank()) "." else ": $it" }
     }

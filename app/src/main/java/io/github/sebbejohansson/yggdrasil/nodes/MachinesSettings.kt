@@ -76,6 +76,7 @@ fun MachinesSettings(vm: CodeViewModel) {
         } else {
             HudButton("Add a machine", { adding = true }, kind = HudButtonKind.SMALL)
         }
+        if (list.isNotEmpty()) CheckForYggUpdates(vm, s.latest)
     }
 }
 

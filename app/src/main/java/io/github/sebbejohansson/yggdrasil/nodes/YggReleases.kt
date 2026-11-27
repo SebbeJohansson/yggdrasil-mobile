@@ -26,6 +26,16 @@ object YggReleases {
         Parsed(a.toInt(), b.toInt(), c.toInt(), pre)
     }
 
+    /** The first release whose Sindri starts Claude on a task from another device (`prompt` on POST /v1/sessions/herdr). */
+    const val START_THERE = "v0.3.11"
+
+    /**
+     * Whether a machine on [version] can start Claude on a task: an older
+     * release takes the start but drops the task, so Claude would sit idle.
+     * A build from a checkout is taken to be new enough.
+     */
+    fun startsThere(version: String?): Boolean = version != null && (!isRelease(version) || compare(version, START_THERE) >= 0)
+
     fun isRelease(version: String?): Boolean = version != null && parse(version) != null
 
     /** Below zero when [a] is older than [b]; a prerelease is older than its release. */
@@ -56,22 +66,26 @@ object YggReleases {
     fun parseLatest(json: String): String? = runCatching { JSONObject(json).optString("tag_name") }.getOrNull()?.takeIf(::isRelease)
 }
 
-/** The newest release's tag, asked of GitHub at most every 6 hours and kept across restarts. */
+/**
+ * The newest release's tag, asked of GitHub at most every 30 minutes and kept
+ * across restarts. Six hours was too long: a release made that afternoon
+ * stayed unknown, and Upgrade went to the one before it.
+ */
 class LatestYggRelease(context: Context, private val clock: Clock = Clock.systemUTC(), private val fetch: () -> String? = ::fetchLatest) {
     private val prefs = context.getSharedPreferences("ygg_release", Context.MODE_PRIVATE)
 
-    /** The tag known now, asking GitHub first when the last answer is old. Blocking. */
-    fun get(): String? {
+    /** The tag known now, asking GitHub first when the last answer is old, or always with [force]. Blocking. */
+    fun get(force: Boolean = false): String? {
         val tag = prefs.getString("tag", null)
         val at = prefs.getLong("at", 0)
-        if (tag != null && clock.millis() - at < MAX_AGE_MS) return tag
+        if (!force && tag != null && clock.millis() - at < MAX_AGE_MS) return tag
         val fresh = runCatching { fetch() }.getOrNull()?.let(YggReleases::parseLatest)
         if (fresh != null) prefs.edit { putString("tag", fresh); putLong("at", clock.millis()) }
         return fresh ?: tag
     }
 
     companion object {
-        private const val MAX_AGE_MS = 6 * 60 * 60_000L
+        private const val MAX_AGE_MS = 30 * 60_000L
 
         private fun fetchLatest(): String? {
             val connection = URL(YggReleases.LATEST_URL).openConnection() as HttpURLConnection
