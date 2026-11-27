@@ -85,7 +85,8 @@ fun HudSection(text: String, modifier: Modifier = Modifier, trailing: (@Composab
     }
 }
 
-enum class HudButtonKind { ACTION, PRIMARY, GHOST, SMALL }
+/** SELECTED is a SMALL chip that is picked: the same size, in cyan, so a row of choices never jumps. */
+enum class HudButtonKind { ACTION, PRIMARY, GHOST, SMALL, SELECTED }
 
 /**
  * The dashboard's buttons: `.action` (filled surface), PRIMARY (solid cyan,
@@ -107,8 +108,10 @@ fun HudButton(
         HudButtonKind.PRIMARY -> Triple(accent, Hud.onCyan, accent)
         HudButtonKind.GHOST -> Triple(Color.Transparent, accent, accent.copy(alpha = 0.55f))
         HudButtonKind.SMALL -> Triple(Color.Transparent, Hud.subtext0, Hud.surface1)
+        HudButtonKind.SELECTED -> Triple(accent.copy(alpha = 0.14f), accent, accent)
     }
-    val pad = if (kind == HudButtonKind.SMALL) Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+    val small = kind == HudButtonKind.SMALL || kind == HudButtonKind.SELECTED
+    val pad = if (small) Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
     else Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
     Box(
         modifier
@@ -121,7 +124,7 @@ fun HudButton(
     ) {
         Text(
             text,
-            style = if (kind == HudButtonKind.SMALL) HudText.meta.copy(color = fg)
+            style = if (small) HudText.meta.copy(color = fg)
             else HudText.small.copy(color = fg, fontSize = 13.sp),
         )
     }

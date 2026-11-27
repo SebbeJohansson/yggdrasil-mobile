@@ -84,10 +84,10 @@ private fun AnsweredByPanel(vm: ChatViewModel, s: ChatUiState) {
         )
         androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             HudButton("This phone", { vm.setAnsweredBy(null); chosen = null },
-                kind = if (chosen == null) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+                kind = if (chosen == null) HudButtonKind.SELECTED else HudButtonKind.SMALL)
             choices.forEach { m ->
                 HudButton(m.label, { vm.setAnsweredBy(m.id); chosen = m.id },
-                    kind = if (chosen == m.id) HudButtonKind.PRIMARY else HudButtonKind.SMALL)
+                    kind = if (chosen == m.id) HudButtonKind.SELECTED else HudButtonKind.SMALL)
             }
         }
     }

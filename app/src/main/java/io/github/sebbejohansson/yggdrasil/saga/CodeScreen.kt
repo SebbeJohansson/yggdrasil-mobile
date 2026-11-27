@@ -496,7 +496,7 @@ private fun StartSession(d: DeviceSessions, asked: List<Asked>, vm: CodeViewMode
         HudLabel("New session")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             d.projects.forEach { p ->
-                HudButton(p.name, { cwd = p.path }, kind = if (p.path == cwd) HudButtonKind.GHOST else HudButtonKind.SMALL)
+                HudButton(p.name, { cwd = p.path }, kind = if (p.path == cwd) HudButtonKind.SELECTED else HudButtonKind.SMALL)
             }
         }
         HudTextField(task, { task = it }, placeholder = "What Claude should do", maxLines = 3)
